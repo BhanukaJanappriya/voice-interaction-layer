@@ -40,9 +40,21 @@ FastAPI backend (backend/server.py)
           speak a short notice instead of mangling the text
 
 Frontend (frontend/): a single page, no framework, connecting to the
-backend over WebSocket, showing live status, transcript, detected
-language, and which agent mode answered.
+backend over WebSocket. It is a small four screen flow rather than one
+bare control panel:
+
 ```
+Choose your language  ->  Start Chat or Start Voice  ->  Chat screen
+(English/Sinhala/Tamil)   (pick how to talk)              (text, via POST /chat)
+                                      \
+                                       -> Voice screen
+                                          (mic, live status, animated bot
+                                          avatar, transcript, via WS /ws/voice)
+```
+
+A theme toggle (top right, persisted across reloads) switches the whole
+app between light and dark, and the background is a gradient that both
+slowly drifts on its own and softly follows the cursor.
 
 See ARCHITECTURE.md for how the cloud multi agent design and its local
 fallback actually work, and KNOWN_LIMITATIONS.md for an honest account of
@@ -57,12 +69,14 @@ python -m venv venv
 venv\Scripts\python.exe -m pip install -r requirements.txt
 ollama pull llama3.2:latest
 copy .env.example .env
-cd backend
-..\venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
+scripts\start.ps1
 ```
-Then, in a second terminal, serve the frontend and open it in a browser
-(see Running below for the exact commands). The sections below explain
-each step and what is optional.
+`scripts\start.ps1` starts both the backend and the frontend as background
+processes (no console window, output goes to `logs\*.log`), then open
+`http://127.0.0.1:5500/index.html`. Run `scripts\stop.ps1` when you are
+done. The sections below explain each step and what is optional, plus how
+to run each piece directly in a terminal if you want to watch its output
+while developing.
 
 ## Setup
 
@@ -94,6 +108,23 @@ each step and what is optional.
 
 ## Running
 
+**Normal use: background, no terminal to watch.**
+```
+scripts\start.ps1
+```
+This launches the backend and frontend with `pythonw.exe` (Python with no
+attached console window), so neither one occupies a terminal or prints
+into one; each writes to its own log file under `logs\` instead
+(`logs\backend.log`, `logs\frontend.log`). The script itself returns
+immediately once both are started. Stop them with:
+```
+scripts\stop.ps1
+```
+Open `http://127.0.0.1:5500/index.html`; the app always starts on the
+language screen, then lets you choose Start Chat or Start Voice.
+
+**Development: run a piece directly, to watch its own output live.**
+
 Standalone module tests (verify each piece works in isolation, exactly as
 the prototype's modules did):
 ```
@@ -104,22 +135,22 @@ cd backend
 ..\venv\Scripts\python.exe tts.py      # sample sentence in English, Sinhala, Tamil
 ```
 
-Full backend:
+Backend in the foreground:
 ```
 cd backend
 ..\venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 `GET http://127.0.0.1:8000/health` reports which cloud providers are
-actually configured right now.
+actually configured right now; `POST http://127.0.0.1:8000/chat` with a
+JSON body of `{"text": "...", "language": "en"}` drives the text chat
+screen directly, without a browser.
 
-Frontend (any static file server works; this is a plain HTML/CSS/JS page):
+Frontend in the foreground (any static file server works; this is a plain
+HTML/CSS/JS page):
 ```
 cd frontend
 ..\venv\Scripts\python.exe -m http.server 5500
 ```
-Open `http://127.0.0.1:5500/index.html`, set the backend WebSocket URL if
-it is not on the default `ws://localhost:8000/ws/voice`, pick a language,
-press "Start conversation", and allow microphone access.
 
 ## Why these tools were chosen
 
@@ -159,6 +190,16 @@ configured and reachable, the Orchestrator runs a small three role
 collaboration (reasoning, tool/retrieval, composer) against that provider
 instead; see ARCHITECTURE.md for why this counts as genuine multi agent
 collaboration within this pass's scope.
+
+**Frontend flow: language, then chat or voice, as separate screens.**
+Putting language selection first and a chat versus voice choice second,
+instead of one screen with every control on it, keeps each screen doing
+one thing and matches how a real product in this space is normally
+structured. The text chat screen reuses the exact same `Orchestrator` the
+voice pipeline uses through a small `POST /chat` endpoint (see
+`backend/server.py`), so cloud versus local fallback behavior, and which
+mode answered, are identical in both screens; it just skips STT and TTS
+entirely, since text in and text out needs neither.
 
 ## Current limitations
 
