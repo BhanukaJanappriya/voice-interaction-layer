@@ -1,5 +1,39 @@
-faster-whisper>=1.0.0
-sounddevice>=0.4.6
-numpy>=1.24
-pyttsx3>=2.90
-requests>=2.31
+# Backend service
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+websockets==17.1
+python-dotenv==1.2.3
+
+# Local speech to text (English always local; also used as the Sinhala/Tamil
+# fallback when cloud speech is not configured, with lower accuracy)
+faster-whisper==1.2.1
+sounddevice==0.5.6
+soundfile==0.14.0
+
+# Voice activity detection and noise handling
+webrtcvad-wheels==2.0.14
+noisereduce==3.0.3
+# Pinned below their latest releases: the newest scipy (which noisereduce
+# depends on) ships a compiled linalg extension that a Windows Application
+# Control policy on the development machine refused to load
+# (ImportError: DLL load failed, "An Application Control policy has blocked
+# this file"). scipy 1.13.1 does not trigger it. If a different machine
+# has no such policy, a newer scipy will likely also work; this pin is a
+# known environment workaround, not a hard technical requirement.
+scipy==1.13.1
+numpy==2.2.6
+
+# Local text to speech fallback (English only, see KNOWN_LIMITATIONS.md)
+pyttsx3==2.99
+
+# Local chat agent fallback (Ollama REST API)
+requests==2.34.2
+
+# Cloud providers (optional: only required if the corresponding
+# CLOUD_LLM_PROVIDER / CLOUD_SPEECH_PROVIDER is actually configured with
+# credentials in .env; the app runs and falls back to local without them)
+google-generativeai==0.8.6
+openai==3.17.0
+google-cloud-speech==2.40.0
+google-cloud-texttospeech==2.37.0
+azure-cognitiveservices-speech==1.51.2
