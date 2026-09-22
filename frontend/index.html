@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Interaction Assistant</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="app-header">
+    <h1>Voice Interaction Assistant</h1>
+    <p class="subtitle">SLT Digital Lab &mdash; real time multilingual voice backend</p>
+  </header>
+
+  <main class="panel">
+    <section class="controls">
+      <div class="field">
+        <label for="backend-url">Backend</label>
+        <input id="backend-url" type="text" value="ws://localhost:8000/ws/voice">
+      </div>
+      <div class="field">
+        <label for="language-select">Language</label>
+        <select id="language-select">
+          <option value="">Auto detect</option>
+          <option value="en">English</option>
+          <option value="si">Sinhala</option>
+          <option value="ta">Tamil</option>
+        </select>
+      </div>
+      <button id="mic-button" class="mic-button" type="button">
+        <span id="mic-icon" class="mic-icon">&#127908;</span>
+        <span id="mic-label">Start conversation</span>
+      </button>
+    </section>
+
+    <section class="status-row">
+      <div class="status-indicator">
+        <span id="status-dot" class="status-dot status-idle"></span>
+        <span id="status-text">Idle</span>
+      </div>
+      <div class="badges">
+        <span id="language-badge" class="badge badge-muted">Language: &mdash;</span>
+        <span id="mode-badge" class="badge badge-muted">Agent mode: &mdash;</span>
+      </div>
+    </section>
+
+    <section class="transcript-wrap">
+      <div id="transcript" class="transcript">
+        <p class="hint">Press "Start conversation", allow microphone access, and speak.
+        Your words and the assistant's replies will appear here as they happen.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p id="connection-note">Not connected.</p>
+  </footer>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
