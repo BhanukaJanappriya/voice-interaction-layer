@@ -26,6 +26,7 @@ const micButton = document.getElementById("mic-button");
 const micLabel = document.getElementById("mic-label");
 const statusDot = document.getElementById("status-dot");
 const statusText = document.getElementById("status-text");
+const botAvatar = document.getElementById("bot-avatar");
 const languageBadge = document.getElementById("language-badge");
 const modeBadge = document.getElementById("mode-badge");
 const transcript = document.getElementById("transcript");
@@ -57,6 +58,12 @@ function setStatus(state) {
     error: "Error",
   };
   statusText.textContent = labels[state] || state;
+  // Drives the animated bot avatar's mouth/ring/waveform styling (see
+  // style.css's .bot.state-* rules); a plain class swap keeps this in one
+  // place rather than duplicating per-state animation logic in JS.
+  if (botAvatar) {
+    botAvatar.className = `bot state-${state}`;
+  }
 }
 
 function setModeBadge(mode) {
