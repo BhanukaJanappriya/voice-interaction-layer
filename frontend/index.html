@@ -5,74 +5,147 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SLT Mobitel Voice Assistant</title>
 <link rel="stylesheet" href="style.css">
+<script>
+  // Applied before the page paints, so there is no flash of the wrong
+  // theme while style.css and app.js are still loading.
+  (function () {
+    try {
+      var saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    } catch (err) {
+      /* localStorage unavailable (private mode, etc.); default theme applies */
+    }
+  })();
+</script>
 </head>
 <body>
+<div class="bg-glow" aria-hidden="true"></div>
+
+<button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle dark and light theme">
+  <span id="theme-toggle-icon">&#127769;</span>
+</button>
+
 <div class="page">
-  <header class="brand">
-    <img class="brand-logo" src="assets/mobitel-logo.png" alt="SLT Mobitel">
-    <p class="brand-tagline">Real time multilingual voice assistant</p>
-  </header>
 
-  <div id="bot-avatar" class="bot state-idle" aria-hidden="true">
-    <div class="bot-ring"></div>
-    <div class="bot-face">
-      <div class="bot-eye bot-eye-left"></div>
-      <div class="bot-eye bot-eye-right"></div>
-      <div class="bot-mouth"></div>
-    </div>
-    <div class="bot-waves">
-      <span></span><span></span><span></span><span></span><span></span>
-    </div>
-  </div>
-
-  <main class="card">
-    <section class="field-row">
-      <div class="field">
-        <label for="language-select">Language</label>
-        <select id="language-select">
-          <option value="">Auto detect</option>
-          <option value="en">English</option>
-          <option value="si">Sinhala</option>
-          <option value="ta">Tamil</option>
-        </select>
-      </div>
-    </section>
-
-    <button id="mic-button" class="mic-button" type="button">
-      <span id="mic-icon" class="mic-icon">&#127908;</span>
-      <span id="mic-label">Start conversation</span>
-    </button>
-
-    <section class="status-row">
-      <div class="status-indicator">
-        <span id="status-dot" class="status-dot status-idle"></span>
-        <span id="status-text">Idle</span>
-      </div>
-      <div class="badges">
-        <span id="language-badge" class="badge badge-muted">Language: &mdash;</span>
-        <span id="mode-badge" class="badge badge-muted">Agent mode: &mdash;</span>
-      </div>
-    </section>
-
-    <details class="advanced">
-      <summary>Advanced</summary>
-      <div class="field">
-        <label for="backend-url">Backend WebSocket URL</label>
-        <input id="backend-url" type="text" value="ws://localhost:8000/ws/voice">
-      </div>
-    </details>
-  </main>
-
-  <section class="card transcript-card">
-    <h2 class="transcript-title">Conversation</h2>
-    <div id="transcript" class="transcript">
-      <p class="hint">Press "Start conversation", allow microphone access, and speak.
-      Your words and the assistant's replies will appear here as they happen.</p>
+  <!-- Screen 1: language selection -->
+  <section id="screen-language" class="screen active">
+    <header class="brand">
+      <img class="brand-logo" src="assets/mobitel-logo.png" alt="SLT Mobitel">
+    </header>
+    <div class="card language-card">
+      <h1 class="language-title">
+        Choose your language
+        <span class="language-title-alt">ඔබේ භාෂාව තෝරන්න</span>
+        <span class="language-title-alt">உங்கள் மொழியைத் தேர்ந்தெடுக்கவும்</span>
+      </h1>
+      <button class="choice-button" type="button" data-language="en">English</button>
+      <button class="choice-button" type="button" data-language="si">සිංහල</button>
+      <button class="choice-button" type="button" data-language="ta">தமிழ்</button>
     </div>
   </section>
 
-  <footer class="page-footer">
-    <p id="connection-note">Not connected.</p>
+  <!-- Screen 2: start chat or start voice -->
+  <section id="screen-select" class="screen">
+    <header class="brand">
+      <img class="brand-logo" src="assets/mobitel-logo.png" alt="SLT Mobitel">
+      <p class="brand-tagline">How would you like to talk today?</p>
+    </header>
+    <div class="card select-card">
+      <button id="go-chat" class="choice-button choice-button-outline" type="button">
+        <span class="choice-icon">&#128172;</span> Start Chat
+      </button>
+      <button id="go-voice" class="choice-button choice-button-solid" type="button">
+        <span class="choice-icon">&#127908;</span> Start Voice
+      </button>
+      <a href="#language" class="back-link" data-nav="language">&larr; Change language</a>
+    </div>
+  </section>
+
+  <!-- Screen 3: voice agent -->
+  <section id="screen-voice" class="screen">
+    <header class="brand">
+      <img class="brand-logo" src="assets/mobitel-logo.png" alt="SLT Mobitel">
+      <p class="brand-tagline">Real time multilingual voice assistant</p>
+    </header>
+
+    <div id="bot-avatar" class="bot state-idle" aria-hidden="true">
+      <div class="bot-ring"></div>
+      <div class="bot-face">
+        <div class="bot-eye bot-eye-left"></div>
+        <div class="bot-eye bot-eye-right"></div>
+        <div class="bot-mouth"></div>
+      </div>
+      <div class="bot-waves">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+    </div>
+
+    <main class="card">
+      <button id="mic-button" class="mic-button" type="button">
+        <span id="mic-icon" class="mic-icon">&#127908;</span>
+        <span id="mic-label">Start conversation</span>
+      </button>
+
+      <section class="status-row">
+        <div class="status-indicator">
+          <span id="status-dot" class="status-dot status-idle"></span>
+          <span id="status-text">Idle</span>
+        </div>
+        <div class="badges">
+          <span id="language-badge" class="badge badge-muted">Language: &mdash;</span>
+          <span id="mode-badge" class="badge badge-muted">Agent mode: &mdash;</span>
+        </div>
+      </section>
+
+      <details class="advanced">
+        <summary>Advanced</summary>
+        <div class="field">
+          <label for="backend-url">Backend WebSocket URL</label>
+          <input id="backend-url" type="text" value="ws://localhost:8000/ws/voice">
+        </div>
+      </details>
+
+      <a href="#select" class="back-link" data-nav="select">&larr; Back</a>
+    </main>
+
+    <section class="card transcript-card">
+      <h2 class="transcript-title">Conversation</h2>
+      <div id="transcript" class="transcript">
+        <p class="hint">Press "Start conversation", allow microphone access, and speak.
+        Your words and the assistant's replies will appear here as they happen.</p>
+      </div>
+    </section>
+
+    <footer class="page-footer">
+      <p id="connection-note">Not connected.</p>
+    </footer>
+  </section>
+
+  <!-- Screen 4: text chat -->
+  <section id="screen-chat" class="screen">
+    <header class="brand">
+      <img class="brand-logo" src="assets/mobitel-logo.png" alt="SLT Mobitel">
+      <p class="brand-tagline">Text chat</p>
+    </header>
+
+    <main class="card">
+      <div id="chat-transcript" class="transcript chat-transcript">
+        <p class="hint">Type a message below to start chatting.</p>
+      </div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" type="text" placeholder="Type a message&hellip;" autocomplete="off">
+        <button type="submit" class="chat-send">Send</button>
+      </form>
+      <div class="badges">
+        <span id="chat-mode-badge" class="badge badge-muted">Agent mode: &mdash;</span>
+      </div>
+      <a href="#select" class="back-link" data-nav="select">&larr; Back</a>
+    </main>
+  </section>
+
+  <footer class="app-footer">
     <p class="footer-credit">SLT Digital Lab &mdash; voice interaction prototype</p>
   </footer>
 </div>

@@ -46,6 +46,11 @@
   box-sizing: border-box;
 }
 
+html {
+  --mx: 50%;
+  --my: 30%;
+}
+
 body {
   margin: 0;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -55,6 +60,59 @@ body {
   color: var(--text);
   min-height: 100vh;
   overflow-x: hidden;
+  position: relative;
+}
+
+/* Cursor sensitive layer: a soft radial highlight that follows the pointer
+   (app.js writes --mx/--my on mousemove), layered above the drifting
+   gradient in body. Purely decorative (pointer-events: none) and skipped
+   entirely under prefers-reduced-motion via the transition below being
+   near instant, so it never interferes with clicking through it. */
+.bg-glow {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    480px circle at var(--mx) var(--my),
+    rgba(47, 111, 237, 0.16),
+    rgba(67, 160, 71, 0.1) 40%,
+    transparent 70%
+  );
+  transition: background-position 0.1s ease;
+}
+
+.page {
+  position: relative;
+  z-index: 1;
+}
+
+.theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform 0.15s ease, background 0.2s ease;
+}
+
+.theme-toggle:hover {
+  transform: scale(1.06);
+}
+
+.theme-toggle:active {
+  transform: scale(0.94);
 }
 
 @keyframes bg-drift {
@@ -77,6 +135,142 @@ body {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.screen {
+  display: none;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.screen.active {
+  display: flex;
+}
+
+.language-card,
+.select-card {
+  align-items: stretch;
+  text-align: center;
+}
+
+.language-title {
+  margin: 0 0 4px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.language-title-alt {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.choice-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.choice-button:active {
+  transform: scale(0.98);
+}
+
+.choice-button:not(.choice-button-outline):not(.choice-button-solid) {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.choice-button:not(.choice-button-outline):not(.choice-button-solid):hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.choice-button-outline {
+  background: var(--card);
+  border: 1.5px solid var(--blue);
+  color: var(--blue);
+}
+
+.choice-button-outline:hover {
+  background: var(--blue-dim);
+}
+
+.choice-button-solid {
+  background: linear-gradient(135deg, var(--blue) 0%, var(--green) 100%);
+  border: none;
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(47, 111, 237, 0.3);
+}
+
+.choice-button-solid:hover {
+  filter: brightness(1.05);
+}
+
+.choice-icon {
+  font-size: 1.1rem;
+}
+
+.back-link {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-decoration: none;
+  align-self: center;
+}
+
+.back-link:hover {
+  color: var(--blue);
+}
+
+.chat-transcript {
+  min-height: 220px;
+}
+
+.chat-form {
+  display: flex;
+  gap: 10px;
+}
+
+.chat-form input {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  color: var(--text);
+  padding: 12px 16px;
+  font-size: 0.92rem;
+}
+
+.chat-send {
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 0 22px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.chat-send:hover {
+  background: #2557c7;
+}
+
+.chat-send:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .brand {

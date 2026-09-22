@@ -31,7 +31,6 @@ const languageBadge = document.getElementById("language-badge");
 const modeBadge = document.getElementById("mode-badge");
 const transcript = document.getElementById("transcript");
 const backendUrlInput = document.getElementById("backend-url");
-const languageSelect = document.getElementById("language-select");
 const connectionNote = document.getElementById("connection-note");
 
 let audioContext = null;
@@ -46,6 +45,100 @@ let calibrationDone = false;
 let isActive = false;
 let isConnecting = false;
 let currentPartialBubble = null;
+let selectedLanguage = null;
+
+// Screen router: a language picker, then a start chat / start voice
+// choice, then the actual chat or voice screen. Plain hash based routing
+// (#language, #select, #voice, #chat) rather than a library, consistent
+// with the rest of this frontend's no framework approach. The language
+// screen is always the entry point, per the required flow, regardless of
+// what hash a reload happens to land on.
+const SCREEN_IDS = ["language", "select", "voice", "chat"];
+
+function navigateTo(screenName) {
+  if (!SCREEN_IDS.includes(screenName)) screenName = "language";
+  SCREEN_IDS.forEach((id) => {
+    const el = document.getElementById(`screen-${id}`);
+    if (el) el.classList.toggle("active", id === screenName);
+  });
+  window.location.hash = screenName;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+document.querySelectorAll(".choice-button[data-language]").forEach((button) => {
+  button.addEventListener("click", () => {
+    selectedLanguage = button.getAttribute("data-language");
+    navigateTo("select");
+  });
+});
+
+document.querySelectorAll("[data-nav]").forEach((el) => {
+  el.addEventListener("click", (event) => {
+    event.preventDefault();
+    navigateTo(el.getAttribute("data-nav"));
+  });
+});
+
+const goChatButton = document.getElementById("go-chat");
+const goVoiceButton = document.getElementById("go-voice");
+if (goChatButton) goChatButton.addEventListener("click", () => navigateTo("chat"));
+if (goVoiceButton) goVoiceButton.addEventListener("click", () => navigateTo("voice"));
+
+// Always start on the language screen; a saved hash from a previous visit
+// is not honored on a fresh load, matching the required first landing page.
+navigateTo("language");
+
+// Theme toggle (light/dark), persisted so it survives a reload. The
+// initial theme is also applied by a small inline script in index.html's
+// <head>, before this file loads, so there is no flash of the wrong theme.
+const themeToggle = document.getElementById("theme-toggle");
+const themeToggleIcon = document.getElementById("theme-toggle-icon");
+
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
+
+function applyThemeIcon() {
+  if (themeToggleIcon) themeToggleIcon.textContent = currentTheme() === "dark" ? "☀️" : "🌙";
+}
+
+if (themeToggle) {
+  applyThemeIcon();
+  themeToggle.addEventListener("click", () => {
+    const next = currentTheme() === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try {
+      localStorage.setItem("theme", next);
+    } catch (err) {
+      /* localStorage unavailable; theme choice just will not persist */
+    }
+    applyThemeIcon();
+  });
+}
+
+// Cursor sensitive background glow: writes the pointer position as CSS
+// custom properties that style.css's .bg-glow radial gradient reads.
+// Throttled to one update per animation frame so it stays smooth without
+// flooding style recalculation on every mousemove event.
+let glowUpdateQueued = false;
+let lastPointer = { x: "50%", y: "30%" };
+
+function applyGlowPosition() {
+  glowUpdateQueued = false;
+  document.documentElement.style.setProperty("--mx", lastPointer.x);
+  document.documentElement.style.setProperty("--my", lastPointer.y);
+}
+
+window.addEventListener("mousemove", (event) => {
+  lastPointer = {
+    x: `${(event.clientX / window.innerWidth) * 100}%`,
+    y: `${(event.clientY / window.innerHeight) * 100}%`,
+  };
+  if (!glowUpdateQueued) {
+    glowUpdateQueued = true;
+    requestAnimationFrame(applyGlowPosition);
+  }
+});
 
 function setStatus(state) {
   statusDot.className = `status-dot status-${state}`;
@@ -82,13 +175,14 @@ function setLanguageBadge(language) {
   languageBadge.textContent = `Language: ${names[language] || language || "—"}`;
 }
 
-function clearHint() {
-  const hint = transcript.querySelector(".hint");
+function clearHint(container) {
+  const hint = (container || transcript).querySelector(".hint");
   if (hint) hint.remove();
 }
 
-function addBubble(role, text, meta) {
-  clearHint();
+function addBubble(role, text, meta, container) {
+  const target = container || transcript;
+  clearHint(target);
   const bubble = document.createElement("div");
   bubble.className = `bubble bubble-${role}`;
   bubble.textContent = text;
@@ -98,8 +192,8 @@ function addBubble(role, text, meta) {
     metaSpan.textContent = meta;
     bubble.appendChild(metaSpan);
   }
-  transcript.appendChild(bubble);
-  transcript.scrollTop = transcript.scrollHeight;
+  target.appendChild(bubble);
+  target.scrollTop = target.scrollHeight;
   return bubble;
 }
 
@@ -252,9 +346,8 @@ async function startConversation() {
 
   socket.onopen = () => {
     connectionNote.textContent = "Connected. Calibrating to the room, then listening.";
-    const languageHint = languageSelect.value || null;
-    socket.send(JSON.stringify({ type: "start_session", language_hint: languageHint }));
-    setLanguageBadge(languageHint);
+    socket.send(JSON.stringify({ type: "start_session", language_hint: selectedLanguage }));
+    setLanguageBadge(selectedLanguage);
   };
 
   socket.onmessage = handleServerMessage;
@@ -323,3 +416,62 @@ micButton.addEventListener("click", () => {
     startConversation();
   }
 });
+
+// Text chat screen: a lightweight alternative to the voice flow, talking
+// to the backend's POST /chat endpoint (see backend/server.py), which
+// runs the same Orchestrator used by the voice pipeline, just without any
+// STT or TTS involved. Derives the chat endpoint from the same backend
+// field the voice screen uses, so there is only one place to configure
+// the backend location.
+const chatForm = document.getElementById("chat-form");
+const chatInput = document.getElementById("chat-input");
+const chatTranscript = document.getElementById("chat-transcript");
+const chatModeBadge = document.getElementById("chat-mode-badge");
+
+function chatHttpUrl() {
+  const wsUrl = backendUrlInput.value.trim();
+  return wsUrl.replace(/^ws/i, "http").replace(/\/ws\/voice.*$/i, "") + "/chat";
+}
+
+function setChatModeBadge(mode) {
+  if (!chatModeBadge) return;
+  if (!mode) {
+    chatModeBadge.textContent = "Agent mode: —";
+    chatModeBadge.className = "badge badge-muted";
+    return;
+  }
+  const isCloud = mode.toLowerCase().includes("cloud");
+  chatModeBadge.textContent = `Agent mode: ${mode}`;
+  chatModeBadge.className = `badge ${isCloud ? "badge-cloud" : "badge-local"}`;
+}
+
+if (chatForm) {
+  chatForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = chatInput.value.trim();
+    if (!text) return;
+
+    addBubble("user", text, null, chatTranscript);
+    chatInput.value = "";
+    chatInput.disabled = true;
+
+    try {
+      const response = await fetch(chatHttpUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language: selectedLanguage }),
+      });
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+      const data = await response.json();
+      addBubble("assistant", data.reply, data.mode, chatTranscript);
+      setChatModeBadge(data.mode);
+    } catch (err) {
+      addBubble("assistant", `Error: could not reach the backend (${err.message}).`, null, chatTranscript);
+    } finally {
+      chatInput.disabled = false;
+      chatInput.focus();
+    }
+  });
+}
