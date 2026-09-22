@@ -61,6 +61,7 @@ from typing import Optional
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 import config
 from agent import Orchestrator
@@ -277,6 +278,32 @@ async def voice_ws(websocket: WebSocket):
             )
     except WebSocketDisconnect:
         return
+
+
+class ChatRequest(BaseModel):
+    text: str
+    language: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    mode: str
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """Text only alternative to the voice pipeline, for the frontend's
+    Start Chat screen. Runs the same Orchestrator the voice flow uses (so
+    the same cloud multi agent versus local fallback behavior applies),
+    just without any STT or TTS involved. orchestrator.respond() is a
+    blocking call (HTTP requests to Ollama or a cloud provider), so it
+    runs on a thread via run_in_executor rather than directly in this
+    async handler, for the same reason server.py's WebSocket transcription
+    does: a blocking call here would stall every other connection's event
+    loop turn until it finished."""
+    loop = asyncio.get_running_loop()
+    reply = await loop.run_in_executor(None, orchestrator.respond, request.text)
+    return ChatResponse(reply=reply, mode=orchestrator.last_mode)
 
 
 @app.get("/health")

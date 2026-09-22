@@ -97,6 +97,11 @@ backend/server.py
     what JSON event types the server sends back). GET /health reports
     which providers are actually configured right now.
 
+    POST /chat, body {"text": str, "language": str | null} -> {"reply": str, "mode": str}
+        Text only path for the frontend's chat screen. Runs the same
+        Orchestrator as the voice pipeline (same cloud/local fallback and
+        the same last_mode reporting), with no STT or TTS involved.
+
 Shared conventions
     Every SAMPLE_RATE, CHUNK_SECONDS, and similar constant lives in exactly
     one module (vad.py for SAMPLE_RATE, stt.py for CHUNK_SECONDS) and is
