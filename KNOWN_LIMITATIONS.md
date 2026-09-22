@@ -1,0 +1,126 @@
+# Known Limitations
+
+An honest account of what does not fully work yet, why, and what would
+actually fix it, so this can be presented accurately rather than oversold.
+
+## Sinhala and Tamil voice quality (text to speech)
+
+**Status: not solved locally; requires a cloud credential.**
+
+This development machine has exactly two installed SAPI5 voices (checked
+directly, not assumed): "Microsoft David" (male, English US) and
+"Microsoft Zira" (female, English US). Neither Sinhala nor Tamil have any
+local voice available at all. With no cloud Text to Speech provider
+configured, `speak_text()` for those two languages does not attempt to
+force the text through an English voice (which would mangle it into
+meaningless sounds); instead it speaks a short English notice explaining
+that natural speech in that language needs a cloud provider, and logs the
+same. This is a deliberate choice to fail honestly rather than produce
+something that sounds like it worked but did not.
+
+**Real fix:** a Google Cloud Text to Speech or Azure Speech account with
+Neural2/Neural voices for `si-LK` and `ta-IN`. The adapter code for both
+already exists in `backend/tts.py` (`_speak_cloud_google`,
+`_speak_cloud_azure`); it has not been run against a live account, since
+no credential is available in this environment. Once `GOOGLE_APPLICATION_CREDENTIALS`
+or `AZURE_SPEECH_KEY`/`AZURE_SPEECH_REGION` is set in `.env`, this should
+work without further code changes, but that specific claim has not been
+verified live and should be re-tested once a credential exists.
+
+## Sinhala and Tamil transcription accuracy (speech to text)
+
+**Status: partially solved locally; cloud is materially better.**
+
+faster-whisper's multilingual model does support Sinhala and Tamil without
+any extra setup, and `backend/stt.py` will use it as a fallback for those
+languages. But Whisper's published accuracy on Sinhala and Tamil is well
+below its English accuracy (both are lower resource languages in its
+training data), and this has not been benchmarked on this project with
+real Sinhala/Tamil speech samples, since none were available in this
+environment. Treat the local fallback for these two languages as usable
+for a rough demo, not as a reliable transcript.
+
+**Real fix:** Google Cloud Speech to Text, which has explicit `si-LK` and
+`ta-IN` language codes and materially better accuracy for both. The
+adapter (`_transcribe_cloud_google` in `backend/stt.py`) exists and is
+wired into the fallback chain but has not been exercised against a live
+account for the same reason as above.
+
+## "Streaming" transcription is chunk based, not natively streaming
+
+**Status: a real, working, but honestly limited form of streaming.**
+
+faster-whisper has no native partial decoding API: every call transcribes
+whatever audio buffer it is given, start to finish. `transcribe_stream()`
+approximates streaming by re-running transcription on the growing speech
+buffer every few chunks (about every 2 seconds of new speech) and finishing
+with one pass over the whole utterance once trailing silence is detected.
+This has been verified to work end to end, including a real test where a
+synthesized sentence was fed through the pipeline in 0.5 second chunks and
+produced growing partial transcripts that converged to an exact final
+transcript. It genuinely reduces perceived latency versus the prototype's
+record-then-transcribe design, and the frontend does show text while the
+user is still talking. It is not, however, the same as a true streaming
+ASR API (Google Cloud Speech to Text's streaming mode, for example, decodes
+incrementally at the model level).
+
+**Real fix:** for English or any language with cloud speech configured, a
+true streaming recognizer could replace the local re-transcription
+approach; this was judged out of scope to build for this pass given the
+timeline, since the chunk based approach already satisfies the "feels live"
+requirement in practice.
+
+## The cloud multi agent path has not been run against a live account
+
+**Status: built and reviewed, not live tested.**
+
+No Gemini or OpenAI API key was available in this environment. The
+`GeminiAgent`, `GptAgent`, and `Orchestrator` classes in `backend/agent.py`
+are implemented, and the fallback direction (cloud unavailable -> local
+agent alone) has been proven repeatedly, including through an automated
+end to end WebSocket test that confirmed the correct mode is logged and
+sent to the frontend. The forward direction (cloud actually configured and
+reachable, three role collaboration actually executing) has not been
+exercised live. Once a key is added to `.env`, run
+`backend/agent.py`'s standalone test mode first to confirm the cloud path
+directly before trusting it in a full demo.
+
+## Spectral gating noise reduction depends on a scipy version pin
+
+**Status: solved, but the cause is worth knowing.**
+
+The newest scipy release available at the time of building this (1.18.1)
+would not import on this machine: `ImportError: DLL load failed while
+importing _batched_linalg: An Application Control policy has blocked this
+file.` This is a Windows Application Control policy on this specific
+machine refusing to load a compiled extension, not a bug in this project's
+code. scipy 1.13.1 (which `noisereduce`, used for spectral gating noise
+reduction in `backend/vad.py`, depends on) does not trigger the same
+policy and works correctly; `requirements.txt` pins to that version with a
+comment explaining why. `denoise_audio()` also degrades gracefully (falls
+back to unprocessed audio) if this import ever fails again on a different
+machine, so a future environment with a stricter or looser policy will not
+crash the pipeline either way, just possibly skip this one noise cleanup
+step.
+
+## Browser microphone permission cannot be granted by automation
+
+**Status: a testing constraint, not a product limitation.**
+
+While verifying the frontend, granting microphone access through browser
+automation caused the automation to hang waiting on the browser's native
+permission prompt, which lives outside the page's own DOM and cannot be
+driven programmatically. This is a limitation of automated testing, not of
+the product: a real user clicking "Start conversation" in a normal browser
+session sees and can answer that prompt immediately. The rest of the
+frontend (WebSocket connection lifecycle, status transitions, transcript
+rendering, agent mode badges) was verified working, including with a real,
+successful, permission granted microphone session that produced multiple
+real WebSocket connections to the backend, confirmed in the backend's own
+logs.
+
+## No conversation memory across turns
+
+Unchanged from the prototype: each turn is an independent request to the
+active chat agent. Both the local and cloud paths currently discard prior
+turns.

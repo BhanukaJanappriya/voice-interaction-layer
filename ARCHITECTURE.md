@@ -1,100 +1,127 @@
-# Architecture: Pluggable Chat Agent Design
+# Architecture
 
-This document explains the plug in design of the chat agent layer, which is
-the core reusability requirement of this prototype: any current or future
-chat agent should slot into the voice pipeline through one interface,
-without the voice layer (`stt.py`, `tts.py`, `main.py`'s recording and
-playback logic) ever needing to change.
+This document explains two things in detail: the real time data flow
+through the backend, and the cloud multi agent collaboration design versus
+its local single agent fallback, since that distinction is the core new
+requirement for this pass.
 
-## The interface
-
-All chat agents implement a single abstract base class defined in
-`agent.py`:
-
-```python
-class ChatAgent(ABC):
-    @abstractmethod
-    def respond(self, text_input: str) -> str:
-        ...
-```
-
-That is the entire contract. `main.py` never imports or refers to a
-specific agent implementation by name in its pipeline logic; it only calls
-`AGENT.respond(user_text)` on whatever object `AGENT` currently holds. As
-far as `main.py`, `stt.py`, and `tts.py` are concerned, a `ChatAgent` is a
-black box that takes text in and returns text out.
-
-## Why this satisfies the pluggability requirement
-
-Two concrete agents are implemented today, and both prove the same point
-from opposite directions:
-
-- `EchoAgent` has no dependencies, no network calls, and no constructor
-  arguments. It exists purely to demonstrate that the pipeline runs
-  correctly with a trivial agent, with zero special casing anywhere else
-  in the codebase.
-- `LlamaOllamaAgent` talks to a real local LLM over HTTP, handles network
-  failures and timeouts, and accepts an optional `tool_callback` hook for
-  a future Tool/API/Knowledge Base step. Despite being far more complex
-  internally, it exposes exactly the same one method surface as
-  `EchoAgent`.
-
-Switching which agent is active is a one line change in `main.py`:
-
-```python
-AGENT = LlamaOllamaAgent()
-# AGENT = EchoAgent()
-```
-
-No other file needs to change. This was verified directly: the full
-pipeline was run once with each agent and produced correct output in both
-cases, with identical STT and TTS behavior.
-
-## How to add a new chat agent
-
-A future engineer adding, for example, a cloud hosted GPT model, a
-company internal API, or a rule based FAQ bot, follows the same three
-steps every time:
-
-1. Create a new class in `agent.py` (or a new module, as long as it is
-   imported where `main.py` picks the active agent) that subclasses
-   `ChatAgent` and implements `respond(self, text_input: str) -> str`.
-2. Inside `respond()`, do whatever is needed to produce a reply: call an
-   API, query a database, run a local model, apply rules. The internals
-   are entirely up to the implementation.
-3. Point `AGENT` in `main.py` at the new class.
-
-No changes to `stt.py`, `tts.py`, or the recording/playback logic in
-`main.py` are ever required, because those modules only depend on the
-`ChatAgent` interface, never on a specific implementation.
-
-## The Tool / API / Knowledge Base hook
-
-The required flow is:
+## Real time data flow
 
 ```
-User Voice -> STT -> (Chat Agent -> Tool/API/KB -> Response) -> TTS
+ Browser                          FastAPI backend (server.py)
+ =======                          ===========================
+ mic -> resample to 16kHz  =>     binary WebSocket frames
+                                       |
+                                       v
+                              VoiceActivityDetector (vad.py)
+                              calibrated once per session,
+                              gates every chunk: speech or not
+                                       |
+                                       v
+                              transcribe_stream() (stt.py)
+                              runs on a background thread so
+                              blocking whisper/cloud calls do
+                              not stall the event loop
+                                       |
+                     partial events =>|<= final event (silence detected)
+                                       |
+ status/transcript  <=  JSON  <=======+
+ events over the                      |
+ same WebSocket                       v
+                              Orchestrator.respond() (agent.py)
+                              cloud multi agent, or local Llama
+                              alone if cloud is not reachable
+                                       |
+ agent_response event  <=  JSON  <====+
+                                       |
+                                       v
+                              speak_text() (tts.py)
+                              cloud neural voice, or local
+                              SAPI5 for English, or a spoken
+                              notice for si/ta with no cloud
+                                       |
+                              plays on the server machine's
+                              own audio output (see the
+                              "server side playback" note in
+                              README.md's suggested next steps)
 ```
 
-`LlamaOllamaAgent` accepts an optional `tool_callback` at construction
-time: a function that takes the user's text and returns either a string
-of extra context or `None`. When context is returned, it is folded into
-the prompt sent to the model before the model call happens. This is a
-working stub today (no real external tool is wired in), but it
-demonstrates precisely where a real Tool, API, or Knowledge Base
-integration plugs into the architecture, and it does so without changing
-the `ChatAgent` interface itself: any agent implementation can choose to
-accept and use a similar hook, or ignore the concept entirely, since the
-only thing `main.py` and the voice layer require is `respond()`.
+Every stage's own latency is printed by that module (stt.py, agent.py,
+tts.py each already did this in the prototype); server.py adds one more
+line per turn with the total, so real time performance claims have actual
+numbers behind them during a demo, not just an assertion.
 
-## Design tradeoff
+## Cloud multi agent collaboration versus local fallback
 
-The interface is intentionally minimal (`str -> str`, one method). This
-was a deliberate choice for the prototype: a synchronous, stateless
-contract is the smallest thing that can prove the pluggability
-requirement while remaining trivial to reason about and demo. It does
-mean conversation history and streaming are not part of the interface
-today; both could be added as optional method or constructor
-extensions later (see README.md's suggested next steps) without breaking
-existing agents, since Python allows new optional parameters with
-defaults to be added without touching call sites that don't use them.
+```
+                    Orchestrator.respond(text)
+                              |
+                cloud LLM provider configured?
+                    (an API key is present)
+                    /                      \
+                  yes                       no
+                   |                         |
+        try the cloud multi              LlamaOllamaAgent
+        agent sequence  ==fails=>         handles the full
+                   |                      reply ALONE
+                succeeds                       |
+                   |                           |
+        reasoning agent -> tool/retrieval      |
+        agent -> composer agent, all           |
+        served by the same configured          |
+        cloud provider with different          |
+        role prompts                           |
+                   |                           |
+                   +=============+=============+
+                                 |
+                    final reply text, plus
+                    Orchestrator.last_mode
+                    logged and sent to the
+                    frontend so the active
+                    mode is always visible
+```
+
+**Why three roles against one provider, rather than three separate
+models.** The requirement is genuine multi agent collaboration (a
+reasoning step, a tool/retrieval step, a composing step) when a cloud
+model is reachable. Standing up three genuinely different model backends
+per role was judged out of scope for this pass's timeline (see the Scope
+Boundary in the original brief); instead, the same configured provider
+(Gemini or GPT) is called three times with three different system prompts
+and a chained context (the reasoning agent's output feeds the composer,
+and the tool/retrieval hook's output, if any, is folded in too). This is a
+real architectural split, not a single call dressed up: each stage has a
+distinct responsibility and its own prompt, and the composer never sees
+the raw internal reasoning text exposed to the user. A future pass could
+swap in genuinely different backends per role (for example, a fast local
+model for tool routing and a stronger cloud model for composing) behind
+the exact same Orchestrator shape, since nothing about the interface
+assumes same-provider roles.
+
+**Why the fallback is all-or-nothing.** If the cloud path fails partway
+(say, the reasoning call succeeds but the composer call then hits a quota
+error), the Orchestrator does not try to patch together a partial cloud
+result with a local completion. It catches `CloudUnavailableError` from
+the failing call and restarts the whole turn on `LlamaOllamaAgent` alone.
+A clean either/or is much easier to reason about, test, and explain in a
+demo than a hybrid path, and it matches the requirement's own wording:
+"no attempt at multi agent collaboration in that fallback mode."
+
+**What has actually been exercised.** With no cloud credentials configured
+on this development machine, the local fallback path has been run
+repeatedly, including through an automated end to end WebSocket test (see
+KNOWN_LIMITATIONS.md), and it correctly falls back and logs
+`local single agent (Llama via Ollama)` as the mode every time. The cloud
+multi agent path is implemented and has been reviewed for correctness
+(prompt construction, error handling, the `CloudUnavailableError` catch),
+but has not been run against a live Gemini or GPT account, since no key is
+available here. That is a real gap between "built" and "proven," stated
+plainly rather than implied away.
+
+## Design tradeoff carried over from the prototype
+
+The `ChatAgent` interface is still `respond(text_input: str) -> str`, one
+method, synchronous, stateless. This keeps every agent (Echo, local Llama,
+Gemini, GPT, and the Orchestrator itself, which is also a `ChatAgent`)
+trivially swappable and testable in isolation, at the cost of no built in
+conversation memory across turns. See README.md's suggested next steps.

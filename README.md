@@ -1,132 +1,184 @@
-# Voice Interaction Layer (Prototype)
+# Voice Interaction Backend
 
-A pluggable voice interaction layer for AI chat agents, built as a proof of
-concept at SLT Digital Lab. It demonstrates a working local, offline capable
-voice pipeline with a chat agent that can be swapped for any other agent
-without touching the voice layer.
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)
+![WebSocket](https://img.shields.io/badge/protocol-WebSocket-informational)
+![Languages](https://img.shields.io/badge/languages-English%20%7C%20Sinhala%20%7C%20Tamil-orange)
+![Status](https://img.shields.io/badge/status-proof%20of%20concept-yellow)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+
+A real time, multilingual voice interaction backend built at SLT Digital
+Lab. It evolves the earlier command line prototype into a structured
+backend service (FastAPI over WebSocket) with a real frontend, adding
+streaming transcription, noise robust voice activity detection, a natural
+sounding text to speech voice, and a cloud multi agent reasoning layer that
+falls back to a local model when the cloud is not available.
 
 ## Architecture
 
 ```
-User Voice
-    |
+Browser microphone
+    |  (float32 PCM chunks, streamed over WebSocket)
     v
-Speech to Text (stt.py, faster-whisper)
+FastAPI backend (backend/server.py)
     |
-    v
-Chat Agent (agent.py, pluggable via the ChatAgent interface)
+    +-> Voice activity detection (backend/vad.py)
+    |     WebRTC VAD + a per session ambient noise calibration step
     |
-    +-> Tool / API / Knowledge Base (stubbed hook, tool_callback)
+    +-> Streaming speech to text (backend/stt.py)
+    |     local faster-whisper (English, and Sinhala/Tamil fallback)
+    |     cloud Speech to Text for Sinhala/Tamil when configured
     |
-    v
-Response text
+    +-> Chat agent orchestrator (backend/agent.py)
+    |     cloud multi agent (reasoning -> tool/retrieval -> composer)
+    |     when a cloud LLM is configured and reachable, else local
+    |     Llama (via Ollama) handling the full response alone
     |
-    v
-Text to Speech (tts.py, pyttsx3)
-    |
-    v
-User Voice (played back)
+    +-> Text to speech (backend/tts.py)
+          cloud neural voice (Google/Azure) when configured, else a
+          local SAPI5 voice for English; Sinhala/Tamil without cloud
+          speak a short notice instead of mangling the text
+
+Frontend (frontend/): a single page, no framework, connecting to the
+backend over WebSocket, showing live status, transcript, detected
+language, and which agent mode answered.
 ```
 
-`main.py` orchestrates this loop. See ARCHITECTURE.md for how the chat agent
-plug in point works in detail.
+See ARCHITECTURE.md for how the cloud multi agent design and its local
+fallback actually work, and KNOWN_LIMITATIONS.md for an honest account of
+what is genuinely unsolved right now versus what only needs a credential.
+
+## Quick start
+
+```
+git clone https://github.com/BhanukaJanappriya/voice-interaction-layer.git
+cd voice-interaction-layer
+python -m venv venv
+venv\Scripts\python.exe -m pip install -r requirements.txt
+ollama pull llama3.2:latest
+copy .env.example .env
+cd backend
+..\venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
+```
+Then, in a second terminal, serve the frontend and open it in a browser
+(see Running below for the exact commands). The sections below explain
+each step and what is optional.
 
 ## Setup
 
-1. Install Ollama and pull the local model (already done on this machine,
-   included here for anyone setting up fresh):
-   ```
-   ollama pull llama3.2:latest
-   ```
-   Confirm the Ollama server is running and reachable at
-   `http://localhost:11434` (it usually starts automatically after
-   installation on Windows; if not, run `ollama serve`).
-
-2. Create a virtual environment with Python 3.12 and install dependencies:
+1. Python 3.12 virtual environment. Python 3.12 was chosen over newer
+   system Python versions because faster-whisper's dependencies did not
+   support them at the time this was built:
    ```
    python -m venv venv
    venv\Scripts\python.exe -m pip install -r requirements.txt
    ```
-   Python 3.12 was chosen over newer Python versions installed on this
-   machine because faster-whisper's dependencies do not yet support them.
 
-3. The first run of `stt.py` downloads the faster-whisper "base" model
-   (about 142 MB) from Hugging Face and caches it locally. This needs
-   internet access once; every run after that is fully offline. No API
-   keys are required anywhere in this project.
+2. Ollama with `llama3.2:latest` pulled and the server running at
+   `http://localhost:11434` (unchanged from the prototype; this is the
+   local fallback every other path degrades to, so it should always be
+   available):
+   ```
+   ollama pull llama3.2:latest
+   ```
+
+3. Copy `.env.example` to `.env` and fill in whichever cloud credentials
+   you actually have (Gemini or OpenAI for the LLM, Google Cloud or Azure
+   for speech). None of these are required to run the app; see
+   KNOWN_LIMITATIONS.md for exactly what each one unlocks.
+
+4. The first run of the STT module downloads the faster-whisper model
+   (about 142 MB for "base") from Hugging Face and caches it locally.
+   Needs internet once; every run after that is fully offline for the
+   local path.
 
 ## Running
 
-Standalone module tests (verify each piece works in isolation):
+Standalone module tests (verify each piece works in isolation, exactly as
+the prototype's modules did):
 ```
-venv\Scripts\python.exe stt.py
-venv\Scripts\python.exe agent.py
-venv\Scripts\python.exe tts.py
+cd backend
+..\venv\Scripts\python.exe vad.py      # noise floor calibration + before/after comparison
+..\venv\Scripts\python.exe stt.py      # streaming transcription in a chosen language
+..\venv\Scripts\python.exe agent.py    # cloud path if configured, plus a forced local path
+..\venv\Scripts\python.exe tts.py      # sample sentence in English, Sinhala, Tamil
 ```
 
-Full pipeline:
+Full backend:
 ```
-venv\Scripts\python.exe main.py
+cd backend
+..\venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
 ```
-Speak when prompted, wait for the reply to be read back, and press Ctrl+C
-to stop. Which chat agent is active is set by a single line near the top
-of `main.py` (`AGENT = LlamaOllamaAgent()` by default; swap in `EchoAgent()`
-for a quick sanity check with no model calls involved).
+`GET http://127.0.0.1:8000/health` reports which cloud providers are
+actually configured right now.
+
+Frontend (any static file server works; this is a plain HTML/CSS/JS page):
+```
+cd frontend
+..\venv\Scripts\python.exe -m http.server 5500
+```
+Open `http://127.0.0.1:5500/index.html`, set the backend WebSocket URL if
+it is not on the default `ws://localhost:8000/ws/voice`, pick a language,
+press "Start conversation", and allow microphone access.
 
 ## Why these tools were chosen
 
-**Speech to text: faster-whisper.** Runs fully offline after the one time
-model download, is noticeably faster than the reference `openai-whisper`
-package on CPU because it uses a CTranslate2 backend, and installed cleanly
-with no build tools required on this machine. The "base" model size and
-int8 quantization were chosen for a good balance of accuracy and speed on
-CPU; inference latency observed was about 0.4 to 0.6 seconds for a few
-seconds of audio.
+**Backend: FastAPI + WebSocket.** The standard, well documented approach
+for low latency, bidirectional audio streaming in Python, and keeps the
+whole backend in one language and one process model.
 
-**Text to speech: pyttsx3.** Drives the Windows SAPI5 engine natively, so it
-needs no model download and worked reliably on the first run. The tradeoff
-is voice naturalness: SAPI5 voices sound noticeably more robotic than a
-neural TTS engine like Coqui TTS or Piper. Those alternatives were
-considered but carry real setup risk on a short timeline (large model
-downloads, and in Coqui's case a heavy torch dependency), so pyttsx3 was the
-pragmatic choice to get reliable voice output working now. Swapping in a
-neural TTS engine later only requires rewriting `tts.py`, since `main.py`
-and `agent.py` do not depend on how speech is synthesized.
+**Speech to text: faster-whisper locally, cloud Speech to Text for
+Sinhala/Tamil when configured.** faster-whisper remains fast and reliable
+offline for English. It is also multilingual out of the box, so it can
+attempt Sinhala and Tamil without any extra setup, but its accuracy on
+those two languages is materially lower than on English (see
+KNOWN_LIMITATIONS.md); Google Cloud Speech to Text has explicit `si-LK`
+and `ta-IN` language support and is the documented real fix.
 
-**Chat agent: local Ollama running Llama 3.2.** Runs entirely on this
-machine with no API key and no per call cost, which fits the requirement
-that the base demo needs no cloud credentials.
+**Voice activity detection: WebRTC VAD + ambient calibration, replacing
+the prototype's fixed RMS threshold.** A pretrained classifier that looks
+at spectral shape is more robust to steady background noise than a single
+loudness threshold, and calibrating to the room at session start (rather
+than using one fixed number for every room) is what actually makes this
+noise robust rather than just differently tuned. See backend/vad.py for
+the standalone before/after test.
+
+**Text to speech: cloud neural voice first, local SAPI5 fallback for
+English only.** A natural sounding voice, especially a specific gender and
+tone, is a cloud neural TTS feature (Google Cloud Neural2, Azure Neural);
+no offline engine on this machine gets close. The local fallback exists so
+English still works with no credentials, using this machine's one
+installed female SAPI5 voice; Sinhala and Tamil have no local voice
+available at all here, which is documented as a real limitation rather
+than faked (see KNOWN_LIMITATIONS.md).
+
+**Chat agent: cloud multi agent when configured, local Llama via Ollama
+otherwise.** Local Ollama remains the zero cost, zero credential default
+so the base demo always works. When a cloud provider (Gemini or GPT) is
+configured and reachable, the Orchestrator runs a small three role
+collaboration (reasoning, tool/retrieval, composer) against that provider
+instead; see ARCHITECTURE.md for why this counts as genuine multi agent
+collaboration within this pass's scope.
 
 ## Current limitations
 
-- The chat agent is stateless: each turn is an independent request with no
-  conversation memory carried across turns.
-- The Tool/API/Knowledge Base hook in `agent.py` (`tool_callback`) is a
-  working stub, not a real integration; it proves the architecture supports
-  this step but does not call any real external service yet.
-- Silence detection in `stt.py` uses a fixed RMS amplitude threshold, which
-  may need tuning for very quiet or very noisy environments, and Whisper
-  can occasionally hallucinate short filler words ("You", "Thank you") on
-  ambient room noise that crosses the speech threshold.
-- No streaming anywhere in the pipeline: the agent call and the TTS
-  playback both block until they finish, so a turn's total latency is the
-  sum of STT plus agent plus TTS, typically a few seconds total on this
-  machine.
-- No wake word detection; recording starts immediately at a fixed duration
-  each turn rather than continuously listening.
+See KNOWN_LIMITATIONS.md for the full, honest list. In short: Sinhala and
+Tamil natural voice output and high accuracy transcription both require
+cloud credentials that are not configured on this machine right now; the
+"streaming" transcription is chunk based re-transcription, not a natively
+streaming ASR model; and the multi agent cloud path has not been exercised
+against a live Gemini/GPT account in this pass, only its local fallback
+(which has been, repeatedly, including with automated end to end tests).
 
 ## Suggested next steps
 
-- Add conversation history so the chat agent has multi turn context.
-- Replace the fixed duration recording with continuous listening plus a
-  wake word (e.g. via `openwakeword` or Porcupine) so the user does not
-  need to wait for a recording window.
-- Stream both the LLM response and the TTS output so playback can start
-  before the full response is generated, reducing perceived latency.
-- Implement a real Tool/API/Knowledge Base integration behind the existing
-  `tool_callback` hook, for example a document search or a company
-  specific API.
-- Add an optional cloud fallback (e.g. a hosted LLM or STT/TTS API) behind
-  the same interfaces, for environments where local compute is not
-  available, while keeping the local path as the default so no API key is
-  required to run the base demo.
+- Provide Gemini or GPT, and Google Cloud or Azure Speech credentials, then
+  re-run the standalone tests for agent.py, stt.py, and tts.py to confirm
+  the cloud paths end to end, not just their fallback behavior.
+- Stream synthesized audio back to the browser for in-page playback,
+  instead of the current design where the reply plays on the server
+  machine's own speakers.
+- Move the frontend's audio capture from ScriptProcessorNode (deprecated)
+  to an AudioWorklet.
+- Add conversation history so the chat agent has multi turn context; both
+  the prototype and this pass are stateless per turn.
