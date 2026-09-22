@@ -1,15 +1,45 @@
 :root {
-  --bg: #0f1420;
-  --panel: #161d2e;
-  --panel-border: #2a3350;
-  --text: #e8ecf7;
-  --text-dim: #93a0c2;
-  --accent: #5b8cff;
-  --accent-dim: #2f3f6b;
-  --good: #3fcf8e;
-  --warn: #f5a623;
-  --bad: #ef5b5b;
-  --radius: 12px;
+  --bg-start: #dff5f8;
+  --bg-end: #e6f6e3;
+  --card: #ffffff;
+  --card-border: #e3ecf5;
+  --text: #1c2b3a;
+  --text-dim: #64748b;
+  --blue: #2f6fed;
+  --blue-dim: #eaf1ff;
+  --green: #43a047;
+  --green-dim: #eaf7ea;
+  --good: #2eab5b;
+  --warn: #e8a13d;
+  --bad: #e05a5a;
+  --radius: 18px;
+  --shadow: 0 10px 30px rgba(31, 62, 100, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-start: #0f1c26;
+    --bg-end: #10261d;
+    --card: #16222c;
+    --card-border: #223142;
+    --text: #eaf2f8;
+    --text-dim: #93a4b8;
+    --blue-dim: #1c2c47;
+    --green-dim: #16301c;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg-start: #0f1c26;
+  --bg-end: #10261d;
+  --card: #16222c;
+  --card-border: #223142;
+  --text: #eaf2f8;
+  --text-dim: #93a4b8;
+  --blue-dim: #1c2c47;
+  --green-dim: #16301c;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
 * {
@@ -19,50 +49,60 @@
 body {
   margin: 0;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-  background: var(--bg);
+  background: linear-gradient(135deg, var(--bg-start) 0%, var(--bg-end) 100%);
+  background-attachment: fixed;
   color: var(--text);
   min-height: 100vh;
 }
 
-.app {
-  max-width: 720px;
+.page {
+  max-width: 560px;
   margin: 0 auto;
-  padding: 32px 20px 48px;
+  padding: 40px 20px 48px;
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
-.app-header h1 {
-  margin: 0 0 4px;
-  font-size: 1.6rem;
-  font-weight: 600;
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  margin-bottom: 8px;
 }
 
-.subtitle {
+.brand-logo {
+  width: 260px;
+  max-width: 70%;
+  height: auto;
+}
+
+.brand-tagline {
   margin: 0;
   color: var(--text-dim);
-  font-size: 0.9rem;
+  font-size: 0.92rem;
 }
 
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--panel-border);
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius);
-  padding: 24px;
+  box-shadow: var(--shadow);
+  padding: 28px;
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
-.controls {
+.field-row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: end;
   gap: 14px;
 }
 
 .field {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -72,41 +112,47 @@ body {
 
 .field input,
 .field select {
-  background: #0d1220;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
   color: var(--text);
-  padding: 8px 10px;
-  font-size: 0.9rem;
-  min-width: 180px;
+  padding: 10px 12px;
+  font-size: 0.92rem;
 }
 
 .mic-button {
-  margin-left: auto;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
-  background: var(--accent);
+  background: var(--blue);
   color: #fff;
   border: none;
   border-radius: 999px;
-  padding: 12px 22px;
-  font-size: 0.95rem;
+  padding: 14px 22px;
+  font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, transform 0.1s ease;
+  box-shadow: 0 8px 20px rgba(47, 111, 237, 0.28);
 }
 
 .mic-button:hover {
-  background: #4a78e0;
+  background: #2557c7;
 }
 
 .mic-button:active {
   transform: scale(0.98);
 }
 
+.mic-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .mic-button.listening {
   background: var(--bad);
+  box-shadow: 0 8px 20px rgba(224, 90, 90, 0.28);
 }
 
 .mic-icon {
@@ -126,6 +172,7 @@ body {
   align-items: center;
   gap: 8px;
   font-size: 0.95rem;
+  font-weight: 500;
 }
 
 .status-dot {
@@ -138,7 +185,7 @@ body {
 
 .status-idle { background: var(--text-dim); }
 .status-calibrating { background: var(--warn); animation: pulse 1.2s infinite; }
-.status-listening { background: var(--accent); animation: pulse 1.2s infinite; }
+.status-listening { background: var(--blue); animation: pulse 1.2s infinite; }
 .status-thinking { background: var(--warn); animation: pulse 0.8s infinite; }
 .status-speaking { background: var(--good); animation: pulse 0.8s infinite; }
 .status-error { background: var(--bad); }
@@ -155,21 +202,43 @@ body {
 }
 
 .badge {
-  font-size: 0.78rem;
-  padding: 4px 10px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 5px 12px;
   border-radius: 999px;
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--card-border);
   color: var(--text-dim);
-  background: #0d1220;
+  background: var(--card);
 }
 
 .badge-muted { color: var(--text-dim); }
-.badge-cloud { color: var(--good); border-color: var(--good); }
-.badge-local { color: var(--warn); border-color: var(--warn); }
+.badge-cloud { color: var(--green); border-color: var(--green); background: var(--green-dim); }
+.badge-local { color: var(--blue); border-color: var(--blue); background: var(--blue-dim); }
 
-.transcript-wrap {
-  border-top: 1px solid var(--panel-border);
-  padding-top: 16px;
+.advanced {
+  border-top: 1px solid var(--card-border);
+  padding-top: 14px;
+}
+
+.advanced summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.advanced .field {
+  margin-top: 12px;
+}
+
+.transcript-card {
+  gap: 12px;
+}
+
+.transcript-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 .transcript {
@@ -197,15 +266,15 @@ body {
 
 .bubble-user {
   align-self: flex-end;
-  background: var(--accent-dim);
+  background: var(--blue-dim);
   color: var(--text);
   border-bottom-right-radius: 4px;
 }
 
 .bubble-assistant {
   align-self: flex-start;
-  background: #0d1220;
-  border: 1px solid var(--panel-border);
+  background: var(--green-dim);
+  border: 1px solid var(--card-border);
   border-bottom-left-radius: 4px;
 }
 
@@ -221,20 +290,21 @@ body {
   color: var(--text-dim);
 }
 
-.app-footer {
+.page-footer {
   text-align: center;
   color: var(--text-dim);
   font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-@media (max-width: 520px) {
-  .mic-button {
-    margin-left: 0;
-    width: 100%;
-    justify-content: center;
-  }
-  .field input,
-  .field select {
-    min-width: 140px;
+.footer-credit {
+  opacity: 0.8;
+}
+
+@media (max-width: 480px) {
+  .field-row {
+    flex-direction: column;
   }
 }

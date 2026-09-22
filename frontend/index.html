@@ -3,22 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Voice Interaction Assistant</title>
+<title>SLT Mobitel Voice Assistant</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="app">
-  <header class="app-header">
-    <h1>Voice Interaction Assistant</h1>
-    <p class="subtitle">SLT Digital Lab &mdash; real time multilingual voice backend</p>
+<div class="page">
+  <header class="brand">
+    <img class="brand-logo" src="assets/mobitel-logo.png" alt="SLT Mobitel">
+    <p class="brand-tagline">Real time multilingual voice assistant</p>
   </header>
 
-  <main class="panel">
-    <section class="controls">
-      <div class="field">
-        <label for="backend-url">Backend</label>
-        <input id="backend-url" type="text" value="ws://localhost:8000/ws/voice">
-      </div>
+  <main class="card">
+    <section class="field-row">
       <div class="field">
         <label for="language-select">Language</label>
         <select id="language-select">
@@ -28,11 +24,12 @@
           <option value="ta">Tamil</option>
         </select>
       </div>
-      <button id="mic-button" class="mic-button" type="button">
-        <span id="mic-icon" class="mic-icon">&#127908;</span>
-        <span id="mic-label">Start conversation</span>
-      </button>
     </section>
+
+    <button id="mic-button" class="mic-button" type="button">
+      <span id="mic-icon" class="mic-icon">&#127908;</span>
+      <span id="mic-label">Start conversation</span>
+    </button>
 
     <section class="status-row">
       <div class="status-indicator">
@@ -45,16 +42,26 @@
       </div>
     </section>
 
-    <section class="transcript-wrap">
-      <div id="transcript" class="transcript">
-        <p class="hint">Press "Start conversation", allow microphone access, and speak.
-        Your words and the assistant's replies will appear here as they happen.</p>
+    <details class="advanced">
+      <summary>Advanced</summary>
+      <div class="field">
+        <label for="backend-url">Backend WebSocket URL</label>
+        <input id="backend-url" type="text" value="ws://localhost:8000/ws/voice">
       </div>
-    </section>
+    </details>
   </main>
 
-  <footer class="app-footer">
+  <section class="card transcript-card">
+    <h2 class="transcript-title">Conversation</h2>
+    <div id="transcript" class="transcript">
+      <p class="hint">Press "Start conversation", allow microphone access, and speak.
+      Your words and the assistant's replies will appear here as they happen.</p>
+    </div>
+  </section>
+
+  <footer class="page-footer">
     <p id="connection-note">Not connected.</p>
+    <p class="footer-credit">SLT Digital Lab &mdash; voice interaction prototype</p>
   </footer>
 </div>
 
