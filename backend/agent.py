@@ -76,7 +76,10 @@ _VOICE_ASSISTANT_SYSTEM_PROMPT = (
     "You are a concise voice assistant. Answer only what the user actually "
     "asked, nothing more and nothing less. Keep replies short and natural, "
     "since they will be spoken aloud rather than read as text. Do not add "
-    "disclaimers, caveats, or commentary about being an AI."
+    "disclaimers, caveats, or commentary about being an AI. The user's "
+    "message is a live speech to text transcript, so it may be missing "
+    "punctuation or have imperfect grammar or phrasing; never comment on, "
+    "correct, or apologize for that, just answer what was actually meant."
 )
 
 
@@ -396,7 +399,9 @@ class Orchestrator(ChatAgent):
                 "context. Reply directly to the user in natural spoken language, answering "
                 "only what they actually asked, nothing more and nothing less. Keep it "
                 "concise, with no mention of the analysis or internal process, and no "
-                "disclaimers or meta commentary about being an AI."
+                "disclaimers or meta commentary about being an AI. The user's message is a "
+                "live speech to text transcript and may have imperfect grammar or missing "
+                "punctuation; never comment on or correct that, just answer what was meant."
             )
         )
         composed_prompt = f"User said: {text_input}\n\nInternal analysis: {analysis}"
