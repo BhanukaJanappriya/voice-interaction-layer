@@ -1,7 +1,9 @@
 /*
  * 3D talking bot avatar (Three.js / WebGL).
  *
- * Renders a small, lit, gradient shaded head with blinking eyes and a
+ * Renders a small, lit, gradient shaded head with hair, a two tone hat,
+ * ears, and blinking eyes whose pupils and whose head rotation both track
+ * the cursor (see pointerFraction() and its use in animate()), plus a
  * mouth that opens and closes per pipeline state, and, while the
  * assistant is speaking, steps through a sequence of mouth shapes paced
  * to the actual words in the reply (see speakText()).
@@ -95,25 +97,92 @@
   );
   scene.add(head);
 
-  const eyeGeometry = new THREE.SphereGeometry(0.16, 16, 16);
+  // Eyes are white spheres with a small dark pupil each; the pupils shift
+  // within the eye toward the cursor every frame (see animate()'s pointer
+  // tracking below), which reads as the face actually looking at the
+  // cursor, not just the head turning toward it.
+  const eyeGeometry = new THREE.SphereGeometry(0.18, 16, 16);
   const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 });
+  const pupilGeometry = new THREE.SphereGeometry(0.075, 12, 12);
+  const pupilMaterial = new THREE.MeshStandardMaterial({ color: 0x16222c, roughness: 0.4 });
+
   const eyeLeft = new THREE.Mesh(eyeGeometry, eyeMaterial);
   const eyeRight = new THREE.Mesh(eyeGeometry, eyeMaterial);
-  eyeLeft.position.set(-0.55, 0.35, 1.42);
-  eyeRight.position.set(0.55, 0.35, 1.42);
+  eyeLeft.position.set(-0.58, 0.35, 1.45);
+  eyeRight.position.set(0.58, 0.35, 1.45);
   head.add(eyeLeft, eyeRight);
 
+  const pupilLeft = new THREE.Mesh(pupilGeometry, pupilMaterial);
+  const pupilRight = new THREE.Mesh(pupilGeometry, pupilMaterial);
+  pupilLeft.position.set(0, 0, 0.15);
+  pupilRight.position.set(0, 0, 0.15);
+  eyeLeft.add(pupilLeft);
+  eyeRight.add(pupilRight);
+
   // A flattened sphere stands in for the mouth: base scale gives it a
-  // thin, wide resting shape, and speakText()/the animation loop scale it
+  // wide, noticeably sized resting shape (bigger than a realistic human
+  // mouth would be, deliberately, so it reads clearly at this avatar's
+  // small on screen size), and speakText()/the animation loop scale it
   // further per word to approximate open/rounded/closed mouth shapes.
-  const MOUTH_BASE_SCALE = { x: 1.0, y: 0.35, z: 0.55 };
+  const MOUTH_BASE_SCALE = { x: 1.4, y: 0.55, z: 0.6 };
   const mouth = new THREE.Mesh(
-    new THREE.SphereGeometry(0.34, 24, 16),
+    new THREE.SphereGeometry(0.4, 24, 16),
     new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 })
   );
   mouth.scale.set(MOUTH_BASE_SCALE.x, MOUTH_BASE_SCALE.y, MOUTH_BASE_SCALE.z);
   mouth.position.set(0, -0.55, 1.45);
   head.add(mouth);
+
+  // Ears: small flattened spheres on either side of the head, tinted with
+  // the brand blue so they read as a deliberate feature rather than a
+  // rendering glitch.
+  const earGeometry = new THREE.SphereGeometry(0.32, 16, 16);
+  const earMaterial = new THREE.MeshStandardMaterial({ color: 0x2f6fed, roughness: 0.4 });
+  const earLeft = new THREE.Mesh(earGeometry, earMaterial);
+  const earRight = new THREE.Mesh(earGeometry, earMaterial);
+  earLeft.scale.set(0.55, 0.9, 0.4);
+  earRight.scale.set(0.55, 0.9, 0.4);
+  earLeft.position.set(-1.55, 0.05, 0.15);
+  earRight.position.set(1.55, 0.05, 0.15);
+  head.add(earLeft, earRight);
+
+  // Hat: a small full sphere ("topper") centered right at the head's own
+  // north pole, plus a contrasting band around its equator. Centering it
+  // at the pole, rather than trying to fit a brim shape at some lower,
+  // wider latitude of the head, means its lower half naturally buries
+  // itself in the head's rapidly narrowing top (where the head's own
+  // radius is small) with no gap and no geometry math to get precisely
+  // right, while its upper half is simply outside the head sphere and
+  // fully visible; the band is sized to clear both the dome and the
+  // head's own (very small, this close to the pole) radius at that
+  // height, so, unlike an earlier version of this that used a brim
+  // positioned lower down, it does not end up embedded inside the
+  // opaque head and invisible.
+  const hatDome = new THREE.Mesh(
+    new THREE.SphereGeometry(0.85, 24, 16),
+    new THREE.MeshStandardMaterial({ color: 0x2f6fed, roughness: 0.4 })
+  );
+  hatDome.position.set(0, 1.78, 0);
+  head.add(hatDome);
+
+  const hatBrim = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.89, 0.89, 0.22, 24, 1, true),
+    new THREE.MeshStandardMaterial({ color: 0x43a047, roughness: 0.4, side: THREE.DoubleSide })
+  );
+  hatBrim.position.set(0, 1.74, 0);
+  head.add(hatBrim);
+
+  // Hair: a fringe band just below the hat brim, built as a partial
+  // sphere slightly wider than the head so it does not z-fight with it.
+  // thetaStart begins right where the brim ends and thetaLength stops
+  // well above the eyes, so hat, hair, and face stack cleanly instead of
+  // the hair sphere (which wraps all the way around at any given theta)
+  // hiding the brim behind it.
+  const hair = new THREE.Mesh(
+    new THREE.SphereGeometry(1.73, 32, 16, 0, Math.PI * 2, Math.PI * 0.33, Math.PI * 0.09),
+    new THREE.MeshStandardMaterial({ color: 0x2b2320, roughness: 0.65 })
+  );
+  head.add(hair);
 
   const ring = new THREE.Mesh(
     new THREE.TorusGeometry(2.05, 0.05, 12, 64),
@@ -206,11 +275,22 @@
     requestAnimationFrame(animate);
 
     idlePhase += 0.01;
+    // Cursor tracking: the head turns toward the pointer (a wide range, at
+    // a snappy but still smoothed catch up rate) and the pupils shift
+    // inside the eyes toward it too, so the face reads as actually
+    // looking at the cursor rather than just idly rotating.
     const pointer = pointerFraction();
-    head.rotation.y += (pointer.x * 0.4 - head.rotation.y) * 0.05;
-    head.rotation.x += (-pointer.y * 0.25 - head.rotation.x) * 0.05;
+    head.rotation.y += (pointer.x * 0.9 - head.rotation.y) * 0.12;
+    head.rotation.x += (-pointer.y * 0.55 - head.rotation.x) * 0.12;
     head.rotation.y += Math.sin(idlePhase * 0.5) * 0.0015;
     head.position.y = Math.sin(idlePhase) * 0.04;
+
+    const pupilOffsetX = Math.max(-1, Math.min(1, pointer.x)) * 0.075;
+    const pupilOffsetY = Math.max(-1, Math.min(1, -pointer.y)) * 0.06;
+    pupilLeft.position.x += (pupilOffsetX - pupilLeft.position.x) * 0.3;
+    pupilLeft.position.y += (pupilOffsetY - pupilLeft.position.y) * 0.3;
+    pupilRight.position.x += (pupilOffsetX - pupilRight.position.x) * 0.3;
+    pupilRight.position.y += (pupilOffsetY - pupilRight.position.y) * 0.3;
 
     blinkPhase += 0.02;
     const blinking = Math.sin(blinkPhase * 0.15) > 0.985;
