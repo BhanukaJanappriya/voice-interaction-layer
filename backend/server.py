@@ -23,8 +23,20 @@ Protocol (WebSocket at /ws/voice):
         {"type": "status", "state": "calibrating" | "listening" | "thinking" | "speaking"}
         {"type": "partial_transcript", "text": "...", "language": "en"}
         {"type": "final_transcript", "text": "...", "language": "en"}
+        {"type": "agent_response_chunk", "text": "..."}
+            Sent repeatedly while the agent's reply is being generated,
+            "text" holding the accumulated reply so far (not just the new
+            piece), the same cumulative shape partial_transcript already
+            uses. Lets the frontend show the reply appearing in real time
+            during the "thinking" status instead of only once it is fully
+            generated. See agent.py's Orchestrator.respond_stream(): only
+            the local fallback path is actually streamed chunk by chunk;
+            the cloud multi agent path yields its finished reply as one
+            chunk (documented there, and in KNOWN_LIMITATIONS.md).
         {"type": "agent_response", "text": "...", "mode": "cloud multi agent (gemini)"
                                                           | "local single agent (Llama via Ollama)"}
+            Sent once, after the last agent_response_chunk, with the
+            complete text and which mode produced it.
         {"type": "speaking_done"}
         {"type": "error", "message": "..."}
 
@@ -202,6 +214,39 @@ async def _run_one_utterance(websocket: WebSocket, language_hint: Optional[str],
     return final_text, final_language, session_ended
 
 
+async def _stream_agent_reply(text_input: str):
+    """Runs orchestrator.respond_stream() (agent.py) on a background
+    thread and yields each text chunk as it arrives, bridged into the
+    event loop via an asyncio.Queue the same way _run_one_utterance above
+    bridges transcribe_stream()'s blocking whisper calls. respond_stream()
+    is itself a blocking generator (its requests.post call streams the
+    HTTP response, but each iteration still blocks waiting on the next
+    chunk from Ollama), so running it directly in this async handler would
+    stall every other connection's event loop turn for the whole reply,
+    exactly as an unstreamed call would."""
+    loop = asyncio.get_running_loop()
+    chunk_queue: "asyncio.Queue" = asyncio.Queue()
+
+    def _worker():
+        try:
+            for chunk in orchestrator.respond_stream(text_input):
+                loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
+        except Exception as exc:
+            loop.call_soon_threadsafe(chunk_queue.put_nowait, exc)
+        finally:
+            loop.call_soon_threadsafe(chunk_queue.put_nowait, None)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    while True:
+        item = await chunk_queue.get()
+        if item is None:
+            return
+        if isinstance(item, Exception):
+            raise item
+        yield item
+
+
 @app.websocket("/ws/voice")
 async def voice_ws(websocket: WebSocket):
     await websocket.accept()
@@ -250,8 +295,11 @@ async def voice_ws(websocket: WebSocket):
 
             await _send_json(websocket, {"type": "status", "state": "thinking"})
             agent_start = time.time()
+            reply_text = ""
             try:
-                reply_text = orchestrator.respond(final_text)
+                async for chunk in _stream_agent_reply(final_text):
+                    reply_text += chunk
+                    await _send_json(websocket, {"type": "agent_response_chunk", "text": reply_text})
             except Exception as exc:
                 await _send_json(websocket, {"type": "error", "message": f"Agent error: {exc}"})
                 continue
