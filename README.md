@@ -53,7 +53,11 @@ Choose your language  ->  Start Chat or Start Voice  ->  Chat screen
                                           (mic permission first, then an
                                           automatic introduction and start,
                                           animated bot avatar, live
-                                          captions, via WS /ws/voice)
+                                          captions of its own replies, via
+                                          WS /ws/voice; loops turn by turn
+                                          until the user sounds satisfied,
+                                          then asks a closing question and
+                                          ends itself)
 ```
 
 A theme toggle (top right, persisted across reloads) switches the whole
@@ -242,11 +246,33 @@ out of nowhere.
 shows the mic permission explainer (or, if the browser already reports
 permission as granted, skips straight past it); once permission is
 settled, `beginVoiceSession()` (`frontend/app.js`) speaks the
-introduction, waits for it to finish, then opens the WebSocket and starts
-listening automatically. The screen itself is deliberately down to three
-controls in the top right: captions on/off, mute, and a conversation
-history panel reusing the same transcript every screen already renders
-into, rather than a status row, badges, and a manual start button.
+introduction ("Welcome to SLT Mobitel, ..."), waits for it to finish, then
+opens the WebSocket and starts listening automatically. The screen itself
+is down to five controls: conversation history (top left), logout and the
+theme toggle (top right), and captions on/off, the mic, and an end chat
+button along the bottom, rather than a status row, badges, and a manual
+start button. Captions mirror only the assistant's own current line, never
+the user's own live speech transcript, so they read as subtitles for what
+the assistant is saying; the full back and forth is still in the history
+panel regardless of whether captions are on.
+
+**The conversation loops on its own until the user sounds done, then asks
+before ending.** Each turn already stops listening the moment the user
+stops talking (voice activity detection, see below) and starts listening
+again once the reply has been spoken; `backend/server.py`'s
+`_sounds_like_closing_signal()` additionally watches each final transcript
+for a satisfied/thankful phrase ("thank you", "that's all", and a couple
+of common Sinhala/Tamil equivalents). The first time one is heard, the
+assistant asks a canned closing question instead of routing that turn to
+the agent; if the next thing the user says also reads as closing (or a
+plain "no"), the assistant says goodbye, the frontend receives an
+`end_chat` event, and the session actually ends, back at the Start Chat/
+Start Voice screen. If instead the user asks something new, the closing
+offer is simply dropped and that message is answered normally, so a
+"thank you" that turns out to be the middle of a sentence rather than a
+goodbye does not cut the conversation off. The end chat (cut) button on
+the bottom bar does the same ending immediately, for when the user wants
+to stop without going through that exchange.
 
 **The assistant's own speech cannot be mistaken for the next thing the
 user says.** On a single machine demo, the reply plays on that same

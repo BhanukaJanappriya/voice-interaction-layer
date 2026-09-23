@@ -244,6 +244,30 @@ first-time, permission-not-yet-granted path was verified by reading the
 code and modal markup rather than by a live click-through, since nothing
 in this environment can grant that native prompt.
 
+## Ending the conversation on "thank you" is a keyword match, not real intent understanding
+
+**Status: works for the common phrasing, not exhaustive.**
+
+`backend/server.py`'s `_sounds_like_closing_signal()` and `_sounds_negative()`
+decide when the assistant offers to end the conversation, and when a
+follow up utterance confirms that, by matching a fixed, short list of
+English phrases ("thank you", "that's all", "nothing else", ...) plus a
+couple of common Sinhala (ස්තුතියි) and Tamil (நன்றி) words, the same
+plain keyword matching approach `_looks_like_transcription_hallucination()`
+already uses just above it in the same file, not an LLM based intent
+classification. A real "thank you for explaining, but I have one more
+question" is handled correctly (the closing offer is dropped once the
+next utterance turns out not to confirm it), but a satisfied phrase this
+list does not happen to include, especially in Sinhala or Tamil phrasing
+beyond the one word each covered here, will simply not trigger the
+closing flow; the conversation keeps going normally in that case rather
+than ending awkwardly early, so this list being incomplete costs a missed
+convenience, not a broken conversation.
+
+**Real fix:** a small classification call (even a fast local model) to
+judge "does this sound like the user is done," or a longer, reviewed
+phrase list per language, if this is taken beyond a demo.
+
 ## No conversation memory across turns
 
 Unchanged from the prototype: each turn is an independent request to the
