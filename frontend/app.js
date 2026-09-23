@@ -234,6 +234,32 @@ function finalizePartial(text, language) {
   }
 }
 
+// Mirrors updateOrAddPartial()/finalizePartial() above, but for the
+// agent's own reply streaming in (see agent_response_chunk in
+// handleServerMessage), so the reply visibly appears while the backend
+// is still generating it (during the "thinking" status) rather than only
+// once it is fully ready.
+let currentStreamingReplyBubble = null;
+
+function updateStreamingReply(text) {
+  clearHint();
+  if (!currentStreamingReplyBubble) {
+    currentStreamingReplyBubble = document.createElement("div");
+    currentStreamingReplyBubble.className = "bubble bubble-assistant bubble-partial";
+    transcript.appendChild(currentStreamingReplyBubble);
+  }
+  currentStreamingReplyBubble.textContent = text;
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+function finalizeStreamingReply(text, mode) {
+  if (currentStreamingReplyBubble) {
+    currentStreamingReplyBubble.remove();
+    currentStreamingReplyBubble = null;
+  }
+  addBubble("assistant", text, mode);
+}
+
 // Simple linear interpolation resampler: good enough for speech, no
 // external library needed for a demo running from a plain HTML page.
 function resample(buffer, fromRate, toRate) {
@@ -303,9 +329,12 @@ function handleServerMessage(event) {
     case "final_transcript":
       finalizePartial(payload.text, payload.language);
       break;
+    case "agent_response_chunk":
+      updateStreamingReply(payload.text);
+      break;
     case "agent_response":
       lastResponseText = payload.text || "";
-      addBubble("assistant", payload.text, payload.mode);
+      finalizeStreamingReply(payload.text, payload.mode);
       setModeBadge(payload.mode);
       break;
     case "speaking_done":
@@ -422,6 +451,10 @@ function stopConversation() {
   if (currentPartialBubble) {
     currentPartialBubble.remove();
     currentPartialBubble = null;
+  }
+  if (currentStreamingReplyBubble) {
+    currentStreamingReplyBubble.remove();
+    currentStreamingReplyBubble = null;
   }
 }
 
