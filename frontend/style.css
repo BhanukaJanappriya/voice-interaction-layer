@@ -97,8 +97,7 @@ body {
   border-radius: 50%;
   border: 1px solid var(--card-border);
   background: var(--card);
-  color: var(--text);
-  font-size: 1.1rem;
+  color: var(--blue);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -113,6 +112,23 @@ body {
 
 .theme-toggle:active {
   transform: scale(0.94);
+}
+
+/* Every icon in this app is a single stroke colored SVG (color set via
+   currentColor, never a filled multi color glyph), so the palette stays
+   restricted to the Mobitel blue/green tones already used everywhere
+   else, rather than introducing emoji or icon-font colors. Icons inside a
+   solid colored button (mic button, solid choice buttons) inherit that
+   button's own white text color automatically through currentColor, with
+   no extra rule needed here. */
+.icon {
+  display: inline-flex;
+  color: var(--blue);
+  flex-shrink: 0;
+}
+
+.icon-arrow {
+  color: inherit;
 }
 
 @keyframes bg-drift {
@@ -218,20 +234,134 @@ body {
   filter: brightness(1.05);
 }
 
-.choice-icon {
-  font-size: 1.1rem;
-}
-
 .back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 4px;
   color: var(--text-dim);
   font-size: 0.85rem;
   text-decoration: none;
   align-self: center;
+  /* Also used on a couple of plain <button> elements (see
+     #cancel-existing, #dismiss-mic-modal in index.html) so they read
+     identically to the <a> links here without a second class name to
+     keep track of; this resets the button chrome those need but an <a>
+     never had. */
+  background: none;
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
 }
 
 .back-link:hover {
   color: var(--blue);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.user-card {
+  align-items: stretch;
+  text-align: center;
+}
+
+.user-choice-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.name-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+
+.name-prompt label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.name-prompt input {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 12px 14px;
+  font-size: 0.95rem;
+}
+
+.name-prompt .back-link {
+  align-self: center;
+  margin-top: 0;
+}
+
+/* Mic permission modal: a small explanatory dialog shown before the
+   browser's own native permission prompt, so a first time visitor has
+   context for why that prompt is about to appear rather than being
+   surprised by an unexplained browser popup. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 28, 38, 0.45);
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  animation: fade-in-up 0.25s ease both;
+}
+
+.modal-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--blue-dim);
+  color: var(--blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.modal-card h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.modal-card p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.modal-card .choice-button {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.modal-dismiss {
+  margin-top: 0;
 }
 
 .chat-transcript {
@@ -611,10 +741,6 @@ body {
 .mic-button.listening {
   background: var(--bad);
   box-shadow: 0 8px 20px rgba(224, 90, 90, 0.28);
-}
-
-.mic-icon {
-  font-size: 1.1rem;
 }
 
 .status-row {

@@ -24,8 +24,28 @@
 <div class="bg-glow" aria-hidden="true"></div>
 
 <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle dark and light theme">
-  <span id="theme-toggle-icon">&#127769;</span>
+  <span id="theme-toggle-icon" class="icon"></span>
 </button>
+
+<!-- Shown once on entering the voice screen, before the browser's own
+     permission prompt, so the user has context for why a native dialog is
+     about to appear rather than being surprised by it. -->
+<div id="mic-permission-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-icon">
+      <svg class="icon" viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+        <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
+        <line x1="12" y1="19" x2="12" y2="23"></line>
+        <line x1="8" y1="23" x2="16" y2="23"></line>
+      </svg>
+    </div>
+    <h2 id="mic-modal-title">Enable your microphone</h2>
+    <p>This assistant needs microphone access to hear you speak. Your browser will ask you to confirm right after.</p>
+    <button id="allow-mic-button" class="choice-button choice-button-solid" type="button">Allow microphone</button>
+    <button id="dismiss-mic-modal" class="back-link modal-dismiss" type="button">Not now</button>
+  </div>
+</div>
 
 <div class="page">
 
@@ -54,12 +74,58 @@
     </header>
     <div class="card select-card">
       <button id="go-chat" class="choice-button choice-button-outline" type="button">
-        <span class="choice-icon">&#128172;</span> Start Chat
+        <svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+        </svg>
+        Start Chat
       </button>
       <button id="go-voice" class="choice-button choice-button-solid" type="button">
-        <span class="choice-icon">&#127908;</span> Start Voice
+        <svg class="icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+          <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
+          <line x1="12" y1="19" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+        Start Voice
       </button>
-      <a href="#language" class="back-link" data-nav="language">&larr; Change language</a>
+      <a href="#language" class="back-link" data-nav="language">
+        <svg class="icon icon-arrow" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        Change language
+      </a>
+    </div>
+  </section>
+
+  <!-- Screen 2.5: new or existing user, gates both the chat and voice
+       screens so the agent can address the visitor by name (existing
+       user) or as Guest (new user) in its greeting. -->
+  <section id="screen-user" class="screen">
+    <header class="brand">
+      <img class="brand-logo" src="assets/mobitel-logo.png" alt="SLT Mobitel">
+      <p class="brand-tagline">Are you a new or existing user?</p>
+    </header>
+    <div class="card user-card">
+      <div id="user-choice-buttons" class="user-choice-buttons">
+        <button id="go-existing" class="choice-button choice-button-outline" type="button">Existing user</button>
+        <button id="go-new" class="choice-button choice-button-solid" type="button">New user</button>
+      </div>
+
+      <div id="existing-name-prompt" class="name-prompt hidden">
+        <label for="user-name-input">What should I call you?</label>
+        <input id="user-name-input" type="text" placeholder="Your name" autocomplete="name" maxlength="40">
+        <button id="confirm-name" class="choice-button choice-button-solid" type="button">Continue</button>
+        <button id="cancel-existing" class="back-link" type="button">Use a different option</button>
+      </div>
+
+      <a href="#select" class="back-link" data-nav="select">
+        <svg class="icon icon-arrow" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        Back
+      </a>
     </div>
   </section>
 
@@ -91,7 +157,12 @@
 
     <main class="card">
       <button id="mic-button" class="mic-button" type="button">
-        <span id="mic-icon" class="mic-icon">&#127908;</span>
+        <svg id="mic-icon" class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+          <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
+          <line x1="12" y1="19" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
         <span id="mic-label">Start conversation</span>
       </button>
 
@@ -114,7 +185,13 @@
         </div>
       </details>
 
-      <a href="#select" class="back-link" data-nav="select">&larr; Back</a>
+      <a href="#select" class="back-link" data-nav="select">
+        <svg class="icon icon-arrow" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        Back
+      </a>
     </main>
 
     <section class="card transcript-card">
@@ -148,7 +225,13 @@
       <div class="badges">
         <span id="chat-mode-badge" class="badge badge-muted">Agent mode: &mdash;</span>
       </div>
-      <a href="#select" class="back-link" data-nav="select">&larr; Back</a>
+      <a href="#select" class="back-link" data-nav="select">
+        <svg class="icon icon-arrow" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        Back
+      </a>
     </main>
   </section>
 
