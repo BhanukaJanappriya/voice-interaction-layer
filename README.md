@@ -201,6 +201,16 @@ voice pipeline uses through a small `POST /chat` endpoint (see
 mode answered, are identical in both screens; it just skips STT and TTS
 entirely, since text in and text out needs neither.
 
+**Voice screen avatar: a real 3D face (Three.js/WebGL), with a flat 2D
+fallback.** A genuinely three dimensional, lit face needs an actual 3D
+renderer; CSS can fake perspective but not real per pixel lighting and
+shading. `frontend/bot3d.js` renders one, whose mouth animates paced to
+the actual words of each reply while the state-driven flat CSS avatar
+(`style.css`'s `.bot` rules) keeps working underneath as an automatic
+fallback if WebGL is unavailable. See KNOWN_LIMITATIONS.md for why this
+is text paced rather than true audio driven lip sync, and what a real fix
+would involve.
+
 ## Current limitations
 
 See KNOWN_LIMITATIONS.md for the full, honest list. In short: Sinhala and

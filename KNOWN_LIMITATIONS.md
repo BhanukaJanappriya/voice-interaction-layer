@@ -3,6 +3,51 @@
 An honest account of what does not fully work yet, why, and what would
 actually fix it, so this can be presented accurately rather than oversold.
 
+## The 3D avatar's mouth is text paced, not audio driven lip sync
+
+**Status: a genuine, working approximation, not true lip sync.**
+
+`frontend/bot3d.js` renders a real 3D, WebGL lit face (Three.js) whose
+mouth animates while the assistant is speaking. It is driven by the
+actual reply text: the text is split into words, each word is timed at a
+natural conversational rate (165 words per minute) and given a mouth
+shape guessed from its vowels (rounded for o/u, wide for a/e, mid for i,
+mostly closed otherwise). This is genuinely tied to what the bot is
+saying, in the sense that the timing and shape sequence come from the
+real words, not a fixed loop, and it has been verified to visibly change
+shape from word to word.
+
+It is not audio driven viseme animation, and cannot be, without a bigger
+change: the synthesized speech audio plays on the backend machine's own
+speakers and never reaches the browser (see ARCHITECTURE.md's data flow
+diagram), so there is no audio waveform in the page to analyze or sync
+against. The word timing is an estimate, not the TTS engine's actual
+per-word timing, so it will drift out of sync with the real audio over a
+long reply, especially against a cloud TTS voice whose pacing differs
+from the 165 words per minute assumption.
+
+**Real fix:** stream the synthesized audio to the browser (already listed
+as a suggested next step in README.md for a different reason, in-page
+playback) and either use the Web Audio API's analyser node to drive mouth
+shape from the actual waveform, or have the TTS provider return word or
+phoneme level timing (several cloud TTS APIs, including Google Cloud's,
+can return timepoints) and drive the mouth from that instead of an
+estimate.
+
+## WebGL/Three.js is required for the 3D face; a flat 2D face is the fallback
+
+**Status: handled, not a gap.**
+
+`bot3d.js` feature detects WebGL and whether the Three.js script actually
+loaded before doing anything else; if either is unavailable, it sets
+`window.bot3d.available = false` and leaves the original flat CSS/HTML
+avatar (blinking eyes, a mouth that scales per state) fully in control,
+rather than showing a broken canvas or crashing. This was exercised for
+real during development: the Three.js CDN URL initially pointed at a path
+that returned a 503, and the flat avatar kept working correctly the whole
+time with a plain console message explaining why the 3D layer was not
+active.
+
 ## Sinhala and Tamil voice quality (text to speech)
 
 **Status: not solved locally; requires a cloud credential.**
