@@ -216,6 +216,23 @@ voice pipeline uses through a small `POST /chat` endpoint (see
 mode answered, are identical in both screens; it just skips STT and TTS
 entirely, since text in and text out needs neither.
 
+**Between that choice and the actual screen: a new or existing user
+check, then a greeting.** Existing users are asked for a name (remembered
+locally, see KNOWN_LIMITATIONS.md for why this is a name to be addressed
+by, not real authentication); new users are addressed as Guest. Either
+way, landing on the voice or chat screen triggers an immediate,
+personalized introduction rather than a blank waiting screen, and the
+voice screen additionally shows an explanatory modal before the browser's
+own native microphone permission prompt, so that prompt does not appear
+out of nowhere.
+
+**Every icon is an inline SVG using `currentColor`, not emoji.** A stroke
+only icon set means every icon picks up the surrounding element's own
+color (the Mobitel blue almost everywhere, or a button's own white text
+color when it sits inside a solid colored button) with no extra styling
+per icon, keeping the palette restricted rather than mixing in whatever
+colors the visiting platform's emoji font happens to render.
+
 **Voice screen avatar: a real 3D face (Three.js/WebGL), with a flat 2D
 fallback.** A genuinely three dimensional, lit face needs an actual 3D
 renderer; CSS can fake perspective but not real per pixel lighting and

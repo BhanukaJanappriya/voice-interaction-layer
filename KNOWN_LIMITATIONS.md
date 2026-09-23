@@ -208,3 +208,26 @@ logs.
 Unchanged from the prototype: each turn is an independent request to the
 active chat agent. Both the local and cloud paths currently discard prior
 turns.
+
+## "Existing user" is a name to be addressed by, not a real login
+
+**Status: honest local personalization, not authentication.**
+
+The new or existing user screen (`frontend/index.html`'s `#screen-user`,
+logic in `frontend/app.js`) asks whether a visitor is new or existing.
+Choosing "Existing user" asks for a name and remembers it in that
+browser's `localStorage` so it can prefill the field on a later visit in
+the same browser; choosing "New user" addresses them as Guest. There is no
+account system, no password, and nothing is checked against anything: two
+different people typing the same name are treated identically, and the
+same person on a different browser or device starts over as a stranger.
+The name only changes what the greeting says and reaches no other part of
+the system; the backend agent has no notion of who is asking, and per turn
+personalization in its own replies (not just the fixed greeting) was
+judged out of scope for this pass.
+
+**Real fix:** an actual account system (even a simple one, a persisted
+user record keyed by something more durable than a browser's local
+storage) if genuine returning user recognition across devices is needed;
+and, separately, passing the name to the backend so the agent's own
+replies, not just the canned greeting, can address the user by name.
