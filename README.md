@@ -50,8 +50,10 @@ Choose your language  ->  Start Chat or Start Voice  ->  Chat screen
 (English/Sinhala/Tamil)   (pick how to talk)              (text, via POST /chat)
                                       \
                                        -> Voice screen
-                                          (mic, live status, animated bot
-                                          avatar, transcript, via WS /ws/voice)
+                                          (mic permission first, then an
+                                          automatic introduction and start,
+                                          animated bot avatar, live
+                                          captions, via WS /ws/voice)
 ```
 
 A theme toggle (top right, persisted across reloads) switches the whole
@@ -186,8 +188,9 @@ used library that calls Microsoft Edge's own text to speech backend (the
 same neural voice catalog Azure Cognitive Services uses) with no API key,
 account, or credentials, only internet access. Verified live for English,
 Sinhala, and Tamil, both a female and a male voice, with no cloud provider
-configured at all. The configured cloud provider (Google Cloud Neural2 or
-Azure Neural) is still tried first when real credentials are set, since it
+configured at all. The configured cloud provider (Google Cloud Chirp3-HD,
+its newest and most natural tier, where available, or Azure Neural) is
+still tried first when real credentials are set, since it
 is the higher quality, quota backed, officially supported option; edge-tts
 is what makes a genuinely natural voice available with zero setup, not a
 replacement for a real account in production. See KNOWN_LIMITATIONS.md for
@@ -234,6 +237,25 @@ personalized introduction rather than a blank waiting screen, and the
 voice screen additionally shows an explanatory modal before the browser's
 own native microphone permission prompt, so that prompt does not appear
 out of nowhere.
+
+**The voice screen starts itself, with no button to press.** Entering it
+shows the mic permission explainer (or, if the browser already reports
+permission as granted, skips straight past it); once permission is
+settled, `beginVoiceSession()` (`frontend/app.js`) speaks the
+introduction, waits for it to finish, then opens the WebSocket and starts
+listening automatically. The screen itself is deliberately down to three
+controls in the top right: captions on/off, mute, and a conversation
+history panel reusing the same transcript every screen already renders
+into, rather than a status row, badges, and a manual start button.
+
+**The assistant's own speech cannot be mistaken for the next thing the
+user says.** On a single machine demo, the reply plays on that same
+machine's speakers, so a microphone left open the whole time could pick
+up its own voice. `frontend/app.js` only forwards captured audio to the
+backend while the server reports it is actually listening or calibrating,
+never while it is thinking or speaking, and `server.py` runs `speak_text()`
+in a worker thread rather than inline, so its blocking playback cannot
+stall the event loop and delay that status change for every connection.
 
 **Every icon is an inline SVG using `currentColor`, not emoji.** A stroke
 only icon set means every icon picks up the surrounding element's own

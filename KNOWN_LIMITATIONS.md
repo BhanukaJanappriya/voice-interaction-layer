@@ -110,11 +110,25 @@ for these two languages is now the rare fallback: only if edge-tts's own
 call fails too (no internet, or Microsoft's service being unreachable) is
 it ever reached, not the default path with no credentials configured.
 
-The configured cloud provider (Google Cloud TTS Neural2, or Azure Neural
-TTS) is still tried first when real credentials are set, and remains the
-higher quality, quota backed option for production use; edge-tts is what
-makes a genuinely natural voice available with zero setup, not a
-replacement for a real account when one is warranted.
+When real Google Cloud credentials are configured, `_speak_cloud_google()`
+now asks for explicit Chirp3-HD voices by name (`en-US-Chirp3-HD-Kore`/
+`-Puck` for English, `ta-IN-Chirp3-HD-Kore`/`-Puck` for Tamil) rather than
+letting Google pick any voice matching a requested gender, which could
+land on any tier in its catalog including the older, audibly synthetic
+"Standard" voices. Chirp3-HD is confirmed, live against a real account's
+own voice list, to be Google's newest and most natural tier. Sinhala has
+no entry in that map at all: a live `list_voices(language_code='si-LK')`
+call against the real API returned zero results, not a transient error,
+so `_speak_cloud_google()` now skips the network call for Sinhala
+entirely and falls straight through to edge-tts, rather than making a
+request that could only fail.
+
+The configured cloud provider (Google Cloud TTS Chirp3-HD, where
+available, or Azure Neural TTS) is still tried first when real
+credentials are set, and remains the higher quality, quota backed option
+for production use; edge-tts is what makes a genuinely natural voice
+available with zero setup, not a replacement for a real account when one
+is warranted.
 
 **Known caveat:** edge-tts calls an undocumented, unofficial endpoint of
 Microsoft's Edge browser service, not a published, versioned API with a
@@ -165,6 +179,19 @@ approach; this was judged out of scope to build for this pass given the
 timeline, since the chunk based approach already satisfies the "feels live"
 requirement in practice.
 
+## The Gemini SDK in use is deprecated, though still functional
+
+**Status: works today, flagged for a future migration.**
+
+`backend/agent.py`'s `GeminiAgent` uses the `google.generativeai` package,
+which Google has deprecated in favor of `google.genai`. It still works
+(confirmed live against a real account, once the model name was updated
+to `gemini-flash-latest`, see above) but prints a `FutureWarning` on
+import. Migrating to `google.genai` is a real fix worth doing, just out
+of scope for this pass since the deprecated package has no announced
+removal date and nothing in this project depends on the newer package's
+specific features.
+
 ## The cloud multi agent path has not been run against a live account
 
 **Status: built and reviewed, not live tested.**
@@ -202,17 +229,20 @@ step.
 
 **Status: a testing constraint, not a product limitation.**
 
-While verifying the frontend, granting microphone access through browser
-automation caused the automation to hang waiting on the browser's native
-permission prompt, which lives outside the page's own DOM and cannot be
-driven programmatically. This is a limitation of automated testing, not of
-the product: a real user clicking "Start conversation" in a normal browser
-session sees and can answer that prompt immediately. The rest of the
-frontend (WebSocket connection lifecycle, status transitions, transcript
-rendering, agent mode badges) was verified working, including with a real,
-successful, permission granted microphone session that produced multiple
-real WebSocket connections to the backend, confirmed in the backend's own
-logs.
+The voice screen now shows an explainer modal first, then relies on the
+browser's own native permission prompt (triggered by `getUserMedia()`
+inside `beginVoiceSession()`), which lives outside the page's own DOM and
+cannot be driven or pre-answered by browser automation. This is a
+limitation of automated testing, not of the product: a real user sees and
+can answer that native prompt immediately after tapping "Allow
+microphone" in the in-page explainer. In this project's own automated
+verification, the test browser already had microphone access granted
+from a prior session, so the fast path (skip the explainer, introduce
+itself, and connect immediately) was exercised end to end, including a
+real WebSocket connection to the backend confirmed in its own logs; the
+first-time, permission-not-yet-granted path was verified by reading the
+code and modal markup rather than by a live click-through, since nothing
+in this environment can grant that native prompt.
 
 ## No conversation memory across turns
 
