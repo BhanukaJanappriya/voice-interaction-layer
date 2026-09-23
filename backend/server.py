@@ -38,6 +38,11 @@ Protocol (WebSocket at /ws/voice):
             Sent once, after the last agent_response_chunk, with the
             complete text and which mode produced it.
         {"type": "speaking_done"}
+        {"type": "end_chat"}
+            Sent once, right after the closing goodbye has been spoken (see
+            the closing detection below), when the conversation has reached
+            its own natural end rather than being cut off. The server closes
+            the connection immediately after sending this.
         {"type": "error", "message": "..."}
 
     Audio playback itself happens server side in this pass (see
@@ -66,6 +71,7 @@ real time performance has evidence behind it, not just a claim.
 import asyncio
 import json
 import queue
+import re
 import threading
 import time
 from typing import Optional
@@ -116,6 +122,49 @@ _LIKELY_TRANSCRIPTION_HALLUCINATIONS = {
 
 def _looks_like_transcription_hallucination(text: str) -> bool:
     return text.strip().lower().rstrip(".!?") in _LIKELY_TRANSCRIPTION_HALLUCINATIONS
+
+
+# Ends the conversation on the user's own terms, rather than only via the
+# cut button: once an utterance sounds like the user is satisfied, the
+# assistant asks a canned closing question instead of routing that turn to
+# the agent; if the very next utterance also reads as closing (or a plain
+# "no"), the assistant says goodbye and the connection ends, but a real new
+# question instead just drops the closing offer and is answered normally
+# (see the awaiting_close_confirmation handling in voice_ws below). A simple
+# keyword match, not an LLM classification: fast, fully deterministic, and
+# consistent with _looks_like_transcription_hallucination's own approach
+# above. It is not exhaustive, especially for Sinhala/Tamil phrasing beyond
+# the couple of common words included here; see KNOWN_LIMITATIONS.md.
+_CLOSING_SIGNAL_LATIN = re.compile(
+    r"\b(thank you|thanks|that'?s all|that is all|i'?m satisfied|im satisfied|"
+    r"nothing else|no more questions|that will be all|i'?m done|im done|"
+    r"i'?m good|im good)\b",
+    re.IGNORECASE,
+)
+_CLOSING_SIGNAL_OTHER = ("ස්තුතියි", "නන්ද", "நன்றி")
+
+_NEGATIVE_CLOSE_LATIN = re.compile(
+    r"\b(no|nope|nah|nothing|that'?s it|that is it|no thanks|no thank you|bye|goodbye)\b",
+    re.IGNORECASE,
+)
+_NEGATIVE_CLOSE_OTHER = ("නැහැ", "இல்லை")
+
+_CLOSING_QUESTION_TEXT = (
+    "You're welcome! Is there anything else I can help you with, or shall I end our conversation here?"
+)
+_CLOSING_GOODBYE_TEXT = "Thank you for using the SLT Mobitel voice assistant. Goodbye, and have a great day!"
+
+
+def _sounds_like_closing_signal(text: str) -> bool:
+    if _CLOSING_SIGNAL_LATIN.search(text):
+        return True
+    return any(marker in text for marker in _CLOSING_SIGNAL_OTHER)
+
+
+def _sounds_negative(text: str) -> bool:
+    if _NEGATIVE_CLOSE_LATIN.search(text):
+        return True
+    return any(marker in text for marker in _NEGATIVE_CLOSE_OTHER)
 
 
 async def _send_json(websocket: WebSocket, payload: dict):
@@ -267,6 +316,42 @@ async def _stream_agent_reply(text_input: str):
         yield item
 
 
+async def _speak(websocket: WebSocket, text: str, language: Optional[str]) -> float:
+    """Sends the "speaking" status, plays text via TTS, then sends
+    "speaking_done". Pulled out of the main turn loop below since the
+    closing question and goodbye (see _sounds_like_closing_signal above)
+    need to speak a canned line the exact same way a real agent reply
+    does, not a second, slightly different copy of this logic. Returns
+    the playback time in seconds, for the same per turn latency logging
+    the normal reply path already does."""
+    await _send_json(websocket, {"type": "status", "state": "speaking"})
+    tts_start = time.time()
+    try:
+        # speak_text() blocks for the entire playback duration (it
+        # literally waits for the audio device to finish). Calling
+        # it directly here, in an async handler, would stall the
+        # whole event loop, and every other connection with it,
+        # for that whole time, the same reason _run_one_utterance
+        # and _stream_agent_reply run their own blocking work on a
+        # thread rather than inline.
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, speak_text, text, language or "en", "female_natural")
+    except Exception as exc:
+        await _send_json(websocket, {"type": "error", "message": f"TTS error: {exc}"})
+    await _send_json(websocket, {"type": "speaking_done"})
+    return time.time() - tts_start
+
+
+async def _speak_canned_reply(websocket: WebSocket, text: str, language: Optional[str], mode: str) -> float:
+    """Announces a canned line (the closing question or the goodbye) the
+    same way a real agent reply is announced, skipping the agent call and
+    the chunk-by-chunk streaming entirely, since the text is already
+    known up front."""
+    await _send_json(websocket, {"type": "status", "state": "thinking"})
+    await _send_json(websocket, {"type": "agent_response", "text": text, "mode": mode})
+    return await _speak(websocket, text, language)
+
+
 @app.websocket("/ws/voice")
 async def voice_ws(websocket: WebSocket):
     await websocket.accept()
@@ -301,6 +386,13 @@ async def voice_ws(websocket: WebSocket):
     except Exception as exc:
         await _send_json(websocket, {"type": "error", "message": f"Calibration failed: {exc}"})
 
+    # Set once an utterance sounds like the user is satisfied/thanking the
+    # assistant: the very next utterance then decides whether the
+    # conversation actually ends (see _sounds_like_closing_signal/
+    # _sounds_negative above) or was a false alarm, in which case it is
+    # answered normally instead.
+    awaiting_close_confirmation = False
+
     try:
         while True:
             turn_start = time.time()
@@ -314,6 +406,19 @@ async def voice_ws(websocket: WebSocket):
                 continue
             if _looks_like_transcription_hallucination(final_text):
                 print(f"Turn skipped: transcript '{final_text}' looks like a Whisper hallucination, not a real utterance.")
+                continue
+
+            if awaiting_close_confirmation:
+                if _sounds_negative(final_text) or _sounds_like_closing_signal(final_text):
+                    await _speak_canned_reply(websocket, _CLOSING_GOODBYE_TEXT, detected_language, "closing")
+                    await _send_json(websocket, {"type": "end_chat"})
+                    return
+                # Not a closing confirmation after all, a real new question;
+                # drop the offer and fall through to answer it normally.
+                awaiting_close_confirmation = False
+            elif _sounds_like_closing_signal(final_text):
+                await _speak_canned_reply(websocket, _CLOSING_QUESTION_TEXT, detected_language, "closing")
+                awaiting_close_confirmation = True
                 continue
 
             await _send_json(websocket, {"type": "status", "state": "thinking"})
@@ -332,25 +437,7 @@ async def voice_ws(websocket: WebSocket):
                 websocket, {"type": "agent_response", "text": reply_text, "mode": orchestrator.last_mode}
             )
 
-            await _send_json(websocket, {"type": "status", "state": "speaking"})
-            tts_start = time.time()
-            try:
-                # speak_text() blocks for the entire playback duration (it
-                # literally waits for the audio device to finish). Calling
-                # it directly here, in an async handler, would stall the
-                # whole event loop, and every other connection with it,
-                # for that whole time, the same reason _run_one_utterance
-                # and _stream_agent_reply run their own blocking work on a
-                # thread rather than inline.
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(
-                    None, speak_text, reply_text, detected_language or "en", "female_natural"
-                )
-            except Exception as exc:
-                await _send_json(websocket, {"type": "error", "message": f"TTS error: {exc}"})
-            tts_time = time.time() - tts_start
-
-            await _send_json(websocket, {"type": "speaking_done"})
+            tts_time = await _speak(websocket, reply_text, detected_language)
 
             total_time = time.time() - turn_start
             print(
