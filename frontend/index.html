@@ -23,7 +23,7 @@
 <body>
 <div class="bg-glow" aria-hidden="true"></div>
 
-<button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle dark and light theme">
+<button id="theme-toggle" class="icon-button theme-toggle" type="button" aria-label="Toggle dark and light theme">
   <span id="theme-toggle-icon" class="icon"></span>
 </button>
 
@@ -46,6 +46,15 @@
     <button id="dismiss-mic-modal" class="back-link modal-dismiss" type="button">Not now</button>
   </div>
 </div>
+
+<!-- Not a visible field in this pass: the voice screen's controls are
+     deliberately limited to captions/mute/history (see #screen-voice), so
+     there is nowhere left to show a backend URL override. The value here
+     is what both the voice WebSocket connection and the text chat
+     screen's derived HTTP URL still read; change it here (or point a
+     future settings surface at it) rather than hardcoding the URL in two
+     places. -->
+<input id="backend-url" type="hidden" value="ws://localhost:8000/ws/voice">
 
 <div class="page">
 
@@ -129,83 +138,90 @@
     </div>
   </section>
 
-  <!-- Screen 3: voice agent -->
-  <section id="screen-voice" class="screen">
-    <header class="brand">
-      <img class="brand-logo" src="assets/mobitel-logo.png" alt="SLT Mobitel">
-      <p class="brand-tagline">Real time multilingual voice assistant</p>
-    </header>
-
-    <div id="bot-avatar" class="bot state-idle" aria-hidden="true">
-      <!-- 3D face (bot3d.js, Three.js/WebGL). Shown when WebGL is available;
-           bot3d.js adds .has-3d to #bot-avatar once the scene is running,
-           which hides the flat fallback below via style.css. -->
-      <canvas id="bot-canvas" class="bot-canvas"></canvas>
-
-      <!-- Flat CSS fallback face, used when WebGL/Three.js is unavailable
-           (see bot3d.js's feature check) so the avatar still animates. -->
-      <div class="bot-ring"></div>
-      <div class="bot-face">
-        <div class="bot-eye bot-eye-left"></div>
-        <div class="bot-eye bot-eye-right"></div>
-        <div class="bot-mouth"></div>
-      </div>
-      <div class="bot-waves">
-        <span></span><span></span><span></span><span></span><span></span>
-      </div>
-    </div>
-
-    <main class="card">
-      <button id="mic-button" class="mic-button" type="button">
-        <svg id="mic-icon" class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <!-- Screen 3: voice agent. Deliberately minimal: the conversation starts
+       itself (see the mic permission modal and app.js's beginVoiceSession()),
+       so the only controls offered here are captions on/off, mute, and a
+       way to review what has been said so far; everything else (status
+       text, badges, a manual start button, a visible backend URL field)
+       was judged unnecessary chrome once the flow no longer needs a user
+       to press anything to get going. -->
+  <section id="screen-voice" class="screen voice-screen">
+    <div class="voice-topbar">
+      <button id="captions-toggle" class="icon-button" type="button" aria-pressed="true" aria-label="Toggle captions">
+        <svg class="icon" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+          <path d="M10.5 15a2.5 2.5 0 1 1 0-5c.7 0 1.3.3 1.8.7"></path>
+          <path d="M17.5 15a2.5 2.5 0 1 1 0-5c.7 0 1.3.3 1.8.7"></path>
+        </svg>
+      </button>
+      <button id="mute-toggle" class="icon-button" type="button" aria-pressed="false" aria-label="Start the conversation">
+        <svg id="mute-icon" class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="9" y="2" width="6" height="12" rx="3"></rect>
           <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
           <line x1="12" y1="19" x2="12" y2="23"></line>
           <line x1="8" y1="23" x2="16" y2="23"></line>
         </svg>
-        <span id="mic-label">Start conversation</span>
       </button>
-
-      <section class="status-row">
-        <div class="status-indicator">
-          <span id="status-dot" class="status-dot status-idle"></span>
-          <span id="status-text">Idle</span>
-        </div>
-        <div class="badges">
-          <span id="language-badge" class="badge badge-muted">Language: &mdash;</span>
-          <span id="mode-badge" class="badge badge-muted">Agent mode: &mdash;</span>
-        </div>
-      </section>
-
-      <details class="advanced">
-        <summary>Advanced</summary>
-        <div class="field">
-          <label for="backend-url">Backend WebSocket URL</label>
-          <input id="backend-url" type="text" value="ws://localhost:8000/ws/voice">
-        </div>
-      </details>
-
-      <a href="#select" class="back-link" data-nav="select">
-        <svg class="icon icon-arrow" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <line x1="19" y1="12" x2="5" y2="12"></line>
-          <polyline points="12 19 5 12 12 5"></polyline>
+      <button id="history-toggle" class="icon-button" type="button" aria-label="View conversation history">
+        <svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"></circle>
+          <polyline points="12 7 12 12 16 14"></polyline>
         </svg>
-        Back
-      </a>
-    </main>
+      </button>
+    </div>
 
-    <section class="card transcript-card">
-      <h2 class="transcript-title">Conversation</h2>
-      <div id="transcript" class="transcript">
-        <p class="hint">Press "Start conversation", allow microphone access, and speak.
-        Your words and the assistant's replies will appear here as they happen.</p>
+    <div class="voice-stage">
+      <div id="bot-avatar" class="bot state-idle" aria-hidden="true">
+        <!-- 3D face (bot3d.js, Three.js/WebGL). Shown when WebGL is available;
+             bot3d.js adds .has-3d to #bot-avatar once the scene is running,
+             which hides the flat fallback below via style.css. -->
+        <canvas id="bot-canvas" class="bot-canvas"></canvas>
+
+        <!-- Flat CSS fallback face, used when WebGL/Three.js is unavailable
+             (see bot3d.js's feature check) so the avatar still animates. -->
+        <div class="bot-ring"></div>
+        <div class="bot-face">
+          <div class="bot-eye bot-eye-left"></div>
+          <div class="bot-eye bot-eye-right"></div>
+          <div class="bot-mouth"></div>
+        </div>
+        <div class="bot-waves">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
       </div>
-    </section>
 
-    <footer class="page-footer">
-      <p id="connection-note">Not connected.</p>
-    </footer>
+      <!-- Live captions: mirrors only the current line (the in progress or
+           just finished thing said, by either side), not the full
+           back and forth; see #history-panel below for that. Updated by
+           setCaption() in app.js, called from the same handlers that
+           already update the full transcript, so this never needs its
+           own separate event wiring. -->
+      <div id="captions-overlay" class="captions-overlay">
+        <p id="captions-text" class="captions-text"></p>
+      </div>
+    </div>
   </section>
+
+  <!-- Conversation history: the full back and forth, reusing the same
+       #transcript element and bubble rendering every screen already uses,
+       just shown in an overlay instead of inline, since the voice screen
+       itself only shows the live caption line. -->
+  <div id="history-panel" class="modal-overlay hidden">
+    <div class="modal-card history-card">
+      <div class="history-header">
+        <h2>Conversation history</h2>
+        <button id="close-history" class="icon-button" type="button" aria-label="Close history">
+          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div id="transcript" class="transcript history-transcript">
+        <p class="hint">Your conversation will appear here as it happens.</p>
+      </div>
+    </div>
+  </div>
 
   <!-- Screen 4: text chat -->
   <section id="screen-chat" class="screen">

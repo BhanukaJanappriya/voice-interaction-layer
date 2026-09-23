@@ -114,11 +114,11 @@ body {
   z-index: 1;
 }
 
-.theme-toggle {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 10;
+/* Shared base for every small circular icon only button in the app
+   (theme toggle, and the voice screen's captions/mute/history buttons
+   below), so they all look and behave the same without repeating this
+   block per button. */
+.icon-button {
   width: 42px;
   height: 42px;
   border-radius: 50%;
@@ -130,15 +130,107 @@ body {
   justify-content: center;
   cursor: pointer;
   box-shadow: var(--shadow);
-  transition: transform 0.15s ease, background 0.2s ease;
+  transition: transform 0.15s ease, background 0.2s ease, color 0.15s ease;
 }
 
-.theme-toggle:hover {
+.icon-button:hover {
   transform: scale(1.06);
 }
 
-.theme-toggle:active {
+.icon-button:active {
   transform: scale(0.94);
+}
+
+/* A button whose "on" state is meaningful (captions, mute) reads as
+   filled/active via the same brand blue already used for solid buttons
+   elsewhere, rather than a color unrelated to the rest of the palette. */
+.icon-button[aria-pressed="true"] {
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
+}
+
+.theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+}
+
+/* Voice screen: deliberately just an avatar and three icon buttons (see
+   index.html's comment on #screen-voice for why). Stacked in its own row
+   below the always present theme toggle, rather than sharing its row,
+   since the theme toggle is a page wide control that exists on every
+   screen and this row is specific to the voice screen alone. */
+.voice-topbar {
+  position: fixed;
+  top: 66px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  gap: 10px;
+}
+
+.voice-screen {
+  min-height: calc(100vh - 120px);
+  justify-content: center;
+}
+
+.voice-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.voice-stage .bot {
+  margin: 0;
+}
+
+/* Mirrors only the current line (see index.html's comment on
+   #captions-overlay); toggled by #captions-toggle via .hidden, same
+   utility class used everywhere else a whole element needs to disappear. */
+.captions-overlay {
+  max-width: 420px;
+  min-height: 1.4em;
+  padding: 12px 20px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.captions-text {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.history-card {
+  max-width: 420px;
+  width: 100%;
+  max-height: 80vh;
+  align-items: stretch;
+  text-align: left;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.history-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.history-transcript {
+  max-height: none;
+  flex: 1;
+  min-height: 120px;
 }
 
 /* Every icon in this app is a single stroke colored SVG (color set via
@@ -719,101 +811,6 @@ body {
   border-radius: 999px 999px 0 0;
 }
 
-.field-row {
-  display: flex;
-  gap: 14px;
-}
-
-.field {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 0.85rem;
-  color: var(--text-dim);
-}
-
-.field input,
-.field select {
-  background: var(--card);
-  border: 1px solid var(--card-border);
-  border-radius: 10px;
-  color: var(--text);
-  padding: 10px 12px;
-  font-size: 0.92rem;
-}
-
-.mic-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  background: var(--blue);
-  color: #fff;
-  border: none;
-  border-radius: 999px;
-  padding: 14px 22px;
-  font-size: 1rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s ease, transform 0.1s ease;
-  box-shadow: 0 8px 20px rgba(47, 111, 237, 0.28);
-}
-
-.mic-button:hover {
-  background: #2557c7;
-}
-
-.mic-button:active {
-  transform: scale(0.98);
-}
-
-.mic-button:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.mic-button.listening {
-  background: var(--bad);
-  box-shadow: 0 8px 20px rgba(224, 90, 90, 0.28);
-}
-
-.status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.95rem;
-  font-weight: 500;
-}
-
-.status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-  background: var(--text-dim);
-}
-
-.status-idle { background: var(--text-dim); }
-.status-calibrating { background: var(--warn); animation: pulse 1.2s infinite; }
-.status-listening { background: var(--blue); animation: pulse 1.2s infinite; }
-.status-thinking { background: var(--warn); animation: pulse 0.8s infinite; }
-.status-speaking { background: var(--good); animation: pulse 0.8s infinite; }
-.status-error { background: var(--bad); }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
 .badges {
   display: flex;
   gap: 8px;
@@ -833,32 +830,6 @@ body {
 .badge-muted { color: var(--text-dim); }
 .badge-cloud { color: var(--green); border-color: var(--green); background: var(--green-dim); }
 .badge-local { color: var(--blue); border-color: var(--blue); background: var(--blue-dim); }
-
-.advanced {
-  border-top: 1px solid var(--card-border);
-  padding-top: 14px;
-}
-
-.advanced summary {
-  cursor: pointer;
-  font-size: 0.82rem;
-  color: var(--text-dim);
-  font-weight: 600;
-}
-
-.advanced .field {
-  margin-top: 12px;
-}
-
-.transcript-card {
-  gap: 12px;
-}
-
-.transcript-title {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-}
 
 .transcript {
   display: flex;
@@ -909,15 +880,6 @@ body {
   color: var(--text-dim);
 }
 
-.page-footer {
-  text-align: center;
-  color: var(--text-dim);
-  font-size: 0.78rem;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 /* Pinned to the bottom of the viewport (not just the end of the
    document) so it stays visible at all times regardless of scroll
    position or which screen is active. .page below adds matching bottom
@@ -940,10 +902,6 @@ body {
   opacity: 0.8;
   color: var(--text-dim);
   font-size: 0.78rem;
-}
-
-.status-dot {
-  transition: background 0.25s ease;
 }
 
 .badge {

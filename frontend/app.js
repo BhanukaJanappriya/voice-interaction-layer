@@ -11,10 +11,9 @@
  * A deliberate simplification for this pass: audio playback of the
  * assistant's reply happens on the server machine's own speakers
  * (tts.speak_text() plays there directly), not through this page. This UI
- * shows status and transcripts live instead. Streaming synthesized audio
- * back to the browser is a reasonable next step, noted in README.md, but
- * out of scope here since the target environment for this demo is one
- * machine.
+ * shows captions live instead. Streaming synthesized audio back to the
+ * browser is a reasonable next step, noted in README.md, but out of scope
+ * here since the target environment for this demo is one machine.
  */
 
 const SAMPLE_RATE = 16000;
@@ -22,16 +21,9 @@ const CHUNK_SECONDS = 0.5;
 const CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_SECONDS;
 const CALIBRATION_SECONDS = 1.6;
 
-const micButton = document.getElementById("mic-button");
-const micLabel = document.getElementById("mic-label");
-const statusDot = document.getElementById("status-dot");
-const statusText = document.getElementById("status-text");
 const botAvatar = document.getElementById("bot-avatar");
-const languageBadge = document.getElementById("language-badge");
-const modeBadge = document.getElementById("mode-badge");
 const transcript = document.getElementById("transcript");
 const backendUrlInput = document.getElementById("backend-url");
-const connectionNote = document.getElementById("connection-note");
 
 let audioContext = null;
 let mediaStream = null;
@@ -44,6 +36,21 @@ let calibrationSamplesSent = 0;
 let calibrationDone = false;
 let isActive = false;
 let isConnecting = false;
+let isMuted = false;
+// Gates whether captured audio actually gets sent over the WebSocket (see
+// setStatus() below, which flips this per status event, and
+// handleAudioProcess(), which checks it, alongside isMuted). Audio is
+// only sent while the server has told us it is actually listening
+// ("listening" or the initial "calibrating"), never while it is
+// "thinking" or "speaking". On this project's single machine demo setup,
+// the assistant's spoken reply plays on that same machine's speakers, so
+// a microphone that kept streaming through "speaking" could physically
+// pick up the assistant's own voice and have it transcribed and treated
+// as the next thing the user said. This is what actually prevents that:
+// nothing captured during those two states ever reaches the server at
+// all, not just a server side filter on top of an already sent, already
+// ambiguous chunk.
+let audioSendAllowed = false;
 let currentPartialBubble = null;
 let selectedLanguage = null;
 let lastResponseText = "";
@@ -182,33 +189,25 @@ function estimateSpeakingMs(text) {
   return Math.max(1200, (words / 165) * 60000);
 }
 
-function giveGreeting() {
-  if (selectedMode === "voice" && !greetingsGiven.voice) {
-    greetingsGiven.voice = true;
-    const text = greetingText();
-    // setStatus("speaking") itself calls bot3d.speakText(lastResponseText)
-    // (see setStatus above), the same mechanism the real WebSocket driven
-    // conversation already uses once agent_response arrives; setting
-    // lastResponseText here first reuses that one code path instead of
-    // calling speakText() a second time with its own copy of the text.
-    lastResponseText = text;
-    addBubble("assistant", text, "Introduction");
-    setStatus("speaking");
-    setTimeout(() => {
-      if (window.bot3d) window.bot3d.stopSpeaking();
-      setStatus("idle");
-    }, estimateSpeakingMs(text));
-  } else if (selectedMode === "chat" && !greetingsGiven.chat) {
-    greetingsGiven.chat = true;
-    addBubble("assistant", greetingText(), "Introduction", chatTranscript);
-  }
+function chatGreeting() {
+  if (greetingsGiven.chat) return;
+  greetingsGiven.chat = true;
+  addBubble("assistant", greetingText(), "Introduction", chatTranscript);
 }
 
 function proceedToSelectedMode() {
   const mode = selectedMode || "voice";
   navigateTo(mode);
-  giveGreeting();
-  if (mode === "voice") showMicPermissionModal();
+  if (mode === "voice") {
+    // The voice screen's own introduction (and the conversation itself)
+    // starts from showMicPermissionModal()/beginVoiceSession() below, not
+    // here: mic permission is asked first, and only after that is granted
+    // does the assistant introduce itself and start listening. See those
+    // functions for the full sequencing and why.
+    showMicPermissionModal();
+  } else {
+    chatGreeting();
+  }
 }
 
 // Always start on the language screen; a saved hash from a previous visit
@@ -283,16 +282,7 @@ window.addEventListener("mousemove", (event) => {
 });
 
 function setStatus(state) {
-  statusDot.className = `status-dot status-${state}`;
-  const labels = {
-    idle: "Idle",
-    calibrating: "Calibrating microphone…",
-    listening: "Listening",
-    thinking: "Thinking",
-    speaking: "Speaking",
-    error: "Error",
-  };
-  statusText.textContent = labels[state] || state;
+  audioSendAllowed = state === "listening" || state === "calibrating";
   // Drives the flat CSS avatar's mouth/ring/waveform styling (see style.css's
   // .bot.state-* rules) by replacing only the state-* class, so the has-3d
   // class bot3d.js adds (see bot3d.js) survives every status change.
@@ -312,22 +302,6 @@ function setStatus(state) {
       window.bot3d.speakText(lastResponseText);
     }
   }
-}
-
-function setModeBadge(mode) {
-  if (!mode) {
-    modeBadge.textContent = "Agent mode: —";
-    modeBadge.className = "badge badge-muted";
-    return;
-  }
-  const isCloud = mode.toLowerCase().includes("cloud");
-  modeBadge.textContent = `Agent mode: ${mode}`;
-  modeBadge.className = `badge ${isCloud ? "badge-cloud" : "badge-local"}`;
-}
-
-function setLanguageBadge(language) {
-  const names = { en: "English", si: "Sinhala", ta: "Tamil" };
-  languageBadge.textContent = `Language: ${names[language] || language || "—"}`;
 }
 
 function clearHint(container) {
@@ -352,6 +326,16 @@ function addBubble(role, text, meta, container) {
   return bubble;
 }
 
+// Captions: mirrors just the current line near the avatar (see
+// index.html's #captions-overlay), separate from the full accumulated
+// history in #transcript (shown in the history panel), which keeps
+// growing regardless of whether captions are toggled on or off.
+const captionsTextEl = document.getElementById("captions-text");
+
+function setCaption(text) {
+  if (captionsTextEl) captionsTextEl.textContent = text || "";
+}
+
 function updateOrAddPartial(text, language) {
   clearHint();
   if (!currentPartialBubble) {
@@ -361,17 +345,17 @@ function updateOrAddPartial(text, language) {
   }
   currentPartialBubble.textContent = text;
   transcript.scrollTop = transcript.scrollHeight;
-  setLanguageBadge(language);
+  setCaption(text);
 }
 
-function finalizePartial(text, language) {
+function finalizePartial(text) {
   if (currentPartialBubble) {
     currentPartialBubble.remove();
     currentPartialBubble = null;
   }
   if (text) {
     addBubble("user", text);
-    setLanguageBadge(language);
+    setCaption(text);
   }
 }
 
@@ -391,6 +375,7 @@ function updateStreamingReply(text) {
   }
   currentStreamingReplyBubble.textContent = text;
   transcript.scrollTop = transcript.scrollHeight;
+  setCaption(text);
 }
 
 function finalizeStreamingReply(text, mode) {
@@ -399,6 +384,7 @@ function finalizeStreamingReply(text, mode) {
     currentStreamingReplyBubble = null;
   }
   addBubble("assistant", text, mode);
+  setCaption(text);
 }
 
 // Simple linear interpolation resampler: good enough for speech, no
@@ -441,7 +427,16 @@ function handleAudioProcess(event) {
   while (sendBuffer.length >= CHUNK_SAMPLES) {
     const chunk = sendBuffer.slice(0, CHUNK_SAMPLES);
     sendBuffer = sendBuffer.slice(CHUNK_SAMPLES);
-    socket.send(chunk.buffer);
+
+    // Captured audio is always removed from sendBuffer above regardless
+    // (so it cannot grow unbounded while paused), but only actually sent
+    // while audioSendAllowed is true and the user has not muted
+    // themselves; see where audioSendAllowed is set, in setStatus(), for
+    // why. This chunk is silently dropped, not queued for later, while
+    // the assistant is thinking, speaking, or the mic is muted.
+    if (audioSendAllowed && !isMuted) {
+      socket.send(chunk.buffer);
+    }
 
     if (!calibrationDone) {
       calibrationSamplesSent += CHUNK_SAMPLES;
@@ -468,7 +463,7 @@ function handleServerMessage(event) {
       updateOrAddPartial(payload.text, payload.language);
       break;
     case "final_transcript":
-      finalizePartial(payload.text, payload.language);
+      finalizePartial(payload.text);
       break;
     case "agent_response_chunk":
       updateStreamingReply(payload.text);
@@ -476,7 +471,6 @@ function handleServerMessage(event) {
     case "agent_response":
       lastResponseText = payload.text || "";
       finalizeStreamingReply(payload.text, payload.mode);
-      setModeBadge(payload.mode);
       break;
     case "speaking_done":
       if (window.bot3d) window.bot3d.stopSpeaking();
@@ -484,6 +478,7 @@ function handleServerMessage(event) {
     case "error":
       setStatus("error");
       addBubble("assistant", `Error: ${payload.message}`);
+      setCaption(`Error: ${payload.message}`);
       break;
     default:
       break;
@@ -494,25 +489,30 @@ function handleServerMessage(event) {
 // the browser's own native permission prompt, so a first time visitor has
 // context for why that prompt is about to appear rather than being
 // surprised by an unexplained browser popup. Clicking "Allow microphone"
-// is what actually triggers startConversation()'s getUserMedia() call
-// (and, with it, the real browser prompt); dismissing this modal just
-// hides it; the "Start conversation" button still works normally if
-// someone dismisses this and wants to start later.
+// runs beginVoiceSession() below: the assistant introduces itself first,
+// then the real getUserMedia() call (and, with it, the actual browser
+// prompt) happens as part of startConversation(). Dismissing this modal
+// just hides it; the mute button still starts the conversation later if
+// someone dismisses this now (see its own click handler).
 const micPermissionModal = document.getElementById("mic-permission-modal");
 const allowMicButton = document.getElementById("allow-mic-button");
 const dismissMicModalButton = document.getElementById("dismiss-mic-modal");
 
 async function showMicPermissionModal() {
   if (!micPermissionModal) return;
-  // Best effort: skip the explanatory popup entirely if the browser
-  // already reports microphone access as granted, since there is nothing
-  // left to explain or ask permission for. Not every browser supports
-  // querying the "microphone" permission name, so this silently falls
-  // through to showing the modal if the check itself fails.
+  // Best effort: skip the explanatory popup entirely, and go straight to
+  // introducing itself and starting, if the browser already reports
+  // microphone access as granted, since there is nothing left to explain
+  // or ask permission for. Not every browser supports querying the
+  // "microphone" permission name, so this silently falls through to
+  // showing the modal if the check itself fails.
   try {
     if (navigator.permissions && navigator.permissions.query) {
       const status = await navigator.permissions.query({ name: "microphone" });
-      if (status.state === "granted") return;
+      if (status.state === "granted") {
+        beginVoiceSession();
+        return;
+      }
     }
   } catch (err) {
     /* Permissions API unsupported for "microphone" in this browser; show the modal as normal */
@@ -527,7 +527,7 @@ function hideMicPermissionModal() {
 if (allowMicButton) {
   allowMicButton.addEventListener("click", () => {
     hideMicPermissionModal();
-    startConversation();
+    beginVoiceSession();
   });
 }
 
@@ -535,25 +535,52 @@ if (dismissMicModalButton) {
   dismissMicModalButton.addEventListener("click", hideMicPermissionModal);
 }
 
+// Speaks the introduction first (a local, instant, canned line, see
+// greetingText()), waits for it to finish, then starts the real
+// microphone capture and backend connection. Sequenced this way, rather
+// than starting the connection immediately, so the assistant's own
+// "speaking" state and the backend's own "calibrating"/"listening" status
+// messages never overlap and fight over the same status driven UI.
+// greetingsGiven.voice guards this so returning to the voice screen later
+// in the same page load (stop, then start again) does not re-introduce
+// itself every time, only the first time.
+async function beginVoiceSession() {
+  if (!greetingsGiven.voice) {
+    greetingsGiven.voice = true;
+    const text = greetingText();
+    // setStatus("speaking") itself calls bot3d.speakText(lastResponseText)
+    // (see setStatus above), the same mechanism the real WebSocket driven
+    // conversation already uses once agent_response arrives; setting
+    // lastResponseText here first reuses that one code path instead of
+    // calling speakText() a second time with its own copy of the text.
+    lastResponseText = text;
+    addBubble("assistant", text, "Introduction");
+    setCaption(text);
+    setStatus("speaking");
+    await new Promise((resolve) => setTimeout(resolve, estimateSpeakingMs(text)));
+    if (window.bot3d) window.bot3d.stopSpeaking();
+    setStatus("idle");
+  }
+  await startConversation();
+}
+
 async function startConversation() {
   if (isActive || isConnecting) return;
   isConnecting = true;
-  micButton.disabled = true;
 
   const backendUrl = backendUrlInput.value.trim();
   if (!backendUrl) {
-    connectionNote.textContent = "Enter a backend WebSocket URL first.";
+    setCaption("No backend URL is configured.");
     isConnecting = false;
-    micButton.disabled = false;
     return;
   }
 
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
-    connectionNote.textContent = `Microphone access denied or unavailable: ${err.message}`;
+    setCaption(`Microphone access denied or unavailable: ${err.message}`);
+    setStatus("error");
     isConnecting = false;
-    micButton.disabled = false;
     return;
   }
 
@@ -576,37 +603,33 @@ async function startConversation() {
   socket.binaryType = "arraybuffer";
 
   socket.onopen = () => {
-    connectionNote.textContent = "Connected. Calibrating to the room, then listening.";
     socket.send(JSON.stringify({ type: "start_session", language_hint: selectedLanguage }));
-    setLanguageBadge(selectedLanguage);
   };
 
   socket.onmessage = handleServerMessage;
 
   socket.onclose = () => {
-    connectionNote.textContent = "Disconnected.";
     stopConversation();
   };
 
   socket.onerror = () => {
-    connectionNote.textContent = "WebSocket error. Is the backend running?";
+    setCaption("Could not reach the backend. Is it running?");
     setStatus("error");
   };
 
   isActive = true;
   isConnecting = false;
-  micButton.disabled = false;
-  micButton.classList.add("listening");
-  micLabel.textContent = "Stop conversation";
+  isMuted = false;
+  updateMuteButtonUI();
 }
 
 function stopConversation() {
   isActive = false;
   isConnecting = false;
-  micButton.disabled = false;
-  micButton.classList.remove("listening");
-  micLabel.textContent = "Start conversation";
+  isMuted = false;
+  audioSendAllowed = false;
   setStatus("idle");
+  updateMuteButtonUI();
 
   if (socket && socket.readyState === WebSocket.OPEN) {
     try {
@@ -644,13 +667,86 @@ function stopConversation() {
   }
 }
 
-micButton.addEventListener("click", () => {
-  if (isActive) {
-    stopConversation();
+// Mute button doubles as the conversation's only manual control: if the
+// conversation has not started yet (someone dismissed the mic permission
+// modal, or the WebSocket dropped), clicking it runs the exact same
+// beginVoiceSession() the modal's own Allow button runs; once active, it
+// toggles isMuted instead, which pauses sending audio (see
+// handleAudioProcess()) without tearing down the connection.
+const muteToggleButton = document.getElementById("mute-toggle");
+const muteIcon = document.getElementById("mute-icon");
+
+const ICON_MIC_INNER =
+  '<rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>' +
+  '<line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line>';
+const ICON_MIC_OFF_INNER =
+  '<line x1="1" y1="1" x2="23" y2="23"></line>' +
+  '<path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path>' +
+  '<path d="M17 16.95A7 7 0 0 1 5 12v-2"></path><path d="M19 10v2a7 7 0 0 1-.11 1.23"></path>' +
+  '<line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line>';
+
+function updateMuteButtonUI() {
+  if (!muteToggleButton) return;
+  if (!isActive) {
+    muteToggleButton.setAttribute("aria-pressed", "false");
+    muteToggleButton.setAttribute("aria-label", "Start the conversation");
+    if (muteIcon) muteIcon.innerHTML = ICON_MIC_INNER;
+  } else if (isMuted) {
+    muteToggleButton.setAttribute("aria-pressed", "true");
+    muteToggleButton.setAttribute("aria-label", "Unmute microphone");
+    if (muteIcon) muteIcon.innerHTML = ICON_MIC_OFF_INNER;
   } else {
-    startConversation();
+    muteToggleButton.setAttribute("aria-pressed", "false");
+    muteToggleButton.setAttribute("aria-label", "Mute microphone");
+    if (muteIcon) muteIcon.innerHTML = ICON_MIC_INNER;
   }
-});
+}
+
+if (muteToggleButton) {
+  muteToggleButton.addEventListener("click", () => {
+    if (!isActive) {
+      hideMicPermissionModal();
+      beginVoiceSession();
+      return;
+    }
+    isMuted = !isMuted;
+    updateMuteButtonUI();
+  });
+}
+
+// Captions on/off: toggles only the live overlay's visibility; the full
+// transcript in the history panel keeps accumulating either way, since
+// captions and history are deliberately separate concerns (see
+// index.html's comments on #captions-overlay and #history-panel).
+const captionsToggleButton = document.getElementById("captions-toggle");
+const captionsOverlay = document.getElementById("captions-overlay");
+
+if (captionsToggleButton) {
+  captionsToggleButton.addEventListener("click", () => {
+    const nowVisible = captionsToggleButton.getAttribute("aria-pressed") !== "true";
+    captionsToggleButton.setAttribute("aria-pressed", String(nowVisible));
+    if (captionsOverlay) captionsOverlay.classList.toggle("hidden", !nowVisible);
+  });
+}
+
+// Conversation history: a simple show/hide overlay over the same
+// #transcript element every screen already renders bubbles into, so
+// opening it costs nothing beyond toggling one class.
+const historyToggleButton = document.getElementById("history-toggle");
+const historyPanel = document.getElementById("history-panel");
+const closeHistoryButton = document.getElementById("close-history");
+
+if (historyToggleButton) {
+  historyToggleButton.addEventListener("click", () => {
+    if (historyPanel) historyPanel.classList.remove("hidden");
+  });
+}
+
+if (closeHistoryButton) {
+  closeHistoryButton.addEventListener("click", () => {
+    if (historyPanel) historyPanel.classList.add("hidden");
+  });
+}
 
 // Text chat screen: a lightweight alternative to the voice flow, talking
 // to the backend's POST /chat endpoint (see backend/server.py), which
