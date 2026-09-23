@@ -1,12 +1,14 @@
 /*
  * 3D talking bot avatar (Three.js / WebGL).
  *
- * Renders a small, lit, gradient shaded head with hair, a two tone hat,
- * ears, and blinking eyes whose pupils and whose head rotation both track
- * the cursor (see pointerFraction() and its use in animate()), plus a
- * mouth that opens and closes per pipeline state, and, while the
- * assistant is speaking, steps through a sequence of mouth shapes paced
- * to the actual words in the reply (see speakText()).
+ * Renders a small, lit, gradient shaded head with hair, ears, and blinking
+ * eyes whose pupils and whose head rotation both track the cursor (see
+ * pointerFraction() and its use in animate()), plus a mouth that opens and
+ * closes per pipeline state, and, while the assistant is speaking, steps
+ * through a sequence of mouth shapes paced to the actual words and their
+ * vowel/consonant clusters in the reply (see speakText() and
+ * wordVisemeSequence()), approximating pronunciation rather than just
+ * guessing one shape per whole word.
  *
  * Honest limitation: this is a text paced approximation of lip sync, not
  * true audio driven viseme animation. The synthesized speech audio plays
@@ -146,40 +148,13 @@
   earRight.position.set(1.55, 0.05, 0.15);
   head.add(earLeft, earRight);
 
-  // Hat: a small full sphere ("topper") centered right at the head's own
-  // north pole, plus a contrasting band around its equator. Centering it
-  // at the pole, rather than trying to fit a brim shape at some lower,
-  // wider latitude of the head, means its lower half naturally buries
-  // itself in the head's rapidly narrowing top (where the head's own
-  // radius is small) with no gap and no geometry math to get precisely
-  // right, while its upper half is simply outside the head sphere and
-  // fully visible; the band is sized to clear both the dome and the
-  // head's own (very small, this close to the pole) radius at that
-  // height, so, unlike an earlier version of this that used a brim
-  // positioned lower down, it does not end up embedded inside the
-  // opaque head and invisible.
-  const hatDome = new THREE.Mesh(
-    new THREE.SphereGeometry(0.85, 24, 16),
-    new THREE.MeshStandardMaterial({ color: 0x2f6fed, roughness: 0.4 })
-  );
-  hatDome.position.set(0, 1.78, 0);
-  head.add(hatDome);
-
-  const hatBrim = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.89, 0.89, 0.22, 24, 1, true),
-    new THREE.MeshStandardMaterial({ color: 0x43a047, roughness: 0.4, side: THREE.DoubleSide })
-  );
-  hatBrim.position.set(0, 1.74, 0);
-  head.add(hatBrim);
-
-  // Hair: a fringe band just below the hat brim, built as a partial
-  // sphere slightly wider than the head so it does not z-fight with it.
-  // thetaStart begins right where the brim ends and thetaLength stops
-  // well above the eyes, so hat, hair, and face stack cleanly instead of
-  // the hair sphere (which wraps all the way around at any given theta)
-  // hiding the brim behind it.
+  // Hair: covers the whole crown, built as a partial sphere slightly
+  // wider than the head (so it does not z-fight with it) starting at the
+  // very pole and stopping well above the eyes, so hair and face stack
+  // cleanly without the hair sphere (which wraps all the way around at
+  // any given theta) reaching down over the front of the face.
   const hair = new THREE.Mesh(
-    new THREE.SphereGeometry(1.73, 32, 16, 0, Math.PI * 2, Math.PI * 0.33, Math.PI * 0.09),
+    new THREE.SphereGeometry(1.73, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.42),
     new THREE.MeshStandardMaterial({ color: 0x2b2320, roughness: 0.65 })
   );
   head.add(hair);
@@ -212,20 +187,43 @@
     }
   }
 
-  // A deliberately simple, explicitly approximate viseme guess from a
-  // word's vowels: rounded for o/u, wide for a/e, mid for i, mostly
-  // closed for consonant heavy words. Good enough to look like the mouth
-  // is following the actual words without pretending to be phoneme
-  // accurate lip sync.
-  function wordShape(word) {
-    const w = word.toLowerCase();
-    if (/[ou]/.test(w)) return { x: 0.7, y: 1.7 };
-    if (/[ae]/.test(w)) return { x: 1.35, y: 2.1 };
-    if (/i/.test(w)) return { x: 1.05, y: 1.2 };
-    return { x: 0.8, y: 0.6 };
+  // A deliberately simple, explicitly approximate viseme guess for one
+  // vowel or consonant cluster: rounded for o/u, wide for a/e, mid for i,
+  // mostly closed for a consonant run. Not phoneme accurate (that needs a
+  // real grapheme to phoneme step), but a genuine step up from guessing
+  // one shape for a whole word: see wordVisemeSequence() below, which
+  // uses this per cluster, so the mouth changes shape several times
+  // within a single word, roughly following its syllable structure.
+  function clusterShape(cluster) {
+    if (/[ou]/.test(cluster)) return { x: 0.7, y: 1.7 };
+    if (/[ae]/.test(cluster)) return { x: 1.35, y: 2.1 };
+    if (/i/.test(cluster)) return { x: 1.05, y: 1.2 };
+    return { x: 0.8, y: 0.5 };
+  }
+
+  // Splits a word into runs of consecutive vowels and consecutive
+  // consonants ("hello" -> "h", "e", "ll", "o") and maps each run to a
+  // mouth shape, so speakText() can step through them in sequence within
+  // that word's time slice, approximating pronunciation (a shape change
+  // roughly per syllable) rather than one static shape for the whole
+  // word. Capped at MAX_CLUSTERS_PER_WORD so a long, unusual word (or a
+  // non alphabetic token, a number or punctuation run) cannot fragment
+  // into an excessive number of very fast shape changes.
+  const MAX_CLUSTERS_PER_WORD = 4;
+
+  function wordVisemeSequence(word) {
+    const cleaned = word.toLowerCase().replace(/[^a-z]/g, "");
+    if (!cleaned) return [{ x: 0.85, y: 0.55 }];
+    const clusters = cleaned.match(/[aeiou]+|[^aeiou]+/g) || [cleaned];
+    const capped =
+      clusters.length > MAX_CLUSTERS_PER_WORD
+        ? clusters.slice(0, MAX_CLUSTERS_PER_WORD - 1).concat(clusters.slice(MAX_CLUSTERS_PER_WORD - 1).join(""))
+        : clusters;
+    return capped.map(clusterShape);
   }
 
   const WORDS_PER_MINUTE = 165; // a natural conversational pace
+  const MIN_MS_PER_CLUSTER = 45; // a floor so a long word's clusters do not flicker unreadably fast
   let speakTimer = null;
   let mouthTargetFactor = { x: 1, y: 0.6 };
 
@@ -235,19 +233,32 @@
     if (words.length === 0) return;
 
     const msPerWord = 60000 / WORDS_PER_MINUTE;
-    let index = 0;
+    let wordIndex = 0;
 
-    function step() {
-      if (index >= words.length) {
+    function stepWord() {
+      if (wordIndex >= words.length) {
         mouthTargetFactor = { x: 1, y: 0.6 };
         speakTimer = null;
         return;
       }
-      mouthTargetFactor = wordShape(words[index]);
-      index += 1;
-      speakTimer = setTimeout(step, msPerWord);
+
+      const clusters = wordVisemeSequence(words[wordIndex]);
+      const msPerCluster = Math.max(MIN_MS_PER_CLUSTER, msPerWord / clusters.length);
+      let clusterIndex = 0;
+
+      function stepCluster() {
+        if (clusterIndex >= clusters.length) {
+          wordIndex += 1;
+          stepWord();
+          return;
+        }
+        mouthTargetFactor = clusters[clusterIndex];
+        clusterIndex += 1;
+        speakTimer = setTimeout(stepCluster, msPerCluster);
+      }
+      stepCluster();
     }
-    step();
+    stepWord();
   }
 
   function stopSpeaking() {
