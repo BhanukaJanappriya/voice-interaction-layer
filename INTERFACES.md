@@ -97,11 +97,15 @@ backend/agent.py
 backend/tts.py
     def speak_text(text_input: str, language: str = "en", voice_style: str = "female_natural") -> None
         Splits text into sentences and speaks/plays each one as soon as it
-        is ready (streamed playback). Tries the configured cloud provider
-        first if one is configured; falls back to a local SAPI5 voice for
-        English only. For Sinhala/Tamil with no cloud provider configured,
-        speaks a short English notice instead of mangling the text; never
-        raises for a normal call, only logs.
+        is ready (streamed playback). Tries, in order: the configured
+        cloud provider if real credentials are set; edge-tts (a free,
+        credential free neural voice covering en/si/ta, see this module's
+        own docstring); a local SAPI5 voice for English only. voice_style
+        "female_natural" selects the female voice at every level; any
+        other value (e.g. "male") selects the male voice. Only if every
+        level fails does Sinhala/Tamil fall through to a short spoken
+        English notice instead of mangling the text; never raises for a
+        normal call, only logs.
 
 backend/server.py
     FastAPI app with one WebSocket endpoint, /ws/voice. See the module's

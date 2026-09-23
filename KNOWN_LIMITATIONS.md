@@ -89,27 +89,38 @@ active.
 
 ## Sinhala and Tamil voice quality (text to speech)
 
-**Status: not solved locally; requires a cloud credential.**
+**Status: solved for the common case, via a free path with no credentials.**
 
 This development machine has exactly two installed SAPI5 voices (checked
 directly, not assumed): "Microsoft David" (male, English US) and
 "Microsoft Zira" (female, English US). Neither Sinhala nor Tamil have any
-local voice available at all. With no cloud Text to Speech provider
-configured, `speak_text()` for those two languages does not attempt to
-force the text through an English voice (which would mangle it into
-meaningless sounds); instead it speaks a short English notice explaining
-that natural speech in that language needs a cloud provider, and logs the
-same. This is a deliberate choice to fail honestly rather than produce
-something that sounds like it worked but did not.
+local voice available at all, and that has not changed.
 
-**Real fix:** a Google Cloud Text to Speech or Azure Speech account with
-Neural2/Neural voices for `si-LK` and `ta-IN`. The adapter code for both
-already exists in `backend/tts.py` (`_speak_cloud_google`,
-`_speak_cloud_azure`); it has not been run against a live account, since
-no credential is available in this environment. Once `GOOGLE_APPLICATION_CREDENTIALS`
-or `AZURE_SPEECH_KEY`/`AZURE_SPEECH_REGION` is set in `.env`, this should
-work without further code changes, but that specific claim has not been
-verified live and should be re-tested once a credential exists.
+What has changed: `backend/tts.py` now tries edge-tts before falling back
+to that local voice. edge-tts is an unofficial but very widely used
+library that calls Microsoft Edge's own text to speech backend (the same
+neural voice catalog Azure Cognitive Services uses) with no API key,
+account, or credentials at all, only internet access. Verified live, not
+assumed: real Sinhala (`si-LK-SameeraNeural`/`si-LK-ThiliniNeural`) and
+Tamil (`ta-IN-ValluvarNeural`/`ta-IN-PallaviNeural`) audio was generated
+and played through the full `speak_text()` path with no cloud credentials
+configured at all, male and female voices both, alongside English. The
+spoken English notice this section used to describe as the normal outcome
+for these two languages is now the rare fallback: only if edge-tts's own
+call fails too (no internet, or Microsoft's service being unreachable) is
+it ever reached, not the default path with no credentials configured.
+
+The configured cloud provider (Google Cloud TTS Neural2, or Azure Neural
+TTS) is still tried first when real credentials are set, and remains the
+higher quality, quota backed option for production use; edge-tts is what
+makes a genuinely natural voice available with zero setup, not a
+replacement for a real account when one is warranted.
+
+**Known caveat:** edge-tts calls an undocumented, unofficial endpoint of
+Microsoft's Edge browser service, not a published, versioned API with a
+support contract. It could change or be restricted without notice; the
+cloud provider adapters remain the durable, supported path for anything
+beyond a demo or prototype.
 
 ## Sinhala and Tamil transcription accuracy (speech to text)
 

@@ -26,6 +26,13 @@ numpy==2.2.6
 # Local text to speech fallback (English only, see KNOWN_LIMITATIONS.md)
 pyttsx3==2.99
 
+# Free neural voice fallback, no account or API key needed (only internet
+# access): calls Microsoft Edge's own text to speech backend. Tried before
+# the local SAPI5 fallback above, and is what actually gets Sinhala and
+# Tamil a natural voice with zero credentials configured; see tts.py and
+# KNOWN_LIMITATIONS.md.
+edge-tts==7.2.8
+
 # Local chat agent fallback (Ollama REST API)
 requests==2.34.2
 

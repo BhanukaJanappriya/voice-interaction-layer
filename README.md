@@ -176,14 +176,23 @@ than using one fixed number for every room) is what actually makes this
 noise robust rather than just differently tuned. See backend/vad.py for
 the standalone before/after test.
 
-**Text to speech: cloud neural voice first, local SAPI5 fallback for
-English only.** A natural sounding voice, especially a specific gender and
-tone, is a cloud neural TTS feature (Google Cloud Neural2, Azure Neural);
-no offline engine on this machine gets close. The local fallback exists so
-English still works with no credentials, using this machine's one
-installed female SAPI5 voice; Sinhala and Tamil have no local voice
-available at all here, which is documented as a real limitation rather
-than faked (see KNOWN_LIMITATIONS.md).
+**Text to speech: configured cloud provider, then edge-tts, then local
+SAPI5 for English only.** A natural sounding voice, especially a specific
+gender and tone, is a neural TTS feature; no offline engine on this
+machine gets close. Rather than that meaning Sinhala and Tamil (and a
+natural male voice) strictly need a paid cloud account, `speak_text()`
+tries edge-tts before the local fallback: an unofficial but very widely
+used library that calls Microsoft Edge's own text to speech backend (the
+same neural voice catalog Azure Cognitive Services uses) with no API key,
+account, or credentials, only internet access. Verified live for English,
+Sinhala, and Tamil, both a female and a male voice, with no cloud provider
+configured at all. The configured cloud provider (Google Cloud Neural2 or
+Azure Neural) is still tried first when real credentials are set, since it
+is the higher quality, quota backed, officially supported option; edge-tts
+is what makes a genuinely natural voice available with zero setup, not a
+replacement for a real account in production. See KNOWN_LIMITATIONS.md for
+the one caveat: edge-tts is an unofficial, undocumented endpoint that
+could change without notice.
 
 **Chat agent: cloud multi agent when configured, local Llama via Ollama
 otherwise.** Local Ollama remains the zero cost, zero credential default

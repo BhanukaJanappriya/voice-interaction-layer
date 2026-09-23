@@ -1,36 +1,59 @@
 """Multilingual, natural voice text to speech for the voice interaction backend.
 
-Primary path: a cloud neural TTS voice (Google Cloud Text to Speech
-Neural2, or Azure Neural TTS), which is what makes the "sounds like a
-natural human woman, not robotic" requirement genuinely achievable; local
-engines (this machine's SAPI5 voices via pyttsx3) are audibly synthetic by
-comparison, and neither Google nor Azure Neural voices exist as an offline
-option.
+Fallback order, from best to last resort:
 
-Local fallback: pyttsx3 (SAPI5), for English only. This machine has exactly
-two installed SAPI5 voices, "David" (male) and "Zira" (female); the female
-one is used when voice_style requests a female voice, which gets the local
-path as close to the requirement as a synthetic voice can get. Sinhala and
-Tamil have no local voice on this machine at all (confirmed by checking the
-installed SAPI5 voice list; see KNOWN_LIMITATIONS.md), so with no cloud
-credentials configured, speak_text() for those languages plays a short
-spoken English notice explaining the gap rather than mangling the text
-through an English voice or failing silently, per this project's rule
-against silently faking or skipping a blocked capability.
+    1. The configured cloud provider (Google Cloud TTS Neural2, or Azure
+       Neural TTS), when real credentials are set. Highest quality, but
+       needs an account, credentials, and is subject to that provider's
+       free tier quota.
+    2. edge-tts: an unofficial but very widely used library that calls
+       Microsoft Edge's own text to speech backend (the same neural voice
+       catalog Azure Cognitive Services uses) with no API key, account, or
+       credentials at all, only internet access. This is what actually
+       gets this project a natural sounding, non robotic voice, including
+       a real male voice option, without anyone needing to set anything
+       up; see edge_tts_voices() below for the specific voices used. It
+       needs internet access, so it is not a true offline/local option,
+       but it needs nothing to configure, unlike the cloud providers above.
+    3. pyttsx3 (SAPI5), fully offline, for English only. This machine has
+       exactly two installed SAPI5 voices, "David" (male) and "Zira"
+       (female); genuinely the last resort for voice quality, but the only
+       option with zero network dependency.
+    4. For Sinhala or Tamil, if even edge-tts fails (no internet, or the
+       service is unreachable), a short spoken English notice instead of
+       mangling the text through an English voice or failing silently, per
+       this project's rule against silently faking or skipping a blocked
+       capability. This is now the genuinely rare case, not the common
+       one: edge-tts alone gets Sinhala and Tamil a real, natural voice, no
+       credentials required (verified live, see KNOWN_LIMITATIONS.md).
 
 Streaming playback: speak_text() splits the reply into sentences and
 synthesizes/plays each one as soon as it is ready, instead of waiting for
 the entire response to be synthesized first. This is what actually reduces
-perceived latency for a long reply, both locally and against a cloud API.
+perceived latency for a long reply, at every one of the levels above.
 """
 
 import re
+import sys
 import time
 from typing import Optional
 
 import pyttsx3
 
 import config
+
+# edge-tts and Azure Cognitive Services draw from the same neural voice
+# catalog (edge-tts calls Microsoft Edge's own backend for the same
+# voices), so this one map serves both _speak_edge_tts() and
+# _speak_cloud_azure() below rather than keeping two copies in sync.
+_NEURAL_VOICE_MAP = {
+    ("en", "female_natural"): "en-US-JennyNeural",
+    ("en", "male"): "en-US-GuyNeural",
+    ("si", "female_natural"): "si-LK-ThiliniNeural",
+    ("si", "male"): "si-LK-SameeraNeural",
+    ("ta", "female_natural"): "ta-IN-PallaviNeural",
+    ("ta", "male"): "ta-IN-ValluvarNeural",
+}
 
 _LOCAL_FEMALE_VOICE_ID = None
 _LOCAL_MALE_VOICE_ID = None
@@ -132,15 +155,7 @@ def _speak_cloud_azure(text_input: str, language: str, voice_style: str) -> bool
     try:
         import azure.cognitiveservices.speech as speechsdk
 
-        voice_map = {
-            ("en", "female_natural"): "en-US-JennyNeural",
-            ("en", "male"): "en-US-GuyNeural",
-            ("si", "female_natural"): "si-LK-ThiliniNeural",
-            ("si", "male"): "si-LK-SameeraNeural",
-            ("ta", "female_natural"): "ta-IN-PallaviNeural",
-            ("ta", "male"): "ta-IN-ValluvarNeural",
-        }
-        voice_name = voice_map.get((language, voice_style), "en-US-JennyNeural")
+        voice_name = _NEURAL_VOICE_MAP.get((language, voice_style), "en-US-JennyNeural")
 
         speech_config = speechsdk.SpeechConfig(
             subscription=config.AZURE_SPEECH_KEY, region=config.AZURE_SPEECH_REGION
@@ -160,17 +175,62 @@ def _speak_cloud(text_input: str, language: str, voice_style: str) -> bool:
     return _speak_cloud_google(text_input, language, voice_style)
 
 
+def _speak_edge_tts(text_input: str, language: str, voice_style: str) -> bool:
+    """Synthesizes and plays text_input via edge-tts (see this module's
+    docstring for what it is and why it sits here in the fallback order).
+    Returns False (never raises) on any failure, most commonly no internet
+    access, so the caller falls back to the fully offline local voice.
+
+    edge-tts's own API is async only (it streams audio over a websocket to
+    Microsoft's service); asyncio.run() drives it synchronously here since
+    the rest of this module, and speak_text()'s sentence by sentence
+    playback loop, are synchronous by design. soundfile can decode the
+    MP3 bytes edge-tts returns directly (confirmed against a real sample;
+    no separate MP3 decoding library needed), the same way the cloud
+    provider functions above decode their own audio bytes."""
+    voice_name = (
+        _NEURAL_VOICE_MAP.get((language, voice_style))
+        or _NEURAL_VOICE_MAP.get((language, "female_natural"))
+        or "en-US-JennyNeural"
+    )
+    try:
+        import asyncio
+        import io
+
+        import edge_tts
+        import sounddevice as sd
+        import soundfile as sf
+
+        async def _synthesize() -> bytes:
+            communicate = edge_tts.Communicate(text_input, voice_name)
+            audio_bytes = bytearray()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_bytes.extend(chunk["data"])
+            return bytes(audio_bytes)
+
+        audio_bytes = asyncio.run(_synthesize())
+        if not audio_bytes:
+            return False
+        data, samplerate = sf.read(io.BytesIO(audio_bytes), dtype="float32")
+        sd.play(data, samplerate)
+        sd.wait()
+        return True
+    except Exception as exc:
+        print(f"TTS: edge-tts unavailable ({exc}), falling back.")
+        return False
+
+
 def speak_text(text_input: str, language: str = "en", voice_style: str = "female_natural") -> None:
     """Synthesizes text_input to speech and plays it, streaming sentence by
     sentence so playback can start before the whole reply is ready.
 
-    Tries the configured cloud neural TTS provider first for every
-    sentence (natural voice, required for Sinhala and Tamil since there is
-    no usable local voice for either on this machine). If the cloud
-    provider is not configured or a call to it fails, falls back to the
-    local SAPI5 engine for English only. For Sinhala or Tamil with no cloud
-    path available, speaks a short English notice instead of mangling the
-    text through an English voice, and logs the limitation plainly.
+    Tries, in order: the configured cloud provider (if real credentials are
+    set), then edge-tts (natural, needs no credentials, only internet; see
+    this module's docstring), then the local SAPI5 engine for English
+    only. For Sinhala or Tamil, if edge-tts also fails (no internet), a
+    short spoken English notice instead of mangling the text through an
+    English voice, and logs the limitation plainly.
     """
     if text_input is None or not text_input.strip():
         return
@@ -185,27 +245,51 @@ def speak_text(text_input: str, language: str = "en", voice_style: str = "female
             print(f"TTS latency (cloud, {language}): {time.perf_counter() - start:.2f}s")
             continue
 
+        if _speak_edge_tts(sentence, language, voice_style):
+            print(f"TTS latency (edge-tts, {language}): {time.perf_counter() - start:.2f}s")
+            continue
+
         if language == "en":
             if _speak_local(sentence, voice_style):
                 print(f"TTS latency (local SAPI5): {time.perf_counter() - start:.2f}s")
             else:
-                print("TTS error: local playback failed and no cloud provider is available.")
+                print("TTS error: local playback failed and no cloud or edge-tts path is available.")
             continue
 
-        # Sinhala or Tamil with no cloud path: documented limitation, not a
-        # silent failure. See KNOWN_LIMITATIONS.md.
+        # Sinhala or Tamil with no cloud path and no internet for edge-tts
+        # either: documented limitation, not a silent failure. See
+        # KNOWN_LIMITATIONS.md. Genuinely rare now that edge-tts covers
+        # both languages with no credentials required.
         notice = (
-            f"Natural {config.SUPPORTED_LANGUAGES.get(language, language)} speech requires a "
-            "cloud text to speech provider, which is not configured right now."
+            f"Natural {config.SUPPORTED_LANGUAGES.get(language, language)} speech needs "
+            "either a cloud provider or internet access for the free voice service, "
+            "and neither is available right now."
         )
         print(f"TTS: {notice}")
         _speak_local(notice, voice_style)
 
 
 def _run_standalone_test():
-    """python tts.py: speaks a sample sentence in each supported language,
-    so voice quality (and the cloud vs local vs notice fallback behavior)
-    can be compared and demoed directly."""
+    """python tts.py: speaks a sample sentence in each supported language
+    with the default female voice, then the same English sentence again
+    with the male voice, so voice quality (and the cloud vs edge-tts vs
+    local vs notice fallback behavior) can be compared and demoed
+    directly, including hearing the male option this test specifically
+    exercises."""
+    # Windows consoles often default to a legacy codepage (cp1252) that
+    # cannot encode Sinhala or Tamil script at all; printing the sample
+    # text below would crash the whole test before it ever got to
+    # speaking anything. Reconfiguring stdout to UTF-8 here, with
+    # replacement for any character even UTF-8 output cannot render in
+    # that terminal, keeps this test runnable from a plain terminal
+    # rather than requiring the operator to change their system codepage
+    # first. errors="replace" rather than "strict" because a print
+    # statement failing is not worth treating as fatal here.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass  # older Python or a stream that does not support reconfigure(); best effort only
+
     samples = {
         "en": "This is a test of the natural voice text to speech system.",
         "si": "සිංහල බාෂාවේ පරීක්ෂණයකේ තක්සේත් ජාතිය සඩහශ චේතනය කරණයකින් වේ.",
@@ -213,8 +297,11 @@ def _run_standalone_test():
     }
     print(f"Cloud speech provider configured: {config.cloud_speech_configured()} ({config.CLOUD_SPEECH_PROVIDER})")
     for language, text in samples.items():
-        print(f"\nSpeaking [{config.SUPPORTED_LANGUAGES[language]}]: {text}")
+        print(f"\nSpeaking [{config.SUPPORTED_LANGUAGES[language]}, female]: {text}")
         speak_text(text, language=language, voice_style="female_natural")
+
+    print("\nSpeaking [English, male]: This is the male voice option.")
+    speak_text("This is the male voice option.", language="en", voice_style="male")
 
 
 if __name__ == "__main__":
