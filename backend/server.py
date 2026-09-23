@@ -97,6 +97,26 @@ app.add_middleware(
 
 orchestrator = Orchestrator()
 
+# vad.py's calibrated noise floor plus WebRTC VAD's frame classification
+# reject most non-speech audio before it ever reaches transcription, but
+# neither is perfect: a short percussive sound (a tap, a chair creak, a
+# door) can still pass the majority-of-frames check. When that happens,
+# faster-whisper does not reliably return an empty string for it; it is a
+# well documented failure mode of Whisper models to hallucinate a short,
+# generic phrase from training data instead (most commonly "you" or
+# "thank you", echoing captioned video transcripts). final_text is
+# non-empty in that case, so the `if not final_text` check below lets it
+# through as if it were a real question. This list is a narrow, second net
+# for exactly that known behavior, not a general filter on short replies:
+# genuine short utterances that are not in this list still reach the agent.
+_LIKELY_TRANSCRIPTION_HALLUCINATIONS = {
+    "you", "thank you", "thanks for watching", "thanks", "bye", "bye bye",
+}
+
+
+def _looks_like_transcription_hallucination(text: str) -> bool:
+    return text.strip().lower().rstrip(".!?") in _LIKELY_TRANSCRIPTION_HALLUCINATIONS
+
 
 async def _send_json(websocket: WebSocket, payload: dict):
     await websocket.send_text(json.dumps(payload))
@@ -291,6 +311,9 @@ async def voice_ws(websocket: WebSocket):
             if session_ended:
                 return
             if not final_text:
+                continue
+            if _looks_like_transcription_hallucination(final_text):
+                print(f"Turn skipped: transcript '{final_text}' looks like a Whisper hallucination, not a real utterance.")
                 continue
 
             await _send_json(websocket, {"type": "status", "state": "thinking"})

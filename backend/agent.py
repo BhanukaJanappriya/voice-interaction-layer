@@ -64,6 +64,22 @@ class EchoAgent(ChatAgent):
         return response
 
 
+# Ollama's /api/generate endpoint accepts an optional "system" field that
+# overrides whatever system message the model's Modelfile defines, sent
+# alongside "prompt" rather than mixed into it, so persona and behavior
+# instructions never compete with the actual user text for the model's
+# attention. Without this, llama3.2 answering a bare user string has no
+# framing at all: it tends to over-explain, answer more than was asked, and
+# add disclaimers, all of which reads badly once spoken aloud by tts.py
+# rather than read as text on a screen.
+_VOICE_ASSISTANT_SYSTEM_PROMPT = (
+    "You are a concise voice assistant. Answer only what the user actually "
+    "asked, nothing more and nothing less. Keep replies short and natural, "
+    "since they will be spoken aloud rather than read as text. Do not add "
+    "disclaimers, caveats, or commentary about being an AI."
+)
+
+
 class LlamaOllamaAgent(ChatAgent):
     """Chat agent backed by a local Ollama server. This is the local
     fallback every cloud path degrades to when a cloud provider is not
@@ -91,7 +107,12 @@ class LlamaOllamaAgent(ChatAgent):
                 prompt = f"Context: {tool_context}\n\nUser: {text_input}"
 
         url = f"{self.host}/api/generate"
-        payload = {"model": self.model, "prompt": prompt, "stream": False}
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "system": _VOICE_ASSISTANT_SYSTEM_PROMPT,
+            "stream": False,
+        }
 
         start = time.perf_counter()
         try:
@@ -141,7 +162,12 @@ class LlamaOllamaAgent(ChatAgent):
                 prompt = f"Context: {tool_context}\n\nUser: {text_input}"
 
         url = f"{self.host}/api/generate"
-        payload = {"model": self.model, "prompt": prompt, "stream": True}
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "system": _VOICE_ASSISTANT_SYSTEM_PROMPT,
+            "stream": True,
+        }
 
         start = time.perf_counter()
         try:
@@ -367,8 +393,10 @@ class Orchestrator(ChatAgent):
             role_prompt=(
                 "You are the response stage of a voice assistant. You will be given the "
                 "user's message, an internal analysis of what they need, and optional extra "
-                "context. Reply directly to the user in natural spoken language, concise, "
-                "with no mention of the analysis or internal process."
+                "context. Reply directly to the user in natural spoken language, answering "
+                "only what they actually asked, nothing more and nothing less. Keep it "
+                "concise, with no mention of the analysis or internal process, and no "
+                "disclaimers or meta commentary about being an AI."
             )
         )
         composed_prompt = f"User said: {text_input}\n\nInternal analysis: {analysis}"
