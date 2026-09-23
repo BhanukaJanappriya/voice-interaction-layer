@@ -6,3 +6,9 @@ __pycache__/
 models/
 .claude/
 logs/
+
+# Google Cloud service account keys: never committed, regardless of where
+# under the repo they are saved or what they are named.
+*service-account*.json
+*credentials*.json
+gcp-*.json
