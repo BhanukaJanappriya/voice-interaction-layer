@@ -1,13 +1,15 @@
 /*
  * 3D talking bot avatar (Three.js / WebGL).
  *
- * Renders a small, lit, gradient shaded head with hair, ears, and blinking
- * eyes whose pupils and whose head rotation both track the cursor (see
- * pointerFraction() and its use in animate()), plus a mouth that opens and
- * closes per pipeline state, and, while the assistant is speaking, steps
- * through a sequence of mouth shapes paced to the actual words and their
- * vowel/consonant clusters in the reply (see speakText() and
- * wordVisemeSequence()), approximating pronunciation rather than just
+ * Renders a small, lit, gradient shaded head with ears and blinking eyes.
+ * The head itself stays steady (no idle sway or rotation); only the
+ * pupils shift within the eyes to track the cursor (see pointerFraction()
+ * and its use in animate()), so the face reads as watching the pointer
+ * with its eyes rather than turning its whole head toward it. The mouth
+ * opens and closes per pipeline state, and, while the assistant is
+ * speaking, steps through a sequence of mouth shapes paced to the actual
+ * words and their vowel/consonant clusters in the reply (see speakText()
+ * and wordVisemeSequence()), approximating pronunciation rather than just
  * guessing one shape per whole word.
  *
  * Honest limitation: this is a text paced approximation of lip sync, not
@@ -148,17 +150,6 @@
   earRight.position.set(1.55, 0.05, 0.15);
   head.add(earLeft, earRight);
 
-  // Hair: covers the whole crown, built as a partial sphere slightly
-  // wider than the head (so it does not z-fight with it) starting at the
-  // very pole and stopping well above the eyes, so hair and face stack
-  // cleanly without the hair sphere (which wraps all the way around at
-  // any given theta) reaching down over the front of the face.
-  const hair = new THREE.Mesh(
-    new THREE.SphereGeometry(1.73, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.42),
-    new THREE.MeshStandardMaterial({ color: 0x2b2320, roughness: 0.65 })
-  );
-  head.add(hair);
-
   const ring = new THREE.Mesh(
     new THREE.TorusGeometry(2.05, 0.05, 12, 64),
     new THREE.MeshBasicMaterial({ color: COLORS.idle, transparent: true, opacity: 0.3 })
@@ -286,16 +277,11 @@
     requestAnimationFrame(animate);
 
     idlePhase += 0.01;
-    // Cursor tracking: the head turns toward the pointer (a wide range, at
-    // a snappy but still smoothed catch up rate) and the pupils shift
-    // inside the eyes toward it too, so the face reads as actually
-    // looking at the cursor rather than just idly rotating.
+    // The head itself does not move at all in response to the cursor
+    // (no rotation, no idle sway or bob); only the pupils shift within
+    // the eyes toward the pointer, so the face reads as watching it with
+    // its eyes while staying otherwise still.
     const pointer = pointerFraction();
-    head.rotation.y += (pointer.x * 0.9 - head.rotation.y) * 0.12;
-    head.rotation.x += (-pointer.y * 0.55 - head.rotation.x) * 0.12;
-    head.rotation.y += Math.sin(idlePhase * 0.5) * 0.0015;
-    head.position.y = Math.sin(idlePhase) * 0.04;
-
     const pupilOffsetX = Math.max(-1, Math.min(1, pointer.x)) * 0.075;
     const pupilOffsetY = Math.max(-1, Math.min(1, -pointer.y)) * 0.06;
     pupilLeft.position.x += (pupilOffsetX - pupilLeft.position.x) * 0.3;
