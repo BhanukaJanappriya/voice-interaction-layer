@@ -71,6 +71,13 @@
     </header>
 
     <div id="bot-avatar" class="bot state-idle" aria-hidden="true">
+      <!-- 3D face (bot3d.js, Three.js/WebGL). Shown when WebGL is available;
+           bot3d.js adds .has-3d to #bot-avatar once the scene is running,
+           which hides the flat fallback below via style.css. -->
+      <canvas id="bot-canvas" class="bot-canvas"></canvas>
+
+      <!-- Flat CSS fallback face, used when WebGL/Three.js is unavailable
+           (see bot3d.js's feature check) so the avatar still animates. -->
       <div class="bot-ring"></div>
       <div class="bot-face">
         <div class="bot-eye bot-eye-left"></div>
@@ -150,6 +157,8 @@
   </footer>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="bot3d.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

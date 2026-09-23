@@ -46,6 +46,7 @@ let isActive = false;
 let isConnecting = false;
 let currentPartialBubble = null;
 let selectedLanguage = null;
+let lastResponseText = "";
 
 // Screen router: a language picker, then a start chat / start voice
 // choice, then the actual chat or voice screen. Plain hash based routing
@@ -151,11 +152,24 @@ function setStatus(state) {
     error: "Error",
   };
   statusText.textContent = labels[state] || state;
-  // Drives the animated bot avatar's mouth/ring/waveform styling (see
-  // style.css's .bot.state-* rules); a plain class swap keeps this in one
-  // place rather than duplicating per-state animation logic in JS.
+  // Drives the flat CSS avatar's mouth/ring/waveform styling (see style.css's
+  // .bot.state-* rules) by replacing only the state-* class, so the has-3d
+  // class bot3d.js adds (see bot3d.js) survives every status change.
   if (botAvatar) {
-    botAvatar.className = `bot state-${state}`;
+    botAvatar.className = botAvatar.className.replace(/\bstate-\S+/, "").trim();
+    botAvatar.classList.add(`state-${state}`);
+  }
+  // Drives the 3D avatar's ring color/speed and mouth idle shape; a no-op
+  // if bot3d.js could not start (see its own WebGL feature check). The
+  // word paced mouth animation starts here, when the server actually
+  // begins speaking, using the text from the agent_response event that
+  // arrived just before it (see handleServerMessage's "agent_response"
+  // case, which stashes it in lastResponseText).
+  if (window.bot3d) {
+    window.bot3d.setState(state);
+    if (state === "speaking") {
+      window.bot3d.speakText(lastResponseText);
+    }
   }
 }
 
@@ -290,10 +304,12 @@ function handleServerMessage(event) {
       finalizePartial(payload.text, payload.language);
       break;
     case "agent_response":
+      lastResponseText = payload.text || "";
       addBubble("assistant", payload.text, payload.mode);
       setModeBadge(payload.mode);
       break;
     case "speaking_done":
+      if (window.bot3d) window.bot3d.stopSpeaking();
       break;
     case "error":
       setStatus("error");

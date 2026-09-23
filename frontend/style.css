@@ -367,6 +367,26 @@ body {
   animation-delay: 0.05s;
 }
 
+.bot-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
+/* bot3d.js adds this class once its WebGL scene is actually running, so
+   the flat CSS face (below) only disappears when a working 3D face has
+   replaced it, never on a browser that cannot render it. */
+.bot.has-3d .bot-canvas {
+  display: block;
+}
+
+.bot.has-3d .bot-ring,
+.bot.has-3d .bot-face {
+  display: none;
+}
+
 .bot-ring {
   position: absolute;
   inset: 0;
