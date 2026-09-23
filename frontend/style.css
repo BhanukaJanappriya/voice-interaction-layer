@@ -1,14 +1,23 @@
 :root {
   /* The page background is one fixed, top to bottom gradient (see body,
-     below): Mobitel blue at the very top, blending through teal and
-     green, then settling into --bg-end for the rest of the page. In
-     light theme that end color is white; in dark theme it is the dark
-     theme's own base tone instead, so both themes still read as "a
-     Mobitel colored band at the top of the screen," just landing on a
-     different base color once the brand colors fade out. */
-  --bg-start: #2f6fed;
-  --bg-mid: #43a047;
+     below): a light tint of Mobitel blue at the very top, blending
+     through a light teal and light green, then settling into --bg-end
+     for the rest of the page. In light theme that end color is white; in
+     dark theme it is the dark theme's own base tone instead, so both
+     themes still read as "a soft Mobitel colored wash at the top of the
+     screen," just landing on a different base color once it fades out.
+     These are deliberately pale tints, not the full strength brand colors
+     (--blue/--green below, used for buttons and badges, stay at full
+     strength); --bg-glow-* holds the same tints at a usable opacity for
+     the logo's own glow (see .brand::before), so both read as one
+     consistent, soft color story rather than two different palettes. */
+  --bg-start: #d6e6fd;
+  --bg-teal: #d6f3f5;
+  --bg-mid: #ddf1dc;
   --bg-end: #ffffff;
+  --bg-glow-blue: 214, 230, 253;
+  --bg-glow-teal: 214, 243, 245;
+  --bg-glow-green: 221, 241, 220;
   --card: #ffffff;
   --card-border: #e3ecf5;
   --text: #1c2b3a;
@@ -67,7 +76,7 @@ body {
   background: linear-gradient(
     to bottom,
     var(--bg-start) 0%,
-    #3cc8dc 14%,
+    var(--bg-teal) 14%,
     var(--bg-mid) 26%,
     var(--bg-end) 68%,
     var(--bg-end) 100%
@@ -437,10 +446,16 @@ body {
   width: 300px;
   height: 220px;
   transform: translateX(-50%);
+  /* Same light tints as the page background gradient (--bg-glow-* above),
+     not the full strength --blue/--green: a light colored glow reads as a
+     soft halo behind the logo, where the original vivid colors at this
+     size and blur read as a much bolder colored blob. Opacity is higher
+     than a vivid color would need, since a pale tint needs more of it to
+     still be visible as a glow at all against an already light page. */
   background:
-    radial-gradient(circle at 28% 35%, rgba(47, 111, 237, 0.38), transparent 60%),
-    radial-gradient(circle at 72% 60%, rgba(67, 160, 71, 0.36), transparent 60%),
-    radial-gradient(circle at 50% 20%, rgba(60, 200, 220, 0.28), transparent 55%);
+    radial-gradient(circle at 28% 35%, rgba(var(--bg-glow-blue), 0.75), transparent 60%),
+    radial-gradient(circle at 72% 60%, rgba(var(--bg-glow-green), 0.7), transparent 60%),
+    radial-gradient(circle at 50% 20%, rgba(var(--bg-glow-teal), 0.6), transparent 55%);
   filter: blur(34px);
   animation: glow-drift 9s ease-in-out infinite alternate;
   z-index: 0;
