@@ -28,11 +28,13 @@ requirement for this pass.
  status/transcript  <=  JSON  <=======+
  events over the                      |
  same WebSocket                       v
-                              Orchestrator.respond() (agent.py)
-                              cloud multi agent, or local Llama
-                              alone if cloud is not reachable
+                              Orchestrator.respond_stream() (agent.py)
+                              cloud multi agent (one finished reply),
+                              or local Llama alone, streamed token by
+                              token as Ollama generates it
                                        |
- agent_response event  <=  JSON  <====+
+ agent_response_chunk events  <= JSON <+  (repeated while generating)
+ agent_response event  <=  JSON  <====+   (once, when done)
                                        |
                                        v
                               speak_text() (tts.py)

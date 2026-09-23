@@ -66,6 +66,12 @@ backend/agent.py
         Unchanged in shape from the prototype. LlamaOllamaAgent is the
         local fallback every other path degrades to.
 
+        def respond_stream(self, text_input: str) -> Iterator[str]
+            Like respond(), but yields text chunks as Ollama generates
+            them (stream mode) instead of blocking for the full reply.
+            Never raises for a request level failure; yields a single
+            chunk with the same wording respond() would have returned.
+
     class GeminiAgent(ChatAgent)
     class GptAgent(ChatAgent)
         def __init__(self, model: str = None, system_prompt: Optional[str] = None)
@@ -75,10 +81,16 @@ backend/agent.py
     class Orchestrator(ChatAgent)
         def __init__(self, tool_callback: Optional[Callable[[str], Optional[str]]] = None)
         def respond(self, text_input: str) -> str
+        def respond_stream(self, text_input: str) -> Iterator[str]
+            Streaming counterpart to respond(). Only the local fallback
+            path is actually streamed chunk by chunk; the cloud multi
+            agent path (three sequential calls) still runs to completion
+            and yields the finished reply as one chunk (see the method's
+            own docstring for why, and KNOWN_LIMITATIONS.md).
         self.last_mode: str
-            Set after every respond() call to a human readable string
-            describing which path actually served the reply (e.g.
-            "cloud multi agent (gemini)" or
+            Set after every respond()/respond_stream() call to a human
+            readable string describing which path actually served the
+            reply (e.g. "cloud multi agent (gemini)" or
             "local single agent (Llama via Ollama)"), for logging and for
             the frontend's mode badge.
 
@@ -97,7 +109,13 @@ backend/server.py
     what JSON event types the server sends back). GET /health reports
     which providers are actually configured right now.
 
+    /ws/voice's agent_response_chunk event carries the accumulated reply
+    text as it streams in from Orchestrator.respond_stream(), followed by
+    one final agent_response event with the complete text and mode.
+
     POST /chat, body {"text": str, "language": str | null} -> {"reply": str, "mode": str}
+        Not streamed: a plain request/response endpoint, unlike the
+        WebSocket voice path.
         Text only path for the frontend's chat screen. Runs the same
         Orchestrator as the voice pipeline (same cloud/local fallback and
         the same last_mode reporting), with no STT or TTS involved.

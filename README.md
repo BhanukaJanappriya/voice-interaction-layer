@@ -32,7 +32,9 @@ FastAPI backend (backend/server.py)
     +-> Chat agent orchestrator (backend/agent.py)
     |     cloud multi agent (reasoning -> tool/retrieval -> composer)
     |     when a cloud LLM is configured and reachable, else local
-    |     Llama (via Ollama) handling the full response alone
+    |     Llama (via Ollama), streaming its reply token by token as it
+    |     is generated (cloud path yields its finished reply as one
+    |     chunk; see KNOWN_LIMITATIONS.md)
     |
     +-> Text to speech (backend/tts.py)
           cloud neural voice (Google/Azure) when configured, else a
@@ -190,6 +192,19 @@ configured and reachable, the Orchestrator runs a small three role
 collaboration (reasoning, tool/retrieval, composer) against that provider
 instead; see ARCHITECTURE.md for why this counts as genuine multi agent
 collaboration within this pass's scope.
+
+**The agent's reply streams to the frontend as it is generated, on the
+local path.** `LlamaOllamaAgent.respond_stream()` calls Ollama with
+`stream: true` and yields each token chunk as Ollama produces it, instead
+of `respond()`'s single blocking call that waits for the whole reply.
+`server.py` forwards each chunk over the WebSocket, so the transcript
+shows the reply being composed live during the "thinking" status, not
+only once it is fully ready, which is what "real time" should mean for a
+step that can otherwise take several seconds. Verified against the real
+local Ollama server: a short prompt produced two separate WebSocket
+messages ("Hello", then "!"), not one. This is not implemented for the
+cloud multi agent path or the text chat screen's `POST /chat`; see
+KNOWN_LIMITATIONS.md for exactly why and what each would need.
 
 **Frontend flow: language, then chat or voice, as separate screens.**
 Putting language selection first and a chat versus voice choice second,

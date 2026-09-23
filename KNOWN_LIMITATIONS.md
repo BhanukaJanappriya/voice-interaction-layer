@@ -9,13 +9,18 @@ actually fix it, so this can be presented accurately rather than oversold.
 
 `frontend/bot3d.js` renders a real 3D, WebGL lit face (Three.js) whose
 mouth animates while the assistant is speaking. It is driven by the
-actual reply text: the text is split into words, each word is timed at a
-natural conversational rate (165 words per minute) and given a mouth
-shape guessed from its vowels (rounded for o/u, wide for a/e, mid for i,
-mostly closed otherwise). This is genuinely tied to what the bot is
-saying, in the sense that the timing and shape sequence come from the
-real words, not a fixed loop, and it has been verified to visibly change
-shape from word to word.
+actual reply text: each word is timed at a natural conversational rate
+(165 words per minute), then split further into consonant and vowel
+clusters (`wordVisemeSequence()`, e.g. "hello" -> "h", "e", "ll", "o"),
+each given a mouth shape guessed from its vowels (rounded for o/u, wide
+for a/e, mid for i, mostly closed for a consonant run) and stepped
+through within that word's time slice, capped at four clusters per word
+so an unusual long word cannot fragment into unreadably fast flicker.
+This is a step up from an earlier version that guessed one shape for an
+entire word: the mouth now changes shape several times within a single
+word, roughly following its syllable structure, which is genuinely tied
+to what the bot is saying and to its approximate pronunciation, not a
+fixed loop or a single per word guess.
 
 It is not audio driven viseme animation, and cannot be, without a bigger
 change: the synthesized speech audio plays on the backend machine's own
@@ -33,6 +38,40 @@ shape from the actual waveform, or have the TTS provider return word or
 phoneme level timing (several cloud TTS APIs, including Google Cloud's,
 can return timepoints) and drive the mouth from that instead of an
 estimate.
+
+## The agent's reply streams in real time on the voice path only, and only for the local fallback
+
+**Status: genuinely real time where implemented; a deliberate scope boundary elsewhere.**
+
+The WebSocket voice pipeline now streams the agent's reply as it is
+generated: `LlamaOllamaAgent.respond_stream()` (`backend/agent.py`) calls
+Ollama with `stream: true` and yields each token chunk as it arrives,
+`server.py` forwards the accumulated text to the frontend as
+`agent_response_chunk` events, and the frontend shows the reply appearing
+live in the transcript during the "thinking" status, not only once the
+full reply is ready. This was verified against the real local Ollama
+server, not mocked: a test request produced two separate chunks
+("Hello", "!") arriving as separate WebSocket messages, and a longer
+prompt produced many chunks building up the sentence progressively.
+
+Two scope boundaries on this, stated plainly rather than implied away:
+
+- Only the local Llama fallback path is actually streamed chunk by
+  chunk. The cloud multi agent path (reasoning, then tool/retrieval, then
+  composing, see ARCHITECTURE.md) still runs its three calls to
+  completion and yields the finished reply as a single chunk.
+  `Orchestrator.respond_stream()`'s own docstring explains why: streaming
+  a three stage pipeline, and deciding what a viewer should see of the
+  internal reasoning stage while it is in flight, was judged out of scope
+  for this pass. Since no cloud credentials are configured in this
+  environment, this path has not been exercised live either way (see the
+  cloud multi agent entry below).
+- The text chat screen's `POST /chat` endpoint is not streamed; it is a
+  plain request/response call that waits for the full reply, unlike the
+  WebSocket voice path. Streaming a plain HTTP POST would need Server
+  Sent Events or a similar mechanism on both ends, which was not built in
+  this pass since the voice path already demonstrates real streaming
+  end to end.
 
 ## WebGL/Three.js is required for the 3D face; a flat 2D face is the fallback
 
