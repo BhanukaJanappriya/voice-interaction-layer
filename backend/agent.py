@@ -35,9 +35,10 @@ method, respond(text_input) -> str) and adds:
         can show it plainly.
 """
 
+import json
 import time
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 import requests
 
@@ -119,6 +120,70 @@ class LlamaOllamaAgent(ChatAgent):
             return "Error: received an unreadable response from the Ollama server."
 
         return data.get("response", "").strip()
+
+    def respond_stream(self, text_input: str) -> Iterator[str]:
+        """Like respond(), but yields response text chunks as Ollama
+        generates them (the API's stream mode, newline delimited JSON
+        objects each carrying one token or short run of tokens) instead of
+        blocking until the full reply is ready. Used by the WebSocket
+        voice pipeline so the frontend can show the reply appearing as it
+        is actually generated, not just after the fact. Never raises for a
+        request level failure; on error it yields a single chunk with the
+        same wording respond() would have returned, so callers that just
+        concatenate yielded chunks behave the same either way."""
+        prompt = text_input
+        if self.tool_callback is not None:
+            try:
+                tool_context = self.tool_callback(text_input)
+            except Exception:
+                tool_context = None
+            if tool_context is not None:
+                prompt = f"Context: {tool_context}\n\nUser: {text_input}"
+
+        url = f"{self.host}/api/generate"
+        payload = {"model": self.model, "prompt": prompt, "stream": True}
+
+        start = time.perf_counter()
+        try:
+            response = requests.post(url, json=payload, timeout=self.timeout_seconds, stream=True)
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
+            yield "Error: could not reach the local Ollama server. Is it running?"
+            return
+        except requests.exceptions.Timeout:
+            print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
+            yield "Error: the local Ollama server took too long to respond."
+            return
+        except requests.exceptions.HTTPError:
+            print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
+            if response.status_code == 404:
+                yield f"Error: model '{self.model}' was not found on the Ollama server."
+            else:
+                yield f"Error: Ollama server returned an HTTP error ({response.status_code})."
+            return
+        except requests.exceptions.RequestException as exc:
+            print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
+            yield f"Error: could not get a response from Ollama ({exc})."
+            return
+
+        try:
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except ValueError:
+                    continue
+                chunk = data.get("response", "")
+                if chunk:
+                    yield chunk
+                if data.get("done"):
+                    break
+        except requests.exceptions.RequestException as exc:
+            yield f"\n[Error: connection to Ollama dropped mid reply ({exc}).]"
+        finally:
+            print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
 
 
 class CloudUnavailableError(Exception):
@@ -248,6 +313,37 @@ class Orchestrator(ChatAgent):
         self.last_mode = "local single agent (Llama via Ollama)"
         print(f"Orchestrator mode: {self.last_mode}")
         return self.local_agent.respond(text_input)
+
+    def respond_stream(self, text_input: str) -> Iterator[str]:
+        """Streaming counterpart to respond(), used by the WebSocket voice
+        pipeline so the reply can be shown appearing in real time as it is
+        generated, rather than only after the full text is ready.
+
+        Only the local fallback path is actually streamed chunk by chunk
+        here. The cloud multi agent path (reasoning, then tool/retrieval,
+        then composing) still runs its three calls to completion and
+        yields the finished composed reply as one chunk; streaming a three
+        stage pipeline chunk by chunk, and deciding what a viewer should
+        see of the internal reasoning stage while it is in flight, was
+        judged out of scope for this pass. This keeps the honest
+        distinction intact: cloud path correctness has been reviewed but
+        not run live here (see ARCHITECTURE.md), and this does not pretend
+        otherwise by making it merely look streamed."""
+        if config.cloud_llm_configured():
+            try:
+                reply = self._respond_multi_agent_cloud(text_input)
+                self.last_mode = f"cloud multi agent ({config.CLOUD_LLM_PROVIDER})"
+                print(f"Orchestrator mode: {self.last_mode}")
+                yield reply
+                return
+            except CloudUnavailableError as exc:
+                print(f"Orchestrator: cloud path unavailable ({exc}), falling back to local agent alone.")
+        else:
+            print("Orchestrator: no cloud LLM provider configured, using local agent alone.")
+
+        self.last_mode = "local single agent (Llama via Ollama)"
+        print(f"Orchestrator mode: {self.last_mode}")
+        yield from self.local_agent.respond_stream(text_input)
 
     def _respond_multi_agent_cloud(self, text_input: str) -> str:
         reasoning_agent = _build_cloud_agent(
