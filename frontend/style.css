@@ -150,6 +150,35 @@ body {
   border-color: var(--blue);
 }
 
+/* The bottom bar's primary control: larger than the other icon buttons
+   since it is the one someone actually taps mid conversation (mute), or
+   taps once if the mic permission modal was dismissed instead of
+   answered (start). Muted reads as the "bad" red, the same color the
+   avatar's own error state already uses, rather than blue, since a red
+   filled mic reads as "not listening right now" more clearly than the
+   same blue every other active toggle in this app already uses. */
+.mic-toggle {
+  width: 60px;
+  height: 60px;
+}
+
+.mic-toggle[aria-pressed="true"] {
+  background: var(--bad);
+  border-color: var(--bad);
+}
+
+/* Ends the conversation outright (see #end-chat-button in index.html), so
+   it reads as the one danger colored control on this screen even at rest,
+   not only once pressed like mic-toggle above. */
+.cut-button {
+  color: var(--bad);
+}
+
+.cut-button:hover {
+  background: rgba(224, 90, 90, 0.12);
+  border-color: var(--bad);
+}
+
 .theme-toggle {
   position: fixed;
   top: 16px;
@@ -157,23 +186,47 @@ body {
   z-index: 10;
 }
 
-/* Voice screen: deliberately just an avatar and three icon buttons (see
-   index.html's comment on #screen-voice for why). Stacked in its own row
-   below the always present theme toggle, rather than sharing its row,
-   since the theme toggle is a page wide control that exists on every
-   screen and this row is specific to the voice screen alone. */
-.voice-topbar {
+/* Voice screen: an avatar, live captions, and five icon buttons split
+   across three fixed positions (see index.html's comment on
+   #screen-voice for why: history at top left, logout and theme at top
+   right, captions/mic/end chat pinned to the bottom), so none of them
+   scroll away or crowd the avatar's own space in the middle. */
+.voice-topbar-left {
   position: fixed;
-  top: 66px;
-  right: 16px;
+  top: 16px;
+  left: 16px;
+  z-index: 10;
+}
+
+/* Sits just left of the theme toggle, which is defined once near the top
+   of <body> and is already fixed at top:16px/right:16px on every screen;
+   66px (16 + the toggle's 42px width + 8px gap) places this immediately
+   beside it without either button needing to know about the other. */
+.voice-topbar-right {
+  position: fixed;
+  top: 16px;
+  right: 66px;
+  z-index: 10;
+}
+
+.voice-bottombar {
+  position: fixed;
+  left: 50%;
+  bottom: 78px;
+  transform: translateX(-50%);
   z-index: 10;
   display: flex;
-  gap: 10px;
+  align-items: center;
+  gap: 20px;
 }
 
 .voice-screen {
   min-height: calc(100vh - 120px);
   justify-content: center;
+}
+
+.voice-logo {
+  margin-bottom: 0;
 }
 
 .voice-stage {
@@ -947,16 +1000,7 @@ body {
 }
 
 @media (max-width: 480px) {
-  .field-row {
-    flex-direction: column;
-  }
-
-  .status-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .mic-button {
-    width: 100%;
+  .voice-bottombar {
+    gap: 16px;
   }
 }

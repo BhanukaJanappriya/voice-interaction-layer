@@ -179,8 +179,8 @@ function greetingName() {
 // could add; that tradeoff favors a snappy first impression here.
 function greetingText() {
   return (
-    `Hello, ${greetingName()}! I'm your SLT Mobitel voice assistant. ` +
-    "I understand English, Sinhala, and Tamil, so just start speaking whenever you're ready."
+    `Welcome to SLT Mobitel, ${greetingName()}! I'm your voice assistant, and I understand ` +
+    "English, Sinhala, and Tamil, so just start speaking whenever you're ready."
   );
 }
 
@@ -326,10 +326,15 @@ function addBubble(role, text, meta, container) {
   return bubble;
 }
 
-// Captions: mirrors just the current line near the avatar (see
-// index.html's #captions-overlay), separate from the full accumulated
-// history in #transcript (shown in the history panel), which keeps
-// growing regardless of whether captions are toggled on or off.
+// Captions: mirrors only the assistant's own current line near the avatar
+// (see index.html's #captions-overlay), never the user's own live speech
+// transcript, so this reads as subtitles for what the assistant is
+// saying, not a two sided transcript. setCaption() is therefore only
+// called from the handlers below that carry the assistant's own text
+// (updateStreamingReply, finalizeStreamingReply, the greeting, and
+// errors), not from updateOrAddPartial/finalizePartial, which handle the
+// user's side and still update the full history in #transcript as
+// before, just without touching the caption overlay.
 const captionsTextEl = document.getElementById("captions-text");
 
 function setCaption(text) {
@@ -345,7 +350,6 @@ function updateOrAddPartial(text, language) {
   }
   currentPartialBubble.textContent = text;
   transcript.scrollTop = transcript.scrollHeight;
-  setCaption(text);
 }
 
 function finalizePartial(text) {
@@ -355,7 +359,6 @@ function finalizePartial(text) {
   }
   if (text) {
     addBubble("user", text);
-    setCaption(text);
   }
 }
 
@@ -474,6 +477,14 @@ function handleServerMessage(event) {
       break;
     case "speaking_done":
       if (window.bot3d) window.bot3d.stopSpeaking();
+      break;
+    case "end_chat":
+      // The backend has just spoken its closing goodbye (see
+      // _sounds_like_closing_signal/_CLOSING_GOODBYE_TEXT in
+      // backend/server.py) and is about to close the connection on its
+      // own; endVoiceChat() below tears the session down the same way a
+      // manual cut button press does, so both paths land in one place.
+      endVoiceChat();
       break;
     case "error":
       setStatus("error");
@@ -620,7 +631,7 @@ async function startConversation() {
   isActive = true;
   isConnecting = false;
   isMuted = false;
-  updateMuteButtonUI();
+  updateMicButtonUI();
 }
 
 function stopConversation() {
@@ -629,7 +640,7 @@ function stopConversation() {
   isMuted = false;
   audioSendAllowed = false;
   setStatus("idle");
-  updateMuteButtonUI();
+  updateMicButtonUI();
 
   if (socket && socket.readyState === WebSocket.OPEN) {
     try {
@@ -667,14 +678,15 @@ function stopConversation() {
   }
 }
 
-// Mute button doubles as the conversation's only manual control: if the
-// conversation has not started yet (someone dismissed the mic permission
-// modal, or the WebSocket dropped), clicking it runs the exact same
-// beginVoiceSession() the modal's own Allow button runs; once active, it
-// toggles isMuted instead, which pauses sending audio (see
-// handleAudioProcess()) without tearing down the connection.
-const muteToggleButton = document.getElementById("mute-toggle");
-const muteIcon = document.getElementById("mute-icon");
+// Mic button doubles as the conversation's only manual start/mute control:
+// if the conversation has not started yet (someone dismissed the mic
+// permission modal, or the WebSocket dropped), clicking it runs the exact
+// same beginVoiceSession() the modal's own Allow button runs; once active,
+// it toggles isMuted instead, which pauses sending audio (see
+// handleAudioProcess()) without tearing down the connection. Ending the
+// conversation outright is the separate end-chat button below, not this one.
+const micToggleButton = document.getElementById("mic-toggle");
+const micIcon = document.getElementById("mic-icon");
 
 const ICON_MIC_INNER =
   '<rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>' +
@@ -685,32 +697,71 @@ const ICON_MIC_OFF_INNER =
   '<path d="M17 16.95A7 7 0 0 1 5 12v-2"></path><path d="M19 10v2a7 7 0 0 1-.11 1.23"></path>' +
   '<line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line>';
 
-function updateMuteButtonUI() {
-  if (!muteToggleButton) return;
+function updateMicButtonUI() {
+  if (!micToggleButton) return;
   if (!isActive) {
-    muteToggleButton.setAttribute("aria-pressed", "false");
-    muteToggleButton.setAttribute("aria-label", "Start the conversation");
-    if (muteIcon) muteIcon.innerHTML = ICON_MIC_INNER;
+    micToggleButton.setAttribute("aria-pressed", "false");
+    micToggleButton.setAttribute("aria-label", "Start the conversation");
+    if (micIcon) micIcon.innerHTML = ICON_MIC_INNER;
   } else if (isMuted) {
-    muteToggleButton.setAttribute("aria-pressed", "true");
-    muteToggleButton.setAttribute("aria-label", "Unmute microphone");
-    if (muteIcon) muteIcon.innerHTML = ICON_MIC_OFF_INNER;
+    micToggleButton.setAttribute("aria-pressed", "true");
+    micToggleButton.setAttribute("aria-label", "Unmute microphone");
+    if (micIcon) micIcon.innerHTML = ICON_MIC_OFF_INNER;
   } else {
-    muteToggleButton.setAttribute("aria-pressed", "false");
-    muteToggleButton.setAttribute("aria-label", "Mute microphone");
-    if (muteIcon) muteIcon.innerHTML = ICON_MIC_INNER;
+    micToggleButton.setAttribute("aria-pressed", "false");
+    micToggleButton.setAttribute("aria-label", "Mute microphone");
+    if (micIcon) micIcon.innerHTML = ICON_MIC_INNER;
   }
 }
 
-if (muteToggleButton) {
-  muteToggleButton.addEventListener("click", () => {
+if (micToggleButton) {
+  micToggleButton.addEventListener("click", () => {
     if (!isActive) {
       hideMicPermissionModal();
       beginVoiceSession();
       return;
     }
     isMuted = !isMuted;
-    updateMuteButtonUI();
+    updateMicButtonUI();
+  });
+}
+
+// Ends the conversation outright, unlike mic-toggle's mute (which just
+// pauses sending audio). Reused for both a manual tap here and the
+// backend's own end_chat event (see handleServerMessage above), so a
+// conversation that ends itself, once the user sounds satisfied (see
+// _sounds_like_closing_signal in backend/server.py), behaves identically
+// to one the user ends by hand.
+const endChatButton = document.getElementById("end-chat-button");
+
+function endVoiceChat() {
+  stopConversation();
+  greetingsGiven.voice = false;
+  navigateTo("select");
+}
+
+if (endChatButton) {
+  endChatButton.addEventListener("click", endVoiceChat);
+}
+
+// Logout: this app has no real account system (see KNOWN_LIMITATIONS.md),
+// so "logging out" just forgets the locally remembered name and sends the
+// visitor back to the very first screen, the closest honest equivalent to
+// signing out of something that was never a real login.
+const logoutButton = document.getElementById("logout-button");
+
+if (logoutButton) {
+  logoutButton.addEventListener("click", () => {
+    stopConversation();
+    userName = null;
+    greetingsGiven.voice = false;
+    greetingsGiven.chat = false;
+    try {
+      localStorage.removeItem("userName");
+    } catch (err) {
+      /* localStorage unavailable; nothing to clear */
+    }
+    navigateTo("language");
   });
 }
 
