@@ -335,7 +335,17 @@ async def voice_ws(websocket: WebSocket):
             await _send_json(websocket, {"type": "status", "state": "speaking"})
             tts_start = time.time()
             try:
-                speak_text(reply_text, language=detected_language or "en", voice_style="female_natural")
+                # speak_text() blocks for the entire playback duration (it
+                # literally waits for the audio device to finish). Calling
+                # it directly here, in an async handler, would stall the
+                # whole event loop, and every other connection with it,
+                # for that whole time, the same reason _run_one_utterance
+                # and _stream_agent_reply run their own blocking work on a
+                # thread rather than inline.
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None, speak_text, reply_text, detected_language or "en", "female_natural"
+                )
             except Exception as exc:
                 await _send_json(websocket, {"type": "error", "message": f"TTS error: {exc}"})
             tts_time = time.time() - tts_start
