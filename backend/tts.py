@@ -108,12 +108,38 @@ def _speak_local(text_input: str, voice_style: str) -> bool:
         return False
 
 
+# Explicit Chirp3-HD voice names rather than letting Google auto pick any
+# voice that matches a requested gender: gender only selection can land on
+# any tier in Google's catalog, including the much older, audibly synthetic
+# "Standard" voices, not necessarily the natural sounding ones. Chirp3-HD
+# is Google's newest, most natural voice generation (confirmed against the
+# real account's own voice list, not assumed); the same character names
+# exist across its supported languages, so one small map covers both.
+# Sinhala has no entry at all: confirmed live against the real API that
+# Google Cloud Text to Speech has zero si-LK voices in its catalog, not a
+# transient error, so _speak_cloud_google() skips the network call for
+# Sinhala entirely rather than making a request that can only fail. See
+# KNOWN_LIMITATIONS.md.
+_GOOGLE_CHIRP_VOICE_MAP = {
+    ("en", "female_natural"): ("en-US", "en-US-Chirp3-HD-Kore"),
+    ("en", "male"): ("en-US", "en-US-Chirp3-HD-Puck"),
+    ("ta", "female_natural"): ("ta-IN", "ta-IN-Chirp3-HD-Kore"),
+    ("ta", "male"): ("ta-IN", "ta-IN-Chirp3-HD-Puck"),
+}
+
+
 def _speak_cloud_google(text_input: str, language: str, voice_style: str) -> bool:
-    """Synthesizes and plays text_input via Google Cloud Text to Speech
-    Neural2 voices. Returns False (never raises) if unavailable, so the
+    """Synthesizes and plays text_input via Google Cloud Text to Speech's
+    Chirp3-HD voices. Returns False (never raises) if unavailable, so the
     caller can fall back cleanly."""
     if not config.GOOGLE_APPLICATION_CREDENTIALS:
         return False
+    voice_entry = _GOOGLE_CHIRP_VOICE_MAP.get((language, voice_style)) or _GOOGLE_CHIRP_VOICE_MAP.get(
+        (language, "female_natural")
+    )
+    if voice_entry is None:
+        return False
+    lang_code, voice_name = voice_entry
     try:
         import io
 
@@ -122,15 +148,9 @@ def _speak_cloud_google(text_input: str, language: str, voice_style: str) -> boo
         from google.cloud import texttospeech
 
         client = texttospeech.TextToSpeechClient()
-        lang_code = {"en": "en-US", "si": "si-LK", "ta": "ta-IN"}.get(language, "en-US")
-        ssml_gender = (
-            texttospeech.SsmlVoiceGender.FEMALE
-            if voice_style == "female_natural"
-            else texttospeech.SsmlVoiceGender.MALE
-        )
         voice_params = texttospeech.VoiceSelectionParams(
             language_code=lang_code,
-            ssml_gender=ssml_gender,
+            name=voice_name,
         )
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.LINEAR16)
         response = client.synthesize_speech(
