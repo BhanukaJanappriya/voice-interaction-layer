@@ -396,12 +396,50 @@ def _prepare_sentence(sentence: str, language: str, voice_style: str) -> Callabl
             print(f"TTS synthesis (cloud, {language}): {time.perf_counter() - start:.2f}s")
             return lambda: _play(*audio)
 
-    audio = _synthesize_edge_tts(sentence, language, voice_style)
+    audio = _cached_edge_tts(sentence, language, voice_style)
     if audio is not None:
         print(f"TTS synthesis (edge-tts, {language}): {time.perf_counter() - start:.2f}s")
         return lambda: _play(*audio)
 
     return lambda: _speak_offline(sentence, language, voice_style)
+
+
+# Synthesized edge-tts audio, keyed by (sentence, language, voice_style).
+# edge-tts is what speaks Sinhala (Google has no Sinhala voice), and it took
+# 2.5 to 4 seconds per sentence here, so fixed lines that come up again and
+# again (the introduction, the closing lines) are worth keeping. Bounded so
+# a long session of unique replies cannot grow it without limit; the
+# oldest entry is dropped first.
+_edge_tts_cache: dict = {}
+_EDGE_TTS_CACHE_SIZE = 64
+
+
+def _cached_edge_tts(sentence: str, language: str, voice_style: str):
+    key = (sentence, language, voice_style)
+    if key in _edge_tts_cache:
+        return _edge_tts_cache[key]
+    audio = _synthesize_edge_tts(sentence, language, voice_style)
+    if audio is not None:
+        if len(_edge_tts_cache) >= _EDGE_TTS_CACHE_SIZE:
+            _edge_tts_cache.pop(next(iter(_edge_tts_cache)))
+        _edge_tts_cache[key] = audio
+    return audio
+
+
+def precache(text_input: str, language: str, voice_style: str = "female_natural") -> None:
+    """Synthesizes a known line ahead of time (server.py does this at
+    startup for the Sinhala introduction), so when it is actually spoken
+    the audio is already there. Only applies where edge-tts would be the
+    voice used, i.e. a language Google Cloud Text to Speech cannot speak;
+    Google's own streaming voice starts in about 0.3s and needs no cache."""
+    if config.cloud_speech_configured() and (
+        config.CLOUD_SPEECH_PROVIDER == "azure" or _google_voice(language, voice_style) is not None
+    ):
+        return
+    start = time.perf_counter()
+    for sentence in _split_sentences(text_input):
+        _cached_edge_tts(_UNSPOKEN_MARKUP.sub("", sentence).strip(), language, voice_style)
+    print(f"TTS precache ({language}): {time.perf_counter() - start:.2f}s")
 
 
 class SentenceChunker:

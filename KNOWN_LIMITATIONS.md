@@ -171,18 +171,18 @@ approach; this was judged out of scope to build for this pass given the
 timeline, since the chunk based approach already satisfies the "feels live"
 requirement in practice.
 
-## The Gemini SDK in use is deprecated, though still functional
+## The Gemini model name must be one the key can still use
 
-**Status: works today, flagged for a future migration.**
+**Status: SDK migrated; model choice is a configuration matter.**
 
-`backend/agent.py`'s `GeminiAgent` uses the `google.generativeai` package,
-which Google has deprecated in favor of `google.genai`. It still works
-(confirmed live against a real account, once the model name was updated
-to `gemini-flash-latest`, see above) but prints a `FutureWarning` on
-import. Migrating to `google.genai` is a real fix worth doing, just out
-of scope for this pass since the deprecated package has no announced
-removal date and nothing in this project depends on the newer package's
-specific features.
+`backend/agent.py`'s `GeminiAgent` now uses the current `google-genai`
+SDK (`from google import genai`, `genai.Client`), replacing the
+deprecated `google-generativeai` package. The model comes from
+`GEMINI_MODEL` in `.env` (default `gemini-2.5-flash-lite`). As of
+2026-09-24 Google answers that model with 404 "no longer available to new
+users" for this key and recommends `gemini-3.5-flash-lite`, so
+`GEMINI_MODEL` may need changing once the credit issue below is sorted.
+Either way the Orchestrator falls back to local Llama, so nothing breaks.
 
 ## The cloud multi agent path has not been run against a live account
 
@@ -304,7 +304,15 @@ different people typing the same name are treated identically, and the
 same person on a different browser or device starts over as a stranger.
 The name is sent to the backend with the session, used in the spoken
 introduction, and given to the agent on every turn so its own replies
-address the user by name (or as Guest when none was given). A user can
+address the user by name (or as Guest when none was given). The
+introduction itself is in the language picked on the first screen
+(English, Sinhala or Tamil, `_GREETINGS` in `backend/server.py`), with
+"Guest" also said in that language. Only the introduction is translated:
+the agent's own replies are not yet told which language to answer in.
+Sinhala is spoken by edge-tts (Google has no Sinhala voice), which took
+2.5 to 9 seconds per sentence over the network here, so the Guest version
+of the Sinhala introduction is synthesized at server startup and cached;
+a named Sinhala greeting still synthesizes its first sentence live. A user can
 also say "my name is ..." or "call me ..." during a voice conversation;
 the backend picks that up with a simple phrase match
 (`_extract_user_name` in `backend/server.py`), uses it from then on, and

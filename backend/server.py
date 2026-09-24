@@ -103,6 +103,7 @@ from agent import Orchestrator
 from stt import transcribe_stream
 from stt import warm_up as warm_up_stt
 from tts import SentenceChunker, speak_stream, speak_text
+from tts import precache as precache_speech
 from tts import warm_up as warm_up_tts
 from vad import SAMPLE_RATE, VoiceActivityDetector
 
@@ -129,6 +130,13 @@ def _warm_up():
         print(f"Warm up: agent failed ({exc}).")
     try:
         warm_up_tts()
+        # The introductions are fixed text, so the slow to synthesize
+        # ones (Sinhala, see tts.precache) can be ready before anyone
+        # connects. Only the Guest version is fully fixed; a named
+        # greeting still reuses the cached sentences after the name.
+        for language in _GREETINGS:
+            greeting_text, greeting_language = _greeting(None, language)
+            precache_speech(greeting_text, greeting_language)
     except Exception as exc:
         print(f"Warm up: TTS failed ({exc}).")
     print(f"Warm up finished in {time.time() - start:.2f}s")
@@ -261,11 +269,36 @@ def _extract_user_name(text: str) -> Optional[str]:
     return name[0].upper() + name[1:]
 
 
-def _greeting_text(user_name: Optional[str]) -> str:
-    return (
-        f"Welcome to SLT Mobitel, {user_name or 'Guest'}! I'm your voice assistant, and I understand "
-        "English, Sinhala, and Tamil, so just start speaking whenever you're ready."
-    )
+# The spoken introduction, in the language picked on the frontend's first
+# screen, so a Sinhala or Tamil speaker is greeted in their own language
+# from the first word. When no name was given, "Guest" is said in that
+# language too, rather than an English word dropped into a Sinhala or
+# Tamil sentence. Anything other than si/ta (including no language picked)
+# falls back to English.
+_GREETINGS = {
+    "en": (
+        "Guest",
+        "Welcome to SLT Mobitel, {name}! I'm your voice assistant, and I understand "
+        "English, Sinhala, and Tamil, so just start speaking whenever you're ready.",
+    ),
+    "si": (
+        "අමුත්තා",
+        "SLT Mobitel වෙත සාදරයෙන් පිළිගනිමු, {name}! මම ඔබේ හඬ සහායකයා. මට ඉංග්‍රීසි, "
+        "සිංහල සහ දෙමළ භාෂා තේරෙනවා, ඒ නිසා ඔබ සූදානම් වූ විට කතා කිරීම ආරම්භ කරන්න.",
+    ),
+    "ta": (
+        "விருந்தினர்",
+        "SLT Mobitel-க்கு வரவேற்கிறோம், {name}! நான் உங்கள் குரல் உதவியாளர். எனக்கு "
+        "ஆங்கிலம், சிங்களம் மற்றும் தமிழ் புரியும், எனவே நீங்கள் தயாரானதும் பேசத் தொடங்குங்கள்.",
+    ),
+}
+
+
+def _greeting(user_name: Optional[str], language: Optional[str]) -> tuple[str, str]:
+    """Returns (text, language) for the spoken introduction."""
+    language = language if language in _GREETINGS else "en"
+    guest_word, template = _GREETINGS[language]
+    return template.format(name=user_name or guest_word), language
 
 
 def _sounds_like_closing_signal(text: str) -> bool:
@@ -561,14 +594,16 @@ async def voice_ws(websocket: WebSocket):
         return
 
     # Text to speech is on by default: the assistant introduces itself out
-    # loud, by name if one was given, before anything else happens. It is
+    # loud, in the selected language, by name if one was given, before
+    # anything else happens. It is
     # spoken before calibration, not during it, since on this single
     # machine setup the microphone would otherwise hear the introduction
     # and take it as the room's background noise level. The client does
     # not send audio while the status is "speaking", so none leaks in.
     try:
         if greet:
-            await _speak_canned_reply(websocket, _greeting_text(user_name), "en", "Introduction")
+            greeting_text, greeting_language = _greeting(user_name, language_hint)
+            await _speak_canned_reply(websocket, greeting_text, greeting_language, "Introduction")
     except WebSocketDisconnect:
         return
 
