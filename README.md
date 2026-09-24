@@ -30,7 +30,7 @@ FastAPI backend (backend/server.py)
     |     cloud Speech to Text for Sinhala/Tamil when configured
     |
     +-> Chat agent orchestrator (backend/agent.py)
-    |     cloud multi agent (reasoning -> tool/retrieval -> composer)
+    |     cloud multi agent (tool/retrieval -> composer, streamed)
     |     when a cloud LLM is configured and reachable, else local
     |     Llama (via Ollama), streaming its reply token by token as it
     |     is generated (cloud path yields its finished reply as one
@@ -97,7 +97,8 @@ while developing.
    ```
 
 2. Ollama with `llama3.2:latest` pulled and the server running at
-   `http://localhost:11434` (unchanged from the prototype; this is the
+   `http://127.0.0.1:11434` (the backend uses the IPv4 address rather than
+   `localhost`, which costs about 2 seconds per request on Windows; this is the
    local fallback every other path degrades to, so it should always be
    available):
    ```
@@ -205,7 +206,8 @@ could change without notice.
 otherwise.** Local Ollama remains the zero cost, zero credential default
 so the base demo always works. When a cloud provider (Gemini or GPT) is
 configured and reachable, the Orchestrator runs a small three role
-collaboration (reasoning, tool/retrieval, composer) against that provider
+collaboration (tool/retrieval, then a streamed composer, with an optional
+reasoning stage via `CLOUD_REASONING_STAGE`) against that provider
 instead; see ARCHITECTURE.md for why this counts as genuine multi agent
 collaboration within this pass's scope.
 
@@ -245,9 +247,13 @@ out of nowhere.
 **The voice screen starts itself, with no button to press.** Entering it
 shows the mic permission explainer (or, if the browser already reports
 permission as granted, skips straight past it); once permission is
-settled, `beginVoiceSession()` (`frontend/app.js`) speaks the
-introduction ("Welcome to SLT Mobitel, ..."), waits for it to finish, then
-opens the WebSocket and starts listening automatically. The screen itself
+settled, `beginVoiceSession()` (`frontend/app.js`) opens the WebSocket
+straight away, and the backend speaks the introduction out loud ("Welcome
+to SLT Mobitel, ...", by name or as Guest) as the first thing in the
+session, then calibrates and starts listening automatically. Text to
+speech is on by default; there is no switch to turn it on first. The
+agent keeps using the name in its own replies, and a user can also say
+"my name is ..." mid conversation. The screen itself
 is down to five controls: conversation history (top left), logout and the
 theme toggle (top right), and captions on/off, the mic, and an end chat
 button along the bottom, rather than a status row, badges, and a manual

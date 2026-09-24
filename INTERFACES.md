@@ -66,27 +66,34 @@ backend/agent.py
         Unchanged in shape from the prototype. LlamaOllamaAgent is the
         local fallback every other path degrades to.
 
-        def respond_stream(self, text_input: str) -> Iterator[str]
+        def respond(self, text_input: str, user_name: Optional[str] = None) -> str
+        def respond_stream(self, text_input: str, user_name: Optional[str] = None) -> Iterator[str]
             Like respond(), but yields text chunks as Ollama generates
             them (stream mode) instead of blocking for the full reply.
             Never raises for a request level failure; yields a single
             chunk with the same wording respond() would have returned.
+            user_name (None means Guest) goes into the system prompt so
+            the reply can address the user by name.
+        def warm_up(self) -> None
+            Loads the model into Ollama ahead of the first question.
 
     class GeminiAgent(ChatAgent)
     class GptAgent(ChatAgent)
         def __init__(self, model: str = None, system_prompt: Optional[str] = None)
+        def respond_stream(self, text_input: str) -> Iterator[str]
         Raise CloudUnavailableError (never a raw SDK exception) on any
         failure: missing key, network error, auth error, quota error.
 
     class Orchestrator(ChatAgent)
         def __init__(self, tool_callback: Optional[Callable[[str], Optional[str]]] = None)
-        def respond(self, text_input: str) -> str
-        def respond_stream(self, text_input: str) -> Iterator[str]
-            Streaming counterpart to respond(). Only the local fallback
-            path is actually streamed chunk by chunk; the cloud multi
-            agent path (three sequential calls) still runs to completion
-            and yields the finished reply as one chunk (see the method's
-            own docstring for why, and KNOWN_LIMITATIONS.md).
+        def respond(self, text_input: str, user_name: Optional[str] = None) -> str
+        def respond_stream(self, text_input: str, user_name: Optional[str] = None) -> Iterator[str]
+            Streaming counterpart to respond(). Both the cloud and the
+            local path stream as they generate. After a cloud failure the
+            cloud is skipped for 5 minutes (circuit breaker).
+        def warm_up(self) -> None
+            Called at server startup: loads the local model and probes
+            the cloud provider once.
         self.last_mode: str
             Set after every respond()/respond_stream() call to a human
             readable string describing which path actually served the
@@ -95,9 +102,22 @@ backend/agent.py
             the frontend's mode badge.
 
 backend/tts.py
-    def speak_text(text_input: str, language: str = "en", voice_style: str = "female_natural") -> None
-        Splits text into sentences and speaks/plays each one as soon as it
-        is ready (streamed playback). Tries, in order: the configured
+    def speak_stream(sentences: Iterable[str], language: str = "en",
+                     voice_style: str = "female_natural",
+                     on_sentence_start: Optional[Callable[[str], None]] = None) -> None
+        Speaks sentences as they arrive, even from an iterable that is
+        still being filled while the agent generates. Synthesis of the
+        next sentence overlaps playback of the current one.
+        on_sentence_start is called right before each sentence plays.
+    class SentenceChunker
+        feed(text) -> list[str] / flush() -> list[str]: turns streamed
+        reply text into whole sentences as soon as each one is complete.
+    def warm_up() -> None
+        Opens the Google TTS connection at startup (no-op otherwise).
+    def speak_text(text_input: str, language: str = "en", voice_style: str = "female_natural",
+                   on_sentence_start=None) -> None
+        Splits text into sentences and speaks them through speak_stream()
+        (streamed, pipelined playback). Tries, in order: the configured
         cloud provider if real credentials are set; edge-tts (a free,
         credential free neural voice covering en/si/ta, see this module's
         own docstring); a local SAPI5 voice for English only. voice_style
@@ -115,9 +135,14 @@ backend/server.py
 
     /ws/voice's agent_response_chunk event carries the accumulated reply
     text as it streams in from Orchestrator.respond_stream(), followed by
-    one final agent_response event with the complete text and mode.
+    one final agent_response event with the complete text and mode. Audio
+    starts before that, as soon as the first sentence is complete; each
+    sentence is announced with a speaking_sentence event as it starts.
+    start_session carries user_name and greet; the server speaks the
+    introduction first when greet is true.
 
-    POST /chat, body {"text": str, "language": str | null} -> {"reply": str, "mode": str}
+    POST /chat, body {"text": str, "language": str | null, "user_name": str | null}
+        -> {"reply": str, "mode": str}
         Not streamed: a plain request/response endpoint, unlike the
         WebSocket voice path.
         Text only path for the frontend's chat screen. Runs the same

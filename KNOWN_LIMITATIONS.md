@@ -39,39 +39,31 @@ phoneme level timing (several cloud TTS APIs, including Google Cloud's,
 can return timepoints) and drive the mouth from that instead of an
 estimate.
 
-## The agent's reply streams in real time on the voice path only, and only for the local fallback
+## The agent's reply streams in real time on the voice path only
 
-**Status: genuinely real time where implemented; a deliberate scope boundary elsewhere.**
+**Status: genuinely real time on the voice path, cloud and local; not on the text chat screen.**
 
-The WebSocket voice pipeline now streams the agent's reply as it is
-generated: `LlamaOllamaAgent.respond_stream()` (`backend/agent.py`) calls
-Ollama with `stream: true` and yields each token chunk as it arrives,
-`server.py` forwards the accumulated text to the frontend as
-`agent_response_chunk` events, and the frontend shows the reply appearing
-live in the transcript during the "thinking" status, not only once the
-full reply is ready. This was verified against the real local Ollama
-server, not mocked: a test request produced two separate chunks
-("Hello", "!") arriving as separate WebSocket messages, and a longer
-prompt produced many chunks building up the sentence progressively.
+The WebSocket voice pipeline streams the agent's reply as it is generated
+and speaks it at the same time: each sentence goes to text to speech the
+moment the agent finishes writing it (`SentenceChunker` and
+`speak_stream()` in `backend/tts.py`, wired up by `_speak_streamed_reply()`
+in `backend/server.py`), so the first sentence is already playing while
+the rest is still being written. Both the local Llama path and the cloud
+path stream now; the cloud path used to run a separate reasoning call to
+completion first and then return the whole reply as one piece, which is
+now optional (`CLOUD_REASONING_STAGE`, off by default).
 
-Two scope boundaries on this, stated plainly rather than implied away:
+The text chat screen's `POST /chat` endpoint is not streamed; it is a
+plain request/response call that waits for the full reply. Streaming a
+plain HTTP POST would need Server Sent Events or a similar mechanism on
+both ends, which was not built since the voice path already demonstrates
+real streaming end to end.
 
-- Only the local Llama fallback path is actually streamed chunk by
-  chunk. The cloud multi agent path (reasoning, then tool/retrieval, then
-  composing, see ARCHITECTURE.md) still runs its three calls to
-  completion and yields the finished reply as a single chunk.
-  `Orchestrator.respond_stream()`'s own docstring explains why: streaming
-  a three stage pipeline, and deciding what a viewer should see of the
-  internal reasoning stage while it is in flight, was judged out of scope
-  for this pass. Since no cloud credentials are configured in this
-  environment, this path has not been exercised live either way (see the
-  cloud multi agent entry below).
-- The text chat screen's `POST /chat` endpoint is not streamed; it is a
-  plain request/response call that waits for the full reply, unlike the
-  WebSocket voice path. Streaming a plain HTTP POST would need Server
-  Sent Events or a similar mechanism on both ends, which was not built in
-  this pass since the voice path already demonstrates real streaming
-  end to end.
+One side effect worth knowing: to get the first words out sooner, the
+very first piece of a reply may be cut at a comma (for example the
+assistant says "Nimal," and then carries on with the rest of the
+sentence). Only the first piece is cut that way, so the rest of the reply
+keeps normal sentence rhythm.
 
 ## WebGL/Three.js is required for the 3D face; a flat 2D face is the fallback
 
@@ -162,7 +154,7 @@ account for the same reason as above.
 faster-whisper has no native partial decoding API: every call transcribes
 whatever audio buffer it is given, start to finish. `transcribe_stream()`
 approximates streaming by re-running transcription on the growing speech
-buffer every few chunks (about every 2 seconds of new speech) and finishing
+buffer every few chunks (about every 1.5 seconds of new speech) and finishing
 with one pass over the whole utterance once trailing silence is detected.
 This has been verified to work end to end, including a real test where a
 synthesized sentence was fed through the pipeline in 0.5 second chunks and
@@ -272,7 +264,31 @@ phrase list per language, if this is taken beyond a demo.
 
 Unchanged from the prototype: each turn is an independent request to the
 active chat agent. Both the local and cloud paths currently discard prior
-turns.
+turns, so a follow up like "how fast can it be?" loses what "it" referred
+to. The user's name is the one exception: it is kept for the whole
+session and given to the agent on every turn.
+
+## The Gemini key currently has no credit left
+
+**Status: blocked on billing, not on code.**
+
+As of 2026-09-24 every Gemini request with the configured key returns
+`429 Your prepayment credits are depleted`, whatever the model name. The
+Orchestrator falls back to local Llama, and its circuit breaker (see
+`_CLOUD_RETRY_AFTER_SECONDS` in `backend/agent.py`) now skips the cloud
+for 5 minutes after a failure, so a dead key no longer adds a failing
+network call to every turn. The server also probes the cloud once at
+startup, so even the first question skips it. Topping up the credits in
+AI Studio is the only fix; no code change is needed, the cloud path picks
+up again on its own once a probe succeeds.
+
+## A turn ends after about 1 second of silence
+
+`SILENCE_CHUNKS_TO_FINALIZE` in `backend/stt.py` was lowered from 1.5s to
+1s of trailing silence, since that wait comes before every single reply.
+Someone who pauses for longer than a second mid sentence will be cut off
+and answered early; raising it back to 3 chunks trades that for a slower
+reply.
 
 ## "Existing user" is a name to be addressed by, not a real login
 
@@ -286,13 +302,17 @@ the same browser; choosing "New user" addresses them as Guest. There is no
 account system, no password, and nothing is checked against anything: two
 different people typing the same name are treated identically, and the
 same person on a different browser or device starts over as a stranger.
-The name only changes what the greeting says and reaches no other part of
-the system; the backend agent has no notion of who is asking, and per turn
-personalization in its own replies (not just the fixed greeting) was
-judged out of scope for this pass.
+The name is sent to the backend with the session, used in the spoken
+introduction, and given to the agent on every turn so its own replies
+address the user by name (or as Guest when none was given). A user can
+also say "my name is ..." or "call me ..." during a voice conversation;
+the backend picks that up with a simple phrase match
+(`_extract_user_name` in `backend/server.py`), uses it from then on, and
+the browser remembers it like a typed name. That match is English only,
+deliberately ignores "I'm ..." (too often "I'm good"), and uses whatever
+Whisper heard, so an unusual name can come out misspelled or as a
+similar sounding common name.
 
 **Real fix:** an actual account system (even a simple one, a persisted
 user record keyed by something more durable than a browser's local
-storage) if genuine returning user recognition across devices is needed;
-and, separately, passing the name to the backend so the agent's own
-replies, not just the canned greeting, can address the user by name.
+storage) if genuine returning user recognition across devices is needed.
