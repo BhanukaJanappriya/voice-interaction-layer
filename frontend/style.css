@@ -145,7 +145,7 @@ body {
    filled/active via the same brand blue already used for solid buttons
    elsewhere, rather than a color unrelated to the rest of the palette. */
 .icon-button[aria-pressed="true"] {
-  background: var(--blue);
+  background: var(--blue-);
   color: #fff;
   border-color: var(--blue);
 }
