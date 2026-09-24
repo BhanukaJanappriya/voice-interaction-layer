@@ -241,10 +241,22 @@ _NEGATIVE_CLOSE_LATIN = re.compile(
 )
 _NEGATIVE_CLOSE_OTHER = ("නැහැ", "இல்லை")
 
-_CLOSING_QUESTION_TEXT = (
-    "You're welcome! Is there anything else I can help you with, or shall I end our conversation here?"
-)
-_CLOSING_GOODBYE_TEXT = "Thank you for using the SLT Mobitel voice assistant. Goodbye, and have a great day!"
+# The canned closing lines, in the language the rest of the conversation
+# is in (the language picked on the first screen); English otherwise.
+_CLOSING_QUESTION_TEXT = {
+    "en": "You're welcome! Is there anything else I can help you with, or shall I end our conversation here?",
+    "si": "ඔබව සාදරයෙන් පිළිගනිමු! මට ඔබට තවත් යමක් උදව් කළ හැකිද, නැතහොත් අපගේ සංවාදය මෙතැනින් අවසන් කරන්නද?",
+    "ta": "மகிழ்ச்சி! நான் உங்களுக்கு வேறு ஏதாவது உதவ முடியுமா, அல்லது நமது உரையாடலை இங்கே முடித்துக்கொள்ளலாமா?",
+}
+_CLOSING_GOODBYE_TEXT = {
+    "en": "Thank you for using the SLT Mobitel voice assistant. Goodbye, and have a great day!",
+    "si": "SLT Mobitel හඬ සහායකයා භාවිතා කළාට ස්තුතියි. ආයුබෝවන්, ඔබට සුබ දවසක්!",
+    "ta": "SLT Mobitel குரல் உதவியாளரைப் பயன்படுத்தியதற்கு நன்றி. வணக்கம், இனிய நாளாக அமையட்டும்!",
+}
+
+
+def _in_language(lines: dict, language: Optional[str]) -> str:
+    return lines.get(language) or lines["en"]
 
 
 # Lets the user tell the assistant their name by voice, not only on the
@@ -429,7 +441,7 @@ async def _run_one_utterance(websocket: WebSocket, language_hint: Optional[str],
     return final_text, final_language, session_ended
 
 
-async def _stream_agent_reply(text_input: str, user_name: Optional[str]):
+async def _stream_agent_reply(text_input: str, user_name: Optional[str], language: Optional[str]):
     """Runs orchestrator.respond_stream() (agent.py) on a background
     thread and yields each text chunk as it arrives, bridged into the
     event loop via an asyncio.Queue the same way _run_one_utterance above
@@ -444,7 +456,7 @@ async def _stream_agent_reply(text_input: str, user_name: Optional[str]):
 
     def _worker():
         try:
-            for chunk in orchestrator.respond_stream(text_input, user_name):
+            for chunk in orchestrator.respond_stream(text_input, user_name, language):
                 loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
         except Exception as exc:
             loop.call_soon_threadsafe(chunk_queue.put_nowait, exc)
@@ -548,7 +560,7 @@ async def _speak_streamed_reply(
     agent_start = time.time()
     reply_text = ""
     try:
-        async for chunk in _stream_agent_reply(text_input, user_name):
+        async for chunk in _stream_agent_reply(text_input, user_name, language):
             reply_text += chunk
             await _send_json(websocket, {"type": "agent_response_chunk", "text": reply_text})
             for sentence in chunker.feed(chunk):
@@ -650,6 +662,12 @@ async def voice_ws(websocket: WebSocket):
                 print(f"Turn skipped: transcript '{final_text}' looks like a Whisper hallucination, not a real utterance.")
                 continue
             reply_start = time.time()
+            # Replies (spoken and written) are in the language picked on the
+            # first screen, not whatever Whisper guessed from the audio, so
+            # an English word dropped into a Sinhala question does not flip
+            # the reply to English. With no language picked, the reply
+            # follows the language Whisper detected, as before.
+            reply_language = language_hint or detected_language
 
             introduced_name = _extract_user_name(final_text)
             if introduced_name and introduced_name != user_name:
@@ -658,20 +676,24 @@ async def voice_ws(websocket: WebSocket):
 
             if awaiting_close_confirmation:
                 if _sounds_negative(final_text) or _sounds_like_closing_signal(final_text):
-                    await _speak_canned_reply(websocket, _CLOSING_GOODBYE_TEXT, detected_language, "closing")
+                    await _speak_canned_reply(
+                        websocket, _in_language(_CLOSING_GOODBYE_TEXT, reply_language), reply_language, "closing"
+                    )
                     await _send_json(websocket, {"type": "end_chat"})
                     return
                 # Not a closing confirmation after all, a real new question;
                 # drop the offer and fall through to answer it normally.
                 awaiting_close_confirmation = False
             elif _sounds_like_closing_signal(final_text):
-                await _speak_canned_reply(websocket, _CLOSING_QUESTION_TEXT, detected_language, "closing")
+                await _speak_canned_reply(
+                    websocket, _in_language(_CLOSING_QUESTION_TEXT, reply_language), reply_language, "closing"
+                )
                 awaiting_close_confirmation = True
                 continue
 
             await _send_json(websocket, {"type": "status", "state": "thinking"})
             reply_text, agent_time, first_audio_at = await _speak_streamed_reply(
-                websocket, final_text, user_name, detected_language
+                websocket, final_text, user_name, reply_language
             )
             if not reply_text:
                 continue
@@ -708,7 +730,9 @@ async def chat(request: ChatRequest):
     does: a blocking call here would stall every other connection's event
     loop turn until it finished."""
     loop = asyncio.get_running_loop()
-    reply = await loop.run_in_executor(None, orchestrator.respond, request.text, request.user_name)
+    reply = await loop.run_in_executor(
+        None, orchestrator.respond, request.text, request.user_name, request.language
+    )
     return ChatResponse(reply=reply, mode=orchestrator.last_mode)
 
 

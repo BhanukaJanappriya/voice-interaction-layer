@@ -307,8 +307,18 @@ introduction, and given to the agent on every turn so its own replies
 address the user by name (or as Guest when none was given). The
 introduction itself is in the language picked on the first screen
 (English, Sinhala or Tamil, `_GREETINGS` in `backend/server.py`), with
-"Guest" also said in that language. Only the introduction is translated:
-the agent's own replies are not yet told which language to answer in.
+"Guest" also said in that language. The agent's replies and the canned
+closing lines follow the same selected language (`_REPLY_LANGUAGES` in
+`backend/agent.py`), and so does the voice that speaks them.
+
+**Local Llama cannot really answer in Sinhala or Tamil.** Tested on
+2026-09-24 with llama3.2 (3B): asked in Sinhala, it produced Sinhala
+script that is not meaningful Sinhala; asked in Tamil, it produced
+grammatical Tamil with a factually unrelated answer. The language
+instruction is followed, the model simply is not good enough in those
+languages. Gemini handles both properly, so Sinhala and Tamil replies
+need a working Gemini key (see the credit issue above), or a local model
+with real Sinhala and Tamil support set as `LOCAL_LLM_MODEL`.
 Sinhala is spoken by edge-tts (Google has no Sinhala voice), which took
 2.5 to 9 seconds per sentence over the network here, so the Guest version
 of the Sinhala introduction is synthesized at server startup and cached;

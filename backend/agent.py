@@ -85,22 +85,55 @@ _VOICE_ASSISTANT_SYSTEM_PROMPT = (
 )
 
 
-def _with_user_name(system_prompt: str, user_name: Optional[str]) -> str:
-    """Adds who the assistant is talking to, so replies can address the
-    user by the name they gave (on the user screen, or by saying "my name
-    is ..." during the conversation, see server.py), or as Guest when no
-    name is known. Put in the system prompt rather than the user message
-    for the same reason as the persona itself: it is framing, not part of
-    what the user asked."""
+# The language each reply must be written in, keyed by the language code
+# picked on the frontend's first screen. The script is spelled out because
+# a model asked for "Sinhala" alone sometimes answers in romanized
+# Sinhala, which the Sinhala voice then reads badly. "guest" is how the
+# user is addressed when no name is known, in that language, matching
+# the spoken introduction (see _GREETINGS in server.py).
+_REPLY_LANGUAGES = {
+    "en": {"instruction": "Always reply in English.", "guest": "Guest"},
+    "si": {
+        "instruction": (
+            "Always reply in Sinhala (සිංහල), written in Sinhala script, even if the "
+            "user's message contains English words. Keep product names like SLT Mobitel as they are."
+        ),
+        "guest": "අමුත්තා",
+    },
+    "ta": {
+        "instruction": (
+            "Always reply in Tamil (தமிழ்), written in Tamil script, even if the "
+            "user's message contains English words. Keep product names like SLT Mobitel as they are."
+        ),
+        "guest": "விருந்தினர்",
+    },
+}
+
+
+def _personalize(system_prompt: str, user_name: Optional[str], language: Optional[str] = None) -> str:
+    """Adds who the assistant is talking to and which language to answer
+    in: replies address the user by the name they gave (on the user
+    screen, or by saying "my name is ..." during the conversation, see
+    server.py), or as Guest when no name is known, and are written in the
+    language picked on the first screen. Put in the system prompt rather
+    than the user message for the same reason as the persona itself: it is
+    framing, not part of what the user asked. No language (None) keeps the
+    old behavior of answering in whatever language the user used."""
+    reply_language = _REPLY_LANGUAGES.get(language)
+    guest_word = reply_language["guest"] if reply_language else "Guest"
     if user_name:
-        return (
+        prompt = (
             f"{system_prompt} The user's name is {user_name}. Address them by name "
             "naturally, for example when greeting or thanking them, but not in every reply."
         )
-    return (
-        f"{system_prompt} The user has not shared their name. If you address them "
-        "directly, call them Guest."
-    )
+    else:
+        prompt = (
+            f"{system_prompt} The user has not shared their name. If you address them "
+            f"directly, call them {guest_word}."
+        )
+    if reply_language:
+        prompt += " " + reply_language["instruction"]
+    return prompt
 
 
 # How long Ollama keeps the model loaded in memory after a request. Its
@@ -142,7 +175,7 @@ class LlamaOllamaAgent(ChatAgent):
         except requests.exceptions.RequestException as exc:
             print(f"Agent warm up (local Llama) failed: {exc}")
 
-    def respond(self, text_input: str, user_name: Optional[str] = None) -> str:
+    def respond(self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None) -> str:
         prompt = text_input
         if self.tool_callback is not None:
             try:
@@ -156,7 +189,7 @@ class LlamaOllamaAgent(ChatAgent):
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "system": _with_user_name(_VOICE_ASSISTANT_SYSTEM_PROMPT, user_name),
+            "system": _personalize(_VOICE_ASSISTANT_SYSTEM_PROMPT, user_name, language),
             "stream": False,
             "keep_alive": _OLLAMA_KEEP_ALIVE,
         }
@@ -189,7 +222,9 @@ class LlamaOllamaAgent(ChatAgent):
 
         return data.get("response", "").strip()
 
-    def respond_stream(self, text_input: str, user_name: Optional[str] = None) -> Iterator[str]:
+    def respond_stream(
+        self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None
+    ) -> Iterator[str]:
         """Like respond(), but yields response text chunks as Ollama
         generates them (the API's stream mode, newline delimited JSON
         objects each carrying one token or short run of tokens) instead of
@@ -212,7 +247,7 @@ class LlamaOllamaAgent(ChatAgent):
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "system": _with_user_name(_VOICE_ASSISTANT_SYSTEM_PROMPT, user_name),
+            "system": _personalize(_VOICE_ASSISTANT_SYSTEM_PROMPT, user_name, language),
             "stream": True,
             "keep_alive": _OLLAMA_KEEP_ALIVE,
         }
@@ -459,10 +494,12 @@ class Orchestrator(ChatAgent):
                 self._cloud_retry_at = time.monotonic() + _CLOUD_RETRY_AFTER_SECONDS
                 print(f"Agent warm up: cloud unavailable ({exc}); using the local agent for now.")
 
-    def respond(self, text_input: str, user_name: Optional[str] = None) -> str:
-        return "".join(self.respond_stream(text_input, user_name)).strip()
+    def respond(self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None) -> str:
+        return "".join(self.respond_stream(text_input, user_name, language)).strip()
 
-    def respond_stream(self, text_input: str, user_name: Optional[str] = None) -> Iterator[str]:
+    def respond_stream(
+        self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None
+    ) -> Iterator[str]:
         """Yields the reply in pieces as it is generated, on both the cloud
         and the local path, so the voice pipeline can start speaking the
         first sentence while the rest is still being written.
@@ -477,7 +514,7 @@ class Orchestrator(ChatAgent):
         if config.cloud_llm_configured() and cloud_paused_for > 0:
             print(f"Orchestrator: cloud failed recently, skipping it for another {cloud_paused_for:.0f}s.")
         elif config.cloud_llm_configured():
-            cloud_stream = self._stream_cloud(text_input, user_name)
+            cloud_stream = self._stream_cloud(text_input, user_name, language)
             try:
                 first_chunk = next(cloud_stream, "")
             except CloudUnavailableError as exc:
@@ -498,9 +535,9 @@ class Orchestrator(ChatAgent):
 
         self.last_mode = "local single agent (Llama via Ollama)"
         print(f"Orchestrator mode: {self.last_mode}")
-        yield from self.local_agent.respond_stream(text_input, user_name)
+        yield from self.local_agent.respond_stream(text_input, user_name, language)
 
-    def _stream_cloud(self, text_input: str, user_name: Optional[str]) -> Iterator[str]:
+    def _stream_cloud(self, text_input: str, user_name: Optional[str], language: Optional[str]) -> Iterator[str]:
         analysis = None
         if config.CLOUD_REASONING_STAGE:
             analysis = _build_cloud_agent(role_prompt=_REASONING_ROLE_PROMPT).respond(text_input)
@@ -518,7 +555,7 @@ class Orchestrator(ChatAgent):
         if tool_context:
             composed_prompt += f"\n\nAdditional context: {tool_context}"
 
-        composer_agent = _build_cloud_agent(role_prompt=_with_user_name(_COMPOSER_ROLE_PROMPT, user_name))
+        composer_agent = _build_cloud_agent(role_prompt=_personalize(_COMPOSER_ROLE_PROMPT, user_name, language))
         yield from composer_agent.respond_stream(composed_prompt)
 
 
