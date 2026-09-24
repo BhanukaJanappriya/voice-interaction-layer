@@ -304,6 +304,31 @@ class CloudUnavailableError(Exception):
 
 _gemini_client = None
 
+# What each Gemini API error code actually means for this app, in plain
+# words, so the log and /health say why the cloud path is not being used
+# rather than only printing Google's raw error. Codes as observed from the
+# live API with the google-genai SDK (errors.APIError.code).
+_GEMINI_ERROR_REASONS = {
+    400: "the request was rejected (often an invalid API key format or a bad parameter)",
+    401: "the API key is invalid or was revoked; create a new one in AI Studio",
+    402: "the project's prepaid credits are used up; top up billing in AI Studio",
+    403: "the key is not allowed to use this API or model (API disabled, or key restrictions)",
+    404: "the model named in GEMINI_MODEL does not exist or is not available to this key; pick one from the list models call",
+    429: "the rate limit or quota was hit; wait, or raise the quota in AI Studio",
+    500: "Google's service had an internal error; usually temporary",
+    503: "Google's service is overloaded or unavailable; usually temporary",
+}
+
+
+def _explain_gemini_error(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    reason = _GEMINI_ERROR_REASONS.get(code)
+    if reason is None:
+        # No HTTP code at all usually means the request never reached
+        # Google: no internet, DNS, proxy or firewall.
+        reason = "network problem reaching Google" if code is None else "unexpected error"
+    return f"{code or 'no response'}: {reason} (Google said: {str(exc)[:200]})"
+
 
 class GeminiAgent(ChatAgent):
     """Adapter for Google's Gemini API, using the current google-genai SDK
@@ -363,7 +388,7 @@ class GeminiAgent(ChatAgent):
             raise
         except Exception as exc:
             print(f"Agent latency (Gemini): {time.perf_counter() - start:.2f}s")
-            raise CloudUnavailableError(f"Gemini call failed: {exc}") from exc
+            raise CloudUnavailableError(f"Gemini call failed: {_explain_gemini_error(exc)}") from exc
 
 
 class GptAgent(ChatAgent):
@@ -475,6 +500,10 @@ class Orchestrator(ChatAgent):
         # cloud call (and its timeout) on every turn. A dead key or used up
         # quota rarely fixes itself within a conversation.
         self._cloud_retry_at = 0.0
+        # Why the cloud path last failed, in plain words (see
+        # _explain_gemini_error), or None once it has worked. Shown by
+        # GET /health so the reason is visible without reading logs.
+        self.last_cloud_error: Optional[str] = None
 
     def warm_up(self) -> None:
         """Called once at server startup so the first question does not pay
@@ -489,8 +518,10 @@ class Orchestrator(ChatAgent):
             start = time.perf_counter()
             try:
                 _build_cloud_agent(role_prompt="Reply with one word.").respond("Hi")
+                self.last_cloud_error = None
                 print(f"Agent warm up (cloud): {time.perf_counter() - start:.2f}s")
             except CloudUnavailableError as exc:
+                self.last_cloud_error = str(exc)
                 self._cloud_retry_at = time.monotonic() + _CLOUD_RETRY_AFTER_SECONDS
                 print(f"Agent warm up: cloud unavailable ({exc}); using the local agent for now.")
 
@@ -518,9 +549,11 @@ class Orchestrator(ChatAgent):
             try:
                 first_chunk = next(cloud_stream, "")
             except CloudUnavailableError as exc:
+                self.last_cloud_error = str(exc)
                 self._cloud_retry_at = time.monotonic() + _CLOUD_RETRY_AFTER_SECONDS
                 print(f"Orchestrator: cloud path unavailable ({exc}), falling back to local agent alone.")
             else:
+                self.last_cloud_error = None
                 self.last_mode = f"cloud multi agent ({config.CLOUD_LLM_PROVIDER})"
                 print(f"Orchestrator mode: {self.last_mode}")
                 yield first_chunk

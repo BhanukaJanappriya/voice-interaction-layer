@@ -171,18 +171,20 @@ approach; this was judged out of scope to build for this pass given the
 timeline, since the chunk based approach already satisfies the "feels live"
 requirement in practice.
 
-## The Gemini model name must be one the key can still use
+## Checking why Gemini is not answering
 
-**Status: SDK migrated; model choice is a configuration matter.**
+`GET /health` now reports `cloud_llm_model` and `cloud_llm_last_error`,
+the reason the cloud call last failed in plain words
+(`_GEMINI_ERROR_REASONS` in `backend/agent.py`): 401 invalid key, 402 no
+credit left, 403 key not allowed, 404 model not available to this key,
+429 rate limit or quota, 5xx Google side outage, no code at all for a
+network problem. The same text is in the server log.
 
-`backend/agent.py`'s `GeminiAgent` now uses the current `google-genai`
-SDK (`from google import genai`, `genai.Client`), replacing the
-deprecated `google-generativeai` package. The model comes from
-`GEMINI_MODEL` in `.env` (default `gemini-2.5-flash-lite`). As of
-2026-09-24 Google answers that model with 404 "no longer available to new
-users" for this key and recommends `gemini-3.5-flash-lite`, so
-`GEMINI_MODEL` may need changing once the credit issue below is sorted.
-Either way the Orchestrator falls back to local Llama, so nothing breaks.
+Diagnosed live on 2026-09-24: the key itself is valid (listing models
+succeeds), `gemini-2.5-flash-lite` and `gemini-2.5-flash` are retired for
+new users (404), so the default is now `gemini-3.5-flash-lite`, and every
+available model returns 402 because the project's prepaid credit is used
+up. That last one can only be fixed in AI Studio billing.
 
 ## The cloud multi agent path has not been run against a live account
 
