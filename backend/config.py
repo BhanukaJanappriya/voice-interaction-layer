@@ -25,10 +25,18 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 CLOUD_LLM_PROVIDER = os.environ.get("CLOUD_LLM_PROVIDER", "gemini").strip().lower()  # "gemini" or "gpt"
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+# Extra "reasoning" model call before the reply is composed (see
+# agent.py's Orchestrator). Off by default: it has to finish before the
+# reply can even start, so it roughly doubles the wait for the first word.
+CLOUD_REASONING_STAGE = os.environ.get("CLOUD_REASONING_STAGE", "false").strip().lower() in ("1", "true", "yes")
 
 # Local LLM fallback (always available, no key required)
 LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "llama3.2:latest")
-LOCAL_LLM_HOST = os.environ.get("LOCAL_LLM_HOST", "http://localhost:11434")
+# 127.0.0.1 rather than localhost: on Windows, "localhost" is tried as
+# IPv6 (::1) first, Ollama only listens on IPv4, and every request then
+# waited about 2 seconds for that attempt to time out before falling back
+# (measured: 2.04s per request with localhost, 0.03s with 127.0.0.1).
+LOCAL_LLM_HOST = os.environ.get("LOCAL_LLM_HOST", "http://127.0.0.1:11434")
 
 # Cloud speech (STT and TTS)
 CLOUD_SPEECH_PROVIDER = os.environ.get("CLOUD_SPEECH_PROVIDER", "google").strip().lower()  # "google" or "azure"

@@ -57,6 +57,21 @@ class TranscriptEvent:
     language: str
 
 
+def warm_up() -> None:
+    """Loads the Whisper model and the noise reduction library and runs one
+    throwaway pass of each, so the first real utterance of a session does
+    not also pay for loading them (measured on this machine: about 6s for
+    the Whisper model and about 7s for the first noisereduce/scipy import,
+    versus about 0.4s and 0.03s per call once loaded). server.py calls this
+    once at startup."""
+    start = time.time()
+    denoise_audio(np.zeros(SAMPLE_RATE, dtype=np.float32))
+    model = _get_local_model(config.LOCAL_WHISPER_MODEL_SIZE)
+    segments, _info = model.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32), language="en")
+    list(segments)
+    print(f"STT warm up: {time.time() - start:.2f}s")
+
+
 def _transcribe_local(audio: np.ndarray, language_hint: Optional[str]) -> tuple[str, str]:
     model = _get_local_model(config.LOCAL_WHISPER_MODEL_SIZE)
     segments, info = model.transcribe(audio, language=language_hint)
@@ -124,8 +139,11 @@ def _emit(audio: np.ndarray, language_hint: Optional[str]) -> tuple[str, str]:
 # Tuned for ~0.5s audio chunks, matching the chunk size main.py/server.py
 # use when reading from the microphone or WebSocket.
 CHUNK_SECONDS = 0.5
-SILENCE_CHUNKS_TO_FINALIZE = 3  # ~1.5s of trailing silence ends an utterance
-REFRESH_CHUNKS = 4  # emit a partial roughly every 2s of new speech
+# ~1s of trailing silence ends an utterance. This used to be 1.5s, which
+# was dead time added to every single turn before the agent even started;
+# 1s still allows a normal breath between phrases.
+SILENCE_CHUNKS_TO_FINALIZE = 2
+REFRESH_CHUNKS = 3  # emit a partial roughly every 1.5s of new speech
 
 
 def transcribe_stream(

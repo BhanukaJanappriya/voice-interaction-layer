@@ -27,16 +27,22 @@ Fallback order, from best to last resort:
        one: edge-tts alone gets Sinhala and Tamil a real, natural voice, no
        credentials required (verified live, see KNOWN_LIMITATIONS.md).
 
-Streaming playback: speak_text() splits the reply into sentences and
-synthesizes/plays each one as soon as it is ready, instead of waiting for
-the entire response to be synthesized first. This is what actually reduces
-perceived latency for a long reply, at every one of the levels above.
+Streaming playback: speak_stream() takes sentences one at a time, even
+while the agent is still generating the rest of its reply, and runs
+synthesis and playback on two separate threads, so sentence N+1 is being
+synthesized while sentence N is playing. Before this, each sentence was
+synthesized only after the previous one had finished playing, which put a
+full network round trip of silence between every sentence, and nothing was
+spoken until the whole reply existed. speak_text() is the same thing for a
+reply that is already complete.
 """
 
+import queue
 import re
 import sys
+import threading
 import time
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 import pyttsx3
 
@@ -44,7 +50,7 @@ import config
 
 # edge-tts and Azure Cognitive Services draw from the same neural voice
 # catalog (edge-tts calls Microsoft Edge's own backend for the same
-# voices), so this one map serves both _speak_edge_tts() and
+# voices), so this one map serves both _synthesize_edge_tts() and
 # _speak_cloud_azure() below rather than keeping two copies in sync.
 _NEURAL_VOICE_MAP = {
     ("en", "female_natural"): "en-US-JennyNeural",
@@ -128,43 +134,145 @@ _GOOGLE_CHIRP_VOICE_MAP = {
 }
 
 
-def _speak_cloud_google(text_input: str, language: str, voice_style: str) -> bool:
-    """Synthesizes and plays text_input via Google Cloud Text to Speech's
-    Chirp3-HD voices. Returns False (never raises) if unavailable, so the
-    caller can fall back cleanly."""
-    if not config.GOOGLE_APPLICATION_CREDENTIALS:
-        return False
-    voice_entry = _GOOGLE_CHIRP_VOICE_MAP.get((language, voice_style)) or _GOOGLE_CHIRP_VOICE_MAP.get(
+_google_tts_client = None
+
+
+def _play(data, samplerate) -> None:
+    import sounddevice as sd
+
+    sd.play(data, samplerate)
+    sd.wait()
+
+
+def _google_voice(language: str, voice_style: str):
+    return _GOOGLE_CHIRP_VOICE_MAP.get((language, voice_style)) or _GOOGLE_CHIRP_VOICE_MAP.get(
         (language, "female_natural")
     )
+
+
+def _get_google_client():
+    global _google_tts_client
+    if _google_tts_client is None:
+        from google.cloud import texttospeech
+
+        _google_tts_client = texttospeech.TextToSpeechClient()
+    return _google_tts_client
+
+
+_GOOGLE_STREAM_SAMPLE_RATE = 24000
+
+
+def _play_pcm_stream(first_chunk: bytes, chunks: "queue.Queue", samplerate: int) -> None:
+    """Plays 16 bit mono PCM as it arrives: first_chunk right away, then
+    whatever the receiving thread puts on chunks, until it puts None (or
+    an exception, if the stream broke part way). Leaving the with block
+    waits for the buffered audio to finish playing."""
+    import sounddevice as sd
+
+    leftover = b""
+    with sd.RawOutputStream(samplerate=samplerate, channels=1, dtype="int16") as out:
+        item = first_chunk
+        while item is not None:
+            if isinstance(item, Exception):
+                print(f"TTS: Google stream broke part way ({item}).")
+                break
+            data = leftover + item
+            usable = len(data) - (len(data) % 2)  # whole 16 bit samples only
+            if usable:
+                out.write(data[:usable])
+            leftover = data[usable:]
+            item = chunks.get()
+
+
+def _stream_cloud_google(text_input: str, language: str, voice_style: str) -> Optional[Callable[[], None]]:
+    """Starts synthesizing text_input with Google's streaming Text to
+    Speech API and returns a callable that plays it, or None (never
+    raises) if unavailable. Measured here, the streaming API delivers its
+    first audio in about 0.3s, versus about 1.4s for the regular request
+    below, which only answers once the whole sentence is synthesized; the
+    voice is the same. Audio keeps arriving on a background thread, so
+    this still works as a prefetch while the previous sentence plays.
+    Waits only for the first chunk, so a failure is known here and the
+    caller can fall back before anything has been played."""
+    if not config.GOOGLE_APPLICATION_CREDENTIALS:
+        return None
+    voice_entry = _google_voice(language, voice_style)
     if voice_entry is None:
-        return False
+        return None
+    lang_code, voice_name = voice_entry
+    try:
+        from google.cloud import texttospeech
+
+        client = _get_google_client()
+        streaming_config = texttospeech.StreamingSynthesizeConfig(
+            voice=texttospeech.VoiceSelectionParams(language_code=lang_code, name=voice_name),
+            streaming_audio_config=texttospeech.StreamingAudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.PCM,
+                sample_rate_hertz=_GOOGLE_STREAM_SAMPLE_RATE,
+            ),
+        )
+        stream_requests = [
+            texttospeech.StreamingSynthesizeRequest(streaming_config=streaming_config),
+            texttospeech.StreamingSynthesizeRequest(input=texttospeech.StreamingSynthesisInput(text=text_input)),
+        ]
+    except Exception as exc:
+        print(f"TTS: Google streaming TTS unavailable ({exc}), falling back.")
+        return None
+
+    chunks: "queue.Queue" = queue.Queue()
+
+    def _receive():
+        try:
+            for response in client.streaming_synthesize(iter(stream_requests)):
+                if response.audio_content:
+                    chunks.put(response.audio_content)
+        except Exception as exc:
+            chunks.put(exc)
+        finally:
+            chunks.put(None)
+
+    threading.Thread(target=_receive, daemon=True).start()
+    first_chunk = chunks.get()
+    if first_chunk is None or isinstance(first_chunk, Exception):
+        print(f"TTS: Google streaming TTS unavailable ({first_chunk}), falling back.")
+        return None
+    return lambda: _play_pcm_stream(first_chunk, chunks, _GOOGLE_STREAM_SAMPLE_RATE)
+
+
+def _synthesize_cloud_google(text_input: str, language: str, voice_style: str):
+    """Synthesizes text_input via Google Cloud Text to Speech's Chirp3-HD
+    voices and returns (samples, samplerate) without playing it, so the
+    caller can synthesize the next sentence while this one plays. Returns
+    None (never raises) if unavailable, so the caller can fall back
+    cleanly. The client is created once and reused: building a new one
+    per sentence repeated the credential load and connection setup every
+    time."""
+    if not config.GOOGLE_APPLICATION_CREDENTIALS:
+        return None
+    voice_entry = _google_voice(language, voice_style)
+    if voice_entry is None:
+        return None
     lang_code, voice_name = voice_entry
     try:
         import io
 
-        import sounddevice as sd
         import soundfile as sf
         from google.cloud import texttospeech
 
-        client = texttospeech.TextToSpeechClient()
         voice_params = texttospeech.VoiceSelectionParams(
             language_code=lang_code,
             name=voice_name,
         )
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.LINEAR16)
-        response = client.synthesize_speech(
+        response = _get_google_client().synthesize_speech(
             input=texttospeech.SynthesisInput(text=text_input),
             voice=voice_params,
             audio_config=audio_config,
         )
-        data, samplerate = sf.read(io.BytesIO(response.audio_content), dtype="float32")
-        sd.play(data, samplerate)
-        sd.wait()
-        return True
+        return sf.read(io.BytesIO(response.audio_content), dtype="float32")
     except Exception as exc:
         print(f"TTS: Google Cloud TTS unavailable ({exc}), falling back.")
-        return False
+        return None
 
 
 def _speak_cloud_azure(text_input: str, language: str, voice_style: str) -> bool:
@@ -189,25 +297,19 @@ def _speak_cloud_azure(text_input: str, language: str, voice_style: str) -> bool
         return False
 
 
-def _speak_cloud(text_input: str, language: str, voice_style: str) -> bool:
-    if config.CLOUD_SPEECH_PROVIDER == "azure":
-        return _speak_cloud_azure(text_input, language, voice_style)
-    return _speak_cloud_google(text_input, language, voice_style)
-
-
-def _speak_edge_tts(text_input: str, language: str, voice_style: str) -> bool:
-    """Synthesizes and plays text_input via edge-tts (see this module's
-    docstring for what it is and why it sits here in the fallback order).
-    Returns False (never raises) on any failure, most commonly no internet
-    access, so the caller falls back to the fully offline local voice.
+def _synthesize_edge_tts(text_input: str, language: str, voice_style: str):
+    """Synthesizes text_input via edge-tts (see this module's docstring
+    for what it is and why it sits here in the fallback order) and returns
+    (samples, samplerate) without playing it. Returns None (never raises)
+    on any failure, most commonly no internet access, so the caller falls
+    back to the fully offline local voice.
 
     edge-tts's own API is async only (it streams audio over a websocket to
     Microsoft's service); asyncio.run() drives it synchronously here since
-    the rest of this module, and speak_text()'s sentence by sentence
-    playback loop, are synchronous by design. soundfile can decode the
-    MP3 bytes edge-tts returns directly (confirmed against a real sample;
-    no separate MP3 decoding library needed), the same way the cloud
-    provider functions above decode their own audio bytes."""
+    this always runs on speak_stream()'s synthesis thread, which has no
+    event loop of its own. soundfile can decode the MP3 bytes edge-tts
+    returns directly (confirmed against a real sample; no separate MP3
+    decoding library needed)."""
     voice_name = (
         _NEURAL_VOICE_MAP.get((language, voice_style))
         or _NEURAL_VOICE_MAP.get((language, "female_natural"))
@@ -218,7 +320,6 @@ def _speak_edge_tts(text_input: str, language: str, voice_style: str) -> bool:
         import io
 
         import edge_tts
-        import sounddevice as sd
         import soundfile as sf
 
         async def _synthesize() -> bytes:
@@ -231,62 +332,193 @@ def _speak_edge_tts(text_input: str, language: str, voice_style: str) -> bool:
 
         audio_bytes = asyncio.run(_synthesize())
         if not audio_bytes:
-            return False
-        data, samplerate = sf.read(io.BytesIO(audio_bytes), dtype="float32")
-        sd.play(data, samplerate)
-        sd.wait()
-        return True
+            return None
+        return sf.read(io.BytesIO(audio_bytes), dtype="float32")
     except Exception as exc:
         print(f"TTS: edge-tts unavailable ({exc}), falling back.")
-        return False
+        return None
 
 
-def speak_text(text_input: str, language: str = "en", voice_style: str = "female_natural") -> None:
-    """Synthesizes text_input to speech and plays it, streaming sentence by
-    sentence so playback can start before the whole reply is ready.
+def _speak_offline(sentence: str, language: str, voice_style: str) -> None:
+    """Last resort once every network voice has failed: the local SAPI5
+    voice for English, or, for Sinhala or Tamil, a short spoken English
+    notice instead of mangling the text through an English voice. See
+    KNOWN_LIMITATIONS.md. Genuinely rare now that edge-tts covers both
+    languages with no credentials required."""
+    if language == "en":
+        if not _speak_local(sentence, voice_style):
+            print("TTS error: local playback failed and no cloud or edge-tts path is available.")
+        return
+    notice = (
+        f"Natural {config.SUPPORTED_LANGUAGES.get(language, language)} speech needs "
+        "either a cloud provider or internet access for the free voice service, "
+        "and neither is available right now."
+    )
+    print(f"TTS: {notice}")
+    _speak_local(notice, voice_style)
 
-    Tries, in order: the configured cloud provider (if real credentials are
-    set), then edge-tts (natural, needs no credentials, only internet; see
-    this module's docstring), then the local SAPI5 engine for English
-    only. For Sinhala or Tamil, if edge-tts also fails (no internet), a
-    short spoken English notice instead of mangling the text through an
-    English voice, and logs the limitation plainly.
-    """
+
+# Markdown the LLM sometimes adds (bold markers, bullet stars, headings)
+# means nothing when spoken, and some voices read the symbols out loud.
+_UNSPOKEN_MARKUP = re.compile(r"[*#_`]+")
+
+
+def _prepare_sentence(sentence: str, language: str, voice_style: str) -> Callable[[], None]:
+    """Does the slow, network bound part (synthesis) for one sentence and
+    returns a callable that plays it. Runs on speak_stream()'s synthesis
+    thread, ahead of playback. Tries, in order: the configured cloud
+    provider, then edge-tts, then the offline fallback. Azure's SDK
+    synthesizes and plays in one call, so for Azure the whole thing
+    happens at play time instead and gets no head start."""
+    sentence = _UNSPOKEN_MARKUP.sub("", sentence).strip()
+    if not sentence:
+        return lambda: None
+    start = time.perf_counter()
+
+    if config.cloud_speech_configured():
+        if config.CLOUD_SPEECH_PROVIDER == "azure":
+
+            def _play_azure():
+                if not _speak_cloud_azure(sentence, language, voice_style):
+                    audio = _synthesize_edge_tts(sentence, language, voice_style)
+                    if audio is not None:
+                        _play(*audio)
+                    else:
+                        _speak_offline(sentence, language, voice_style)
+
+            return _play_azure
+        play = _stream_cloud_google(sentence, language, voice_style)
+        if play is not None:
+            print(f"TTS first audio (cloud streaming, {language}): {time.perf_counter() - start:.2f}s")
+            return play
+        audio = _synthesize_cloud_google(sentence, language, voice_style)
+        if audio is not None:
+            print(f"TTS synthesis (cloud, {language}): {time.perf_counter() - start:.2f}s")
+            return lambda: _play(*audio)
+
+    audio = _synthesize_edge_tts(sentence, language, voice_style)
+    if audio is not None:
+        print(f"TTS synthesis (edge-tts, {language}): {time.perf_counter() - start:.2f}s")
+        return lambda: _play(*audio)
+
+    return lambda: _speak_offline(sentence, language, voice_style)
+
+
+class SentenceChunker:
+    """Cuts a reply that arrives in small streamed pieces (a few tokens at
+    a time from the LLM) into whole sentences as soon as each one is
+    complete, so the first sentence can start being spoken while the agent
+    is still writing the second. feed() returns any sentences completed by
+    the new text; flush() returns whatever is left once the reply ends.
+
+    The very first piece may also be cut at a comma or semicolon once it
+    is FIRST_CLAUSE_MIN_CHARS long, because a long opening sentence would
+    otherwise hold back the first spoken word until the model finishes
+    writing all of it. Only the first: cutting every sentence at commas
+    would make the voice pause unnaturally all the way through."""
+
+    _BOUNDARY = re.compile(r"(?<=[.!?।])\s+")
+    _CLAUSE_BOUNDARY = re.compile(r"(?<=[,;:])\s+")
+    FIRST_CLAUSE_MIN_CHARS = 40
+
+    def __init__(self):
+        self._buffer = ""
+        self._emitted_any = False
+
+    def feed(self, text: str) -> list[str]:
+        self._buffer += text
+        parts = self._BOUNDARY.split(self._buffer)
+        # The last part has no boundary after it yet, so it may still grow.
+        self._buffer = parts.pop()
+        sentences = [p.strip() for p in parts if p.strip()]
+        if not sentences and not self._emitted_any and len(self._buffer) >= self.FIRST_CLAUSE_MIN_CHARS:
+            clauses = self._CLAUSE_BOUNDARY.split(self._buffer)
+            if len(clauses) > 1:
+                self._buffer = clauses.pop()
+                sentences = [" ".join(c.strip() for c in clauses)]
+        if sentences:
+            self._emitted_any = True
+        return sentences
+
+    def flush(self) -> list[str]:
+        rest, self._buffer = self._buffer.strip(), ""
+        return [rest] if rest else []
+
+
+def speak_stream(
+    sentences: Iterable[str],
+    language: str = "en",
+    voice_style: str = "female_natural",
+    on_sentence_start: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Speaks sentences as they arrive from any iterable, including one
+    that blocks while the agent is still generating (see server.py).
+    A synthesis thread prepares up to two sentences ahead while this thread
+    plays them in order, so playback of one sentence overlaps synthesis of
+    the next instead of alternating with it. on_sentence_start, if given,
+    is called with each sentence right before its audio starts, which is
+    what lets the frontend flip to "speaking" and animate the avatar's
+    mouth in step with the real audio rather than a guess."""
+    prepared: "queue.Queue" = queue.Queue(maxsize=2)
+    done = object()
+
+    def _synthesis_worker():
+        try:
+            for sentence in sentences:
+                if not sentence or not sentence.strip():
+                    continue
+                try:
+                    play = _prepare_sentence(sentence, language, voice_style)
+                except Exception as exc:
+                    print(f"TTS: could not prepare sentence ({exc}).")
+                    continue
+                prepared.put((sentence, play))
+        finally:
+            prepared.put(done)
+
+    threading.Thread(target=_synthesis_worker, daemon=True).start()
+
+    while True:
+        item = prepared.get()
+        if item is done:
+            return
+        sentence, play = item
+        if on_sentence_start is not None:
+            on_sentence_start(sentence)
+        start = time.perf_counter()
+        play()
+        print(f"TTS playback ({language}): {time.perf_counter() - start:.2f}s")
+
+
+def warm_up() -> None:
+    """Opens the Google Text to Speech connection with one tiny request at
+    server startup (nothing is played), since the first request of a
+    process also pays for credential loading and the connection handshake:
+    about 1.5s versus 0.6s afterwards, measured here. No-op when Google
+    speech is not configured; edge-tts has no persistent connection to
+    warm."""
+    if not (config.cloud_speech_configured() and config.CLOUD_SPEECH_PROVIDER == "google"):
+        return
+    start = time.perf_counter()
+    if _stream_cloud_google("Hello.", "en", "female_natural") is not None:
+        print(f"TTS warm up: {time.perf_counter() - start:.2f}s")
+
+
+def speak_text(
+    text_input: str,
+    language: str = "en",
+    voice_style: str = "female_natural",
+    on_sentence_start: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Speaks an already complete text, sentence by sentence, through the
+    same pipelined playback as speak_stream(). Tries, in order: the
+    configured cloud provider (if real credentials are set), then edge-tts
+    (natural, needs no credentials, only internet; see this module's
+    docstring), then the local SAPI5 engine for English only, or a short
+    spoken English notice for Sinhala or Tamil."""
     if text_input is None or not text_input.strip():
         return
-
-    sentences = _split_sentences(text_input) or [text_input]
-    cloud_available = config.cloud_speech_configured()
-
-    for sentence in sentences:
-        start = time.perf_counter()
-
-        if cloud_available and _speak_cloud(sentence, language, voice_style):
-            print(f"TTS latency (cloud, {language}): {time.perf_counter() - start:.2f}s")
-            continue
-
-        if _speak_edge_tts(sentence, language, voice_style):
-            print(f"TTS latency (edge-tts, {language}): {time.perf_counter() - start:.2f}s")
-            continue
-
-        if language == "en":
-            if _speak_local(sentence, voice_style):
-                print(f"TTS latency (local SAPI5): {time.perf_counter() - start:.2f}s")
-            else:
-                print("TTS error: local playback failed and no cloud or edge-tts path is available.")
-            continue
-
-        # Sinhala or Tamil with no cloud path and no internet for edge-tts
-        # either: documented limitation, not a silent failure. See
-        # KNOWN_LIMITATIONS.md. Genuinely rare now that edge-tts covers
-        # both languages with no credentials required.
-        notice = (
-            f"Natural {config.SUPPORTED_LANGUAGES.get(language, language)} speech needs "
-            "either a cloud provider or internet access for the free voice service, "
-            "and neither is available right now."
-        )
-        print(f"TTS: {notice}")
-        _speak_local(notice, voice_style)
+    speak_stream(_split_sentences(text_input) or [text_input], language, voice_style, on_sentence_start)
 
 
 def _run_standalone_test():

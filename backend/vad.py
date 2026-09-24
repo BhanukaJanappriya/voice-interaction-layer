@@ -91,17 +91,21 @@ class VoiceActivityDetector:
         return speech_frames / num_frames >= 0.5
 
 
+_denoise_import_failed = False
+
+
 def denoise_audio(audio: np.ndarray, noise_sample: Optional[np.ndarray] = None) -> np.ndarray:
     """Applies spectral gating noise reduction to captured audio before it
     is sent to transcription. Falls back to returning the audio unchanged
     if noisereduce fails for any reason (e.g. a clip too short to analyze),
-    since a transcription attempt on the raw audio is better than none."""
+    since a transcription attempt on the raw audio is better than none.
+    If the library cannot even be imported, that is remembered, so every
+    later partial and final transcript does not retry the failing import."""
+    global _denoise_import_failed
+    if _denoise_import_failed:
+        return audio
     try:
         import noisereduce as nr
-
-        if noise_sample is not None and noise_sample.size > 0:
-            return nr.reduce_noise(y=audio, sr=SAMPLE_RATE, y_noise=noise_sample, stationary=True)
-        return nr.reduce_noise(y=audio, sr=SAMPLE_RATE, stationary=True)
     except Exception as exc:
         # Known blocker on this machine: noisereduce depends on scipy, and
         # scipy's compiled linalg extension is refused by a Windows
@@ -109,7 +113,15 @@ def denoise_audio(audio: np.ndarray, noise_sample: Optional[np.ndarray] = None) 
         # code). Documented in KNOWN_LIMITATIONS.md. Falling back to raw
         # audio keeps the pipeline working; VAD based speech gating still
         # applies, only the extra spectral cleanup step is skipped.
-        print(f"VAD: denoise_audio unavailable ({exc}), using raw audio instead.")
+        _denoise_import_failed = True
+        print(f"VAD: denoise_audio unavailable ({exc}), using raw audio from now on.")
+        return audio
+    try:
+        if noise_sample is not None and noise_sample.size > 0:
+            return nr.reduce_noise(y=audio, sr=SAMPLE_RATE, y_noise=noise_sample, stationary=True)
+        return nr.reduce_noise(y=audio, sr=SAMPLE_RATE, stationary=True)
+    except Exception as exc:
+        print(f"VAD: denoise_audio failed on this clip ({exc}), using raw audio instead.")
         return audio
 
 

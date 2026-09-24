@@ -15,12 +15,24 @@ Protocol (WebSocket at /ws/voice):
           captures microphone audio, resamples/converts it to this format,
           and sends each chunk as it is captured.
         - Text frames: small JSON control messages,
-          {"type": "start_session", "language_hint": "en" | "si" | "ta" | null}
+          {"type": "start_session", "language_hint": "en" | "si" | "ta" | null,
+           "user_name": "..." | null, "greet": true | false}
           sent once at the start of a session, before any audio, and
-          {"type": "end_session"} to close cleanly.
+          {"type": "end_session"} to close cleanly. user_name is the name
+          given on the frontend's user screen (null means Guest); greet
+          (default true) asks the server to speak its introduction first.
 
     Server -> client (all JSON text frames):
         {"type": "status", "state": "calibrating" | "listening" | "thinking" | "speaking"}
+            "speaking" is sent when the first sentence's audio actually
+            starts, which can be while the rest of the reply is still
+            being generated (see _speak_streamed_reply below).
+        {"type": "speaking_sentence", "text": "..."}
+            Sent right before each sentence's audio starts, so the avatar's
+            mouth animation follows the real audio sentence by sentence.
+        {"type": "user_name", "name": "..."}
+            Sent when the user introduces themselves mid conversation
+            ("my name is ..."); later replies address them by that name.
         {"type": "partial_transcript", "text": "...", "language": "en"}
         {"type": "final_transcript", "text": "...", "language": "en"}
         {"type": "agent_response_chunk", "text": "..."}
@@ -36,7 +48,9 @@ Protocol (WebSocket at /ws/voice):
         {"type": "agent_response", "text": "...", "mode": "cloud multi agent (gemini)"
                                                           | "local single agent (Llama via Ollama)"}
             Sent once, after the last agent_response_chunk, with the
-            complete text and which mode produced it.
+            complete text and which mode produced it. Also used for the
+            spoken introduction (mode "Introduction") and the canned
+            closing lines (mode "closing").
         {"type": "speaking_done"}
         {"type": "end_chat"}
             Sent once, right after the closing goodbye has been spoken (see
@@ -69,11 +83,14 @@ real time performance has evidence behind it, not just a claim.
 """
 
 import asyncio
+import ctypes
 import json
 import queue
 import re
+import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import numpy as np
@@ -84,10 +101,79 @@ from pydantic import BaseModel
 import config
 from agent import Orchestrator
 from stt import transcribe_stream
-from tts import speak_text
+from stt import warm_up as warm_up_stt
+from tts import SentenceChunker, speak_stream, speak_text
+from tts import warm_up as warm_up_tts
 from vad import SAMPLE_RATE, VoiceActivityDetector
 
-app = FastAPI(title="Voice Interaction Backend")
+orchestrator = Orchestrator()
+
+
+def _warm_up():
+    """Loads everything that is otherwise loaded lazily by the first
+    request: the Whisper model and noise reduction library (stt.py), the
+    local Llama model plus any cloud SDK (agent.py), and the Google Text to
+    Speech connection (tts.py). Measured on this
+    machine, that was well over 15 seconds landing on the very first
+    question of the first session. Runs on a background thread so the
+    server accepts connections straight away; a session that starts
+    during warm up is simply no faster than before."""
+    start = time.time()
+    try:
+        warm_up_stt()
+    except Exception as exc:
+        print(f"Warm up: STT failed ({exc}).")
+    try:
+        orchestrator.warm_up()
+    except Exception as exc:
+        print(f"Warm up: agent failed ({exc}).")
+    try:
+        warm_up_tts()
+    except Exception as exc:
+        print(f"Warm up: TTS failed ({exc}).")
+    print(f"Warm up finished in {time.time() - start:.2f}s")
+
+
+def _opt_out_of_windows_power_throttling():
+    """Tells Windows not to power throttle this process (EcoQoS). On hybrid
+    Intel CPUs, Windows runs processes it considers to be in the background
+    (which includes this server when start.ps1 launches it as a hidden
+    window) on the efficiency cores at reduced clock speed. Measured on the
+    development machine, that made every Whisper pass about 5x slower:
+    about 2.4s versus 0.47s for the same 5 second clip, and every partial
+    and final transcript pays it. Uses the documented SetProcessInformation
+    ProcessPowerThrottling call; does nothing on other platforms, and a
+    failure is only logged, since the server still works, just slower."""
+    if sys.platform != "win32":
+        return
+
+    class _PowerThrottlingState(ctypes.Structure):
+        _fields_ = [("Version", ctypes.c_ulong), ("ControlMask", ctypes.c_ulong), ("StateMask", ctypes.c_ulong)]
+
+    process_power_throttling = 4  # PROCESS_INFORMATION_CLASS value
+    execution_speed = 0x1  # PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+    # ControlMask says which policy is being set, StateMask 0 says "off".
+    state = _PowerThrottlingState(1, execution_speed, 0)
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.SetProcessInformation.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong]
+        if not kernel32.SetProcessInformation(
+            kernel32.GetCurrentProcess(), process_power_throttling, ctypes.byref(state), ctypes.sizeof(state)
+        ):
+            print("Power throttling opt out was refused by Windows; transcription may be slower.")
+    except Exception as exc:
+        print(f"Power throttling opt out failed ({exc}); transcription may be slower.")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _opt_out_of_windows_power_throttling()
+    threading.Thread(target=_warm_up, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Voice Interaction Backend", lifespan=_lifespan)
 
 # The frontend is a static page opened from a different origin/port during
 # development (see frontend/), so CORS needs to be open for the demo. This
@@ -100,8 +186,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-orchestrator = Orchestrator()
 
 # vad.py's calibrated noise floor plus WebRTC VAD's frame classification
 # reject most non-speech audio before it ever reaches transcription, but
@@ -155,6 +239,35 @@ _CLOSING_QUESTION_TEXT = (
 _CLOSING_GOODBYE_TEXT = "Thank you for using the SLT Mobitel voice assistant. Goodbye, and have a great day!"
 
 
+# Lets the user tell the assistant their name by voice, not only on the
+# user screen: "my name is Nimal", "call me Nimal". "I'm ..." is left out
+# on purpose, since "I'm good" or "I'm looking for a plan" would otherwise
+# rename the user. A small list of words that commonly follow these
+# phrases without being a name ("call me back") guards the rest.
+_NAME_INTRODUCTION = re.compile(
+    r"\b(?:my name is|my name's|call me|i am called|i'm called)\s+([A-Za-z][A-Za-z']{1,29})",
+    re.IGNORECASE,
+)
+_NOT_A_NAME = {"back", "later", "again", "now", "tomorrow", "not", "just", "a", "the", "so", "really"}
+
+
+def _extract_user_name(text: str) -> Optional[str]:
+    match = _NAME_INTRODUCTION.search(text)
+    if not match:
+        return None
+    name = match.group(1).strip("'")
+    if name.lower() in _NOT_A_NAME:
+        return None
+    return name[0].upper() + name[1:]
+
+
+def _greeting_text(user_name: Optional[str]) -> str:
+    return (
+        f"Welcome to SLT Mobitel, {user_name or 'Guest'}! I'm your voice assistant, and I understand "
+        "English, Sinhala, and Tamil, so just start speaking whenever you're ready."
+    )
+
+
 def _sounds_like_closing_signal(text: str) -> bool:
     if _CLOSING_SIGNAL_LATIN.search(text):
         return True
@@ -173,17 +286,17 @@ async def _send_json(websocket: WebSocket, payload: dict):
 
 class _ChunkQueueSource:
     """A synchronous iterator backed by a thread safe queue. The async
-    websocket handler pushes audio chunks into it as they arrive; the
-    background transcription thread pulls from it via plain blocking
-    Queue.get(), which is exactly the iterator shape transcribe_stream()
-    already expects."""
+    websocket handler pushes items into it as they arrive; a background
+    thread pulls from it via plain blocking Queue.get(), which is exactly
+    the iterator shape transcribe_stream() (audio chunks) and
+    tts.speak_stream() (reply sentences) already expect."""
 
     _SENTINEL = object()
 
     def __init__(self):
         self._queue: "queue.Queue" = queue.Queue()
 
-    def put(self, chunk: np.ndarray):
+    def put(self, chunk):
         self._queue.put(chunk)
 
     def close(self):
@@ -283,7 +396,7 @@ async def _run_one_utterance(websocket: WebSocket, language_hint: Optional[str],
     return final_text, final_language, session_ended
 
 
-async def _stream_agent_reply(text_input: str):
+async def _stream_agent_reply(text_input: str, user_name: Optional[str]):
     """Runs orchestrator.respond_stream() (agent.py) on a background
     thread and yields each text chunk as it arrives, bridged into the
     event loop via an asyncio.Queue the same way _run_one_utterance above
@@ -298,7 +411,7 @@ async def _stream_agent_reply(text_input: str):
 
     def _worker():
         try:
-            for chunk in orchestrator.respond_stream(text_input):
+            for chunk in orchestrator.respond_stream(text_input, user_name):
                 loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
         except Exception as exc:
             loop.call_soon_threadsafe(chunk_queue.put_nowait, exc)
@@ -316,26 +429,52 @@ async def _stream_agent_reply(text_input: str):
         yield item
 
 
+class _SentenceAnnouncer:
+    """Passed to tts.speak_stream() as on_sentence_start. It runs on the
+    TTS playback thread, right before each sentence's audio starts, and
+    tells the client: "speaking" status on the first sentence, then the
+    sentence itself (see the protocol above). It waits for the send to
+    finish before letting playback continue, so the status the client
+    shows never lags behind the audio. Also records when audio first
+    started, for the time to first audio figure in the per turn log."""
+
+    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop):
+        self._websocket = websocket
+        self._loop = loop
+        self.first_audio_at: Optional[float] = None
+
+    def __call__(self, sentence: str):
+        messages = []
+        if self.first_audio_at is None:
+            self.first_audio_at = time.time()
+            messages.append({"type": "status", "state": "speaking"})
+        messages.append({"type": "speaking_sentence", "text": sentence})
+
+        async def _send_all():
+            for message in messages:
+                await _send_json(self._websocket, message)
+
+        try:
+            asyncio.run_coroutine_threadsafe(_send_all(), self._loop).result(timeout=2)
+        except Exception:
+            pass  # client gone or slow; the audio itself still plays
+
+
 async def _speak(websocket: WebSocket, text: str, language: Optional[str]) -> float:
-    """Sends the "speaking" status, plays text via TTS, then sends
-    "speaking_done". Pulled out of the main turn loop below since the
-    closing question and goodbye (see _sounds_like_closing_signal above)
-    need to speak a canned line the exact same way a real agent reply
-    does, not a second, slightly different copy of this logic. Returns
-    the playback time in seconds, for the same per turn latency logging
-    the normal reply path already does."""
-    await _send_json(websocket, {"type": "status", "state": "speaking"})
+    """Plays an already complete text via TTS (the introduction and the
+    canned closing lines), then sends "speaking_done". speak_text() blocks
+    for the entire playback, so it runs on a thread via run_in_executor:
+    calling it directly in this async handler would stall the whole event
+    loop, and every other connection with it, for that whole time, the
+    same reason _run_one_utterance and _stream_agent_reply run their own
+    blocking work on a thread rather than inline. Returns the playback
+    time in seconds for the per turn latency log."""
+    loop = asyncio.get_running_loop()
     tts_start = time.time()
     try:
-        # speak_text() blocks for the entire playback duration (it
-        # literally waits for the audio device to finish). Calling
-        # it directly here, in an async handler, would stall the
-        # whole event loop, and every other connection with it,
-        # for that whole time, the same reason _run_one_utterance
-        # and _stream_agent_reply run their own blocking work on a
-        # thread rather than inline.
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, speak_text, text, language or "en", "female_natural")
+        await loop.run_in_executor(
+            None, speak_text, text, language or "en", "female_natural", _SentenceAnnouncer(websocket, loop)
+        )
     except Exception as exc:
         await _send_json(websocket, {"type": "error", "message": f"TTS error: {exc}"})
     await _send_json(websocket, {"type": "speaking_done"})
@@ -343,13 +482,63 @@ async def _speak(websocket: WebSocket, text: str, language: Optional[str]) -> fl
 
 
 async def _speak_canned_reply(websocket: WebSocket, text: str, language: Optional[str], mode: str) -> float:
-    """Announces a canned line (the closing question or the goodbye) the
-    same way a real agent reply is announced, skipping the agent call and
-    the chunk-by-chunk streaming entirely, since the text is already
-    known up front."""
+    """Announces a canned line (the introduction, the closing question or
+    the goodbye) the same way a real agent reply is announced, skipping
+    the agent call and the chunk by chunk streaming entirely, since the
+    text is already known up front. "thinking" goes first so the client
+    stops sending microphone audio while the line is being synthesized."""
     await _send_json(websocket, {"type": "status", "state": "thinking"})
     await _send_json(websocket, {"type": "agent_response", "text": text, "mode": mode})
     return await _speak(websocket, text, language)
+
+
+async def _speak_streamed_reply(
+    websocket: WebSocket, text_input: str, user_name: Optional[str], language: Optional[str]
+) -> tuple[str, float, Optional[float]]:
+    """Generates the agent's reply and speaks it at the same time. Each
+    sentence goes to TTS the moment the agent finishes writing it, so the
+    first sentence is already playing while the second is still being
+    generated. Before this, nothing was spoken until the whole reply was
+    finished, so the wait before the assistant started talking grew with
+    the length of its answer.
+
+    Returns (reply_text, agent_seconds, first_audio_at), the last being
+    the wall clock time audio started, or None if nothing was spoken."""
+    loop = asyncio.get_running_loop()
+    announcer = _SentenceAnnouncer(websocket, loop)
+    sentence_source = _ChunkQueueSource()
+    chunker = SentenceChunker()
+    tts_task = loop.run_in_executor(
+        None, speak_stream, sentence_source, language or "en", "female_natural", announcer
+    )
+
+    agent_start = time.time()
+    reply_text = ""
+    try:
+        async for chunk in _stream_agent_reply(text_input, user_name):
+            reply_text += chunk
+            await _send_json(websocket, {"type": "agent_response_chunk", "text": reply_text})
+            for sentence in chunker.feed(chunk):
+                sentence_source.put(sentence)
+    except Exception as exc:
+        await _send_json(websocket, {"type": "error", "message": f"Agent error: {exc}"})
+    finally:
+        for sentence in chunker.flush():
+            sentence_source.put(sentence)
+        sentence_source.close()
+    agent_time = time.time() - agent_start
+
+    if reply_text:
+        await _send_json(
+            websocket, {"type": "agent_response", "text": reply_text, "mode": orchestrator.last_mode}
+        )
+
+    try:
+        await tts_task
+    except Exception as exc:
+        await _send_json(websocket, {"type": "error", "message": f"TTS error: {exc}"})
+    await _send_json(websocket, {"type": "speaking_done"})
+    return reply_text, agent_time, announcer.first_audio_at
 
 
 @app.websocket("/ws/voice")
@@ -357,25 +546,43 @@ async def voice_ws(websocket: WebSocket):
     await websocket.accept()
 
     language_hint: Optional[str] = None
+    user_name: Optional[str] = None
+    greet = True
     try:
         start_message = await websocket.receive_text()
         payload = json.loads(start_message)
         if payload.get("type") == "start_session":
             language_hint = payload.get("language_hint") or None
+            user_name = (payload.get("user_name") or "").strip()[:40] or None
+            greet = payload.get("greet", True) is not False
     except Exception as exc:
         await _send_json(websocket, {"type": "error", "message": f"Invalid start message: {exc}"})
         await websocket.close()
         return
 
+    # Text to speech is on by default: the assistant introduces itself out
+    # loud, by name if one was given, before anything else happens. It is
+    # spoken before calibration, not during it, since on this single
+    # machine setup the microphone would otherwise hear the introduction
+    # and take it as the room's background noise level. The client does
+    # not send audio while the status is "speaking", so none leaks in.
+    try:
+        if greet:
+            await _speak_canned_reply(websocket, _greeting_text(user_name), "en", "Introduction")
+    except WebSocketDisconnect:
+        return
+
     vad = VoiceActivityDetector()
     await _send_json(websocket, {"type": "status", "state": "calibrating"})
-    # The client sends about 1.5s of ambient audio (nobody speaking) right
-    # after start_session, before the user is prompted to talk, so the
+    # The client sends about 1s of ambient audio (nobody speaking) right
+    # after the introduction, before the user starts talking, so the
     # noise floor reflects the actual room rather than a fixed guess.
+    # 1s rather than the earlier 1.5s: it is enough samples for a stable
+    # average, and it is dead time before the first question.
     calibration_samples = 0
     calibration_chunks = []
     try:
-        while calibration_samples < int(1.5 * SAMPLE_RATE):
+        while calibration_samples < int(1.0 * SAMPLE_RATE):
             message = await websocket.receive_bytes()
             chunk = np.frombuffer(message, dtype=np.float32)
             calibration_chunks.append(chunk)
@@ -407,6 +614,12 @@ async def voice_ws(websocket: WebSocket):
             if _looks_like_transcription_hallucination(final_text):
                 print(f"Turn skipped: transcript '{final_text}' looks like a Whisper hallucination, not a real utterance.")
                 continue
+            reply_start = time.time()
+
+            introduced_name = _extract_user_name(final_text)
+            if introduced_name and introduced_name != user_name:
+                user_name = introduced_name
+                await _send_json(websocket, {"type": "user_name", "name": user_name})
 
             if awaiting_close_confirmation:
                 if _sounds_negative(final_text) or _sounds_like_closing_signal(final_text):
@@ -422,27 +635,16 @@ async def voice_ws(websocket: WebSocket):
                 continue
 
             await _send_json(websocket, {"type": "status", "state": "thinking"})
-            agent_start = time.time()
-            reply_text = ""
-            try:
-                async for chunk in _stream_agent_reply(final_text):
-                    reply_text += chunk
-                    await _send_json(websocket, {"type": "agent_response_chunk", "text": reply_text})
-            except Exception as exc:
-                await _send_json(websocket, {"type": "error", "message": f"Agent error: {exc}"})
-                continue
-            agent_time = time.time() - agent_start
-
-            await _send_json(
-                websocket, {"type": "agent_response", "text": reply_text, "mode": orchestrator.last_mode}
+            reply_text, agent_time, first_audio_at = await _speak_streamed_reply(
+                websocket, final_text, user_name, detected_language
             )
+            if not reply_text:
+                continue
 
-            tts_time = await _speak(websocket, reply_text, detected_language)
-
-            total_time = time.time() - turn_start
+            first_audio = f"{first_audio_at - reply_start:.2f}s" if first_audio_at else "none"
             print(
-                f"Turn latency: agent {agent_time:.2f}s, tts {tts_time:.2f}s, "
-                f"total {total_time:.2f}s, mode={orchestrator.last_mode}"
+                f"Turn latency: first audio {first_audio} after the final transcript, agent {agent_time:.2f}s, "
+                f"total {time.time() - turn_start:.2f}s, mode={orchestrator.last_mode}"
             )
     except WebSocketDisconnect:
         return
@@ -451,6 +653,7 @@ async def voice_ws(websocket: WebSocket):
 class ChatRequest(BaseModel):
     text: str
     language: Optional[str] = None
+    user_name: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -470,7 +673,7 @@ async def chat(request: ChatRequest):
     does: a blocking call here would stall every other connection's event
     loop turn until it finished."""
     loop = asyncio.get_running_loop()
-    reply = await loop.run_in_executor(None, orchestrator.respond, request.text)
+    reply = await loop.run_in_executor(None, orchestrator.respond, request.text, request.user_name)
     return ChatResponse(reply=reply, mode=orchestrator.last_mode)
 
 

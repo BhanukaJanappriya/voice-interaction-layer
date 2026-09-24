@@ -20,13 +20,14 @@ method, respond(text_input) -> str) and adds:
 
     Orchestrator
         The new piece. When a cloud provider is configured and reachable,
-        it runs a small multi agent collaboration: a reasoning agent drafts
-        an analysis of the user's request, a tool/retrieval agent adds
-        context (the same tool_callback hook the prototype stubbed out),
-        and a composer agent turns both into the final spoken reply. All
-        three roles are served by the same configured cloud provider with
-        different prompts, since standing up genuinely separate model
-        backends per role is out of scope for this pass (see
+        it runs a small multi agent collaboration: a tool/retrieval agent
+        adds context (the same tool_callback hook the prototype stubbed
+        out), and a composer agent turns it into the final spoken reply,
+        streamed as it is generated. An optional reasoning agent can draft
+        an analysis first (CLOUD_REASONING_STAGE, off by default since it
+        delays the reply). All roles are served by the same configured
+        cloud provider with different prompts, since standing up genuinely
+        separate model backends per role is out of scope for this pass (see
         ARCHITECTURE.md). If the cloud provider is not configured, or a
         call to it fails (unreachable, unauthorized, over quota), the
         Orchestrator falls back to the local LlamaOllamaAgent handling the
@@ -79,8 +80,34 @@ _VOICE_ASSISTANT_SYSTEM_PROMPT = (
     "disclaimers, caveats, or commentary about being an AI. The user's "
     "message is a live speech to text transcript, so it may be missing "
     "punctuation or have imperfect grammar or phrasing; never comment on, "
-    "correct, or apologize for that, just answer what was actually meant."
+    "correct, or apologize for that, just answer what was actually meant. "
+    "Usually one to three sentences is enough."
 )
+
+
+def _with_user_name(system_prompt: str, user_name: Optional[str]) -> str:
+    """Adds who the assistant is talking to, so replies can address the
+    user by the name they gave (on the user screen, or by saying "my name
+    is ..." during the conversation, see server.py), or as Guest when no
+    name is known. Put in the system prompt rather than the user message
+    for the same reason as the persona itself: it is framing, not part of
+    what the user asked."""
+    if user_name:
+        return (
+            f"{system_prompt} The user's name is {user_name}. Address them by name "
+            "naturally, for example when greeting or thanking them, but not in every reply."
+        )
+    return (
+        f"{system_prompt} The user has not shared their name. If you address them "
+        "directly, call them Guest."
+    )
+
+
+# How long Ollama keeps the model loaded in memory after a request. Its
+# default is 5 minutes, after which the next question pays several seconds
+# to load the 2GB model from disk again; a demo with pauses between turns
+# hit that regularly.
+_OLLAMA_KEEP_ALIVE = "30m"
 
 
 class LlamaOllamaAgent(ChatAgent):
@@ -99,7 +126,23 @@ class LlamaOllamaAgent(ChatAgent):
         self.tool_callback = tool_callback
         self.timeout_seconds = 60
 
-    def respond(self, text_input: str) -> str:
+    def warm_up(self) -> None:
+        """Asks Ollama to load the model now (a generate request with no
+        prompt only loads it), so the first real question does not wait
+        for it. server.py calls this once at startup. Failure is only
+        logged: the real request will report the problem properly."""
+        start = time.perf_counter()
+        try:
+            requests.post(
+                f"{self.host}/api/generate",
+                json={"model": self.model, "keep_alive": _OLLAMA_KEEP_ALIVE},
+                timeout=self.timeout_seconds,
+            ).raise_for_status()
+            print(f"Agent warm up (local Llama): {time.perf_counter() - start:.2f}s")
+        except requests.exceptions.RequestException as exc:
+            print(f"Agent warm up (local Llama) failed: {exc}")
+
+    def respond(self, text_input: str, user_name: Optional[str] = None) -> str:
         prompt = text_input
         if self.tool_callback is not None:
             try:
@@ -113,8 +156,9 @@ class LlamaOllamaAgent(ChatAgent):
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "system": _VOICE_ASSISTANT_SYSTEM_PROMPT,
+            "system": _with_user_name(_VOICE_ASSISTANT_SYSTEM_PROMPT, user_name),
             "stream": False,
+            "keep_alive": _OLLAMA_KEEP_ALIVE,
         }
 
         start = time.perf_counter()
@@ -145,7 +189,7 @@ class LlamaOllamaAgent(ChatAgent):
 
         return data.get("response", "").strip()
 
-    def respond_stream(self, text_input: str) -> Iterator[str]:
+    def respond_stream(self, text_input: str, user_name: Optional[str] = None) -> Iterator[str]:
         """Like respond(), but yields response text chunks as Ollama
         generates them (the API's stream mode, newline delimited JSON
         objects each carrying one token or short run of tokens) instead of
@@ -168,8 +212,9 @@ class LlamaOllamaAgent(ChatAgent):
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "system": _VOICE_ASSISTANT_SYSTEM_PROMPT,
+            "system": _with_user_name(_VOICE_ASSISTANT_SYSTEM_PROMPT, user_name),
             "stream": True,
+            "keep_alive": _OLLAMA_KEEP_ALIVE,
         }
 
         start = time.perf_counter()
@@ -222,6 +267,9 @@ class CloudUnavailableError(Exception):
     distinguishing "cloud is down, fall back" from a genuine bug."""
 
 
+_gemini_configured = False
+
+
 class GeminiAgent(ChatAgent):
     """Adapter for Google's Gemini API. Only imports the google
     generativeai SDK when actually used, so the rest of the codebase does
@@ -231,23 +279,36 @@ class GeminiAgent(ChatAgent):
         self.model_name = model or config.GEMINI_MODEL
         self.system_prompt = system_prompt
 
-    def respond(self, text_input: str) -> str:
+    def _model(self):
+        global _gemini_configured
         if not config.GEMINI_API_KEY:
             raise CloudUnavailableError("GEMINI_API_KEY is not set.")
+        import google.generativeai as genai
 
+        if not _gemini_configured:
+            genai.configure(api_key=config.GEMINI_API_KEY)
+            _gemini_configured = True
+        return genai.GenerativeModel(self.model_name, system_instruction=self.system_prompt)
+
+    def respond(self, text_input: str) -> str:
+        return "".join(self.respond_stream(text_input)).strip()
+
+    def respond_stream(self, text_input: str) -> Iterator[str]:
+        """Yields the reply as Gemini generates it (stream=True), so the
+        voice pipeline can start speaking the first sentence before the
+        last one exists. Any failure, before or during the stream, is
+        raised as CloudUnavailableError."""
         start = time.perf_counter()
         try:
-            import google.generativeai as genai
-
-            genai.configure(api_key=config.GEMINI_API_KEY)
-            model = genai.GenerativeModel(
-                self.model_name,
-                system_instruction=self.system_prompt,
-            )
-            result = model.generate_content(text_input)
-            elapsed = time.perf_counter() - start
-            print(f"Agent latency (Gemini): {elapsed:.2f}s")
-            return (result.text or "").strip()
+            for chunk in self._model().generate_content(text_input, stream=True):
+                try:
+                    text = chunk.text
+                except ValueError:
+                    # A chunk with no text part (e.g. only safety metadata).
+                    continue
+                if text:
+                    yield text
+            print(f"Agent latency (Gemini, streaming): {time.perf_counter() - start:.2f}s")
         except CloudUnavailableError:
             raise
         except Exception as exc:
@@ -263,6 +324,11 @@ class GptAgent(ChatAgent):
         self.system_prompt = system_prompt
 
     def respond(self, text_input: str) -> str:
+        return "".join(self.respond_stream(text_input)).strip()
+
+    def respond_stream(self, text_input: str) -> Iterator[str]:
+        """Streaming counterpart of respond(), same contract as
+        GeminiAgent.respond_stream()."""
         if not config.OPENAI_API_KEY:
             raise CloudUnavailableError("OPENAI_API_KEY is not set.")
 
@@ -276,10 +342,11 @@ class GptAgent(ChatAgent):
                 messages.append({"role": "system", "content": self.system_prompt})
             messages.append({"role": "user", "content": text_input})
 
-            result = client.chat.completions.create(model=self.model_name, messages=messages)
-            elapsed = time.perf_counter() - start
-            print(f"Agent latency (GPT): {elapsed:.2f}s")
-            return (result.choices[0].message.content or "").strip()
+            stream = client.chat.completions.create(model=self.model_name, messages=messages, stream=True)
+            for event in stream:
+                if event.choices and event.choices[0].delta.content:
+                    yield event.choices[0].delta.content
+            print(f"Agent latency (GPT, streaming): {time.perf_counter() - start:.2f}s")
         except CloudUnavailableError:
             raise
         except Exception as exc:
@@ -296,94 +363,132 @@ def _build_cloud_agent(role_prompt: Optional[str] = None) -> ChatAgent:
     return GeminiAgent(system_prompt=role_prompt)
 
 
+_REASONING_ROLE_PROMPT = (
+    "You are the reasoning stage of a voice assistant. In two or three short "
+    "sentences, identify what the user is actually asking for and any context "
+    "needed to answer it well. Do not answer the user directly; only produce "
+    "the analysis."
+)
+
+_COMPOSER_ROLE_PROMPT = (
+    "You are the response stage of a voice assistant. You will be given the "
+    "user's message, optionally an internal analysis of what they need, and "
+    "optional extra context. Reply directly to the user in natural spoken "
+    "language, answering only what they actually asked, nothing more and "
+    "nothing less. Keep it concise, usually one to three sentences, with no "
+    "mention of any analysis or internal process, and no disclaimers or meta "
+    "commentary about being an AI. The user's message is a live speech to text "
+    "transcript and may have imperfect grammar or missing punctuation; never "
+    "comment on or correct that, just answer what was meant."
+)
+
+
+_CLOUD_RETRY_AFTER_SECONDS = 300
+
+
 class Orchestrator(ChatAgent):
     """Cloud first, local fallback chat agent.
 
-    When the configured cloud provider is reachable, three role prompts
-    against that same provider stand in for a reasoning agent, a tool or
-    retrieval agent, and a response composer:
+    When the configured cloud provider is reachable, role prompts against
+    that same provider stand in for separate agents:
 
-        reasoning agent   -> drafts a short analysis of what the user
-                              actually needs, in plain terms.
         tool/retrieval agent -> looks up extra context via tool_callback
                               (a stub today, same hook as the prototype)
                               and folds anything it returns into the
                               conversation.
-        composer agent    -> turns the reasoning draft plus any tool
-                              context into the final spoken reply: concise,
-                              natural, no meta commentary about its own
-                              process.
+        composer agent    -> turns the user's message plus any tool
+                              context into the final spoken reply, streamed
+                              as it is generated.
+        reasoning agent   -> optional (CLOUD_REASONING_STAGE=true in .env):
+                              drafts a short analysis of what the user
+                              needs before the composer runs. Off by
+                              default because it is a whole extra model
+                              round trip that has to finish before the
+                              composer can even start, which roughly
+                              doubled the time to the first spoken word,
+                              for little gain on short spoken questions.
 
-    If the cloud provider is not configured, or any call to it raises
-    CloudUnavailableError, the whole multi agent attempt is abandoned and
-    LlamaOllamaAgent alone produces the full response, exactly as the
-    prototype did, with no partial cloud/local mixing. This mirrors a real
-    production fallback: half a cloud pipeline plus a local patch would be
-    harder to reason about and debug than a clean either/or.
+    If the cloud provider is not configured, or it fails before producing
+    any text, the whole attempt is abandoned and LlamaOllamaAgent alone
+    produces the full response, exactly as the prototype did, with no
+    partial cloud/local mixing. This mirrors a real production fallback:
+    half a cloud pipeline plus a local patch would be harder to reason
+    about and debug than a clean either/or.
     """
 
     def __init__(self, tool_callback: Optional[Callable[[str], Optional[str]]] = None):
         self.tool_callback = tool_callback
         self.local_agent = LlamaOllamaAgent(tool_callback=tool_callback)
         self.last_mode: str = "unknown"
+        # Circuit breaker: after a cloud failure, go straight to the local
+        # agent until this time instead of paying for another failing
+        # cloud call (and its timeout) on every turn. A dead key or used up
+        # quota rarely fixes itself within a conversation.
+        self._cloud_retry_at = 0.0
 
-    def respond(self, text_input: str) -> str:
+    def warm_up(self) -> None:
+        """Called once at server startup so the first question does not pay
+        for loading models: loads the local Llama model into Ollama and,
+        if a cloud provider is configured, sends it one tiny request. That
+        both loads its SDK (importing google.generativeai alone took
+        several seconds here) and finds out right away if the key is not
+        usable (bad model name, no credit left), in which case the circuit
+        breaker is tripped now instead of on the user's first question."""
+        self.local_agent.warm_up()
         if config.cloud_llm_configured():
+            start = time.perf_counter()
             try:
-                reply = self._respond_multi_agent_cloud(text_input)
-                self.last_mode = f"cloud multi agent ({config.CLOUD_LLM_PROVIDER})"
-                print(f"Orchestrator mode: {self.last_mode}")
-                return reply
+                _build_cloud_agent(role_prompt="Reply with one word.").respond("Hi")
+                print(f"Agent warm up (cloud): {time.perf_counter() - start:.2f}s")
             except CloudUnavailableError as exc:
-                print(f"Orchestrator: cloud path unavailable ({exc}), falling back to local agent alone.")
-        else:
-            print("Orchestrator: no cloud LLM provider configured, using local agent alone.")
+                self._cloud_retry_at = time.monotonic() + _CLOUD_RETRY_AFTER_SECONDS
+                print(f"Agent warm up: cloud unavailable ({exc}); using the local agent for now.")
 
-        self.last_mode = "local single agent (Llama via Ollama)"
-        print(f"Orchestrator mode: {self.last_mode}")
-        return self.local_agent.respond(text_input)
+    def respond(self, text_input: str, user_name: Optional[str] = None) -> str:
+        return "".join(self.respond_stream(text_input, user_name)).strip()
 
-    def respond_stream(self, text_input: str) -> Iterator[str]:
-        """Streaming counterpart to respond(), used by the WebSocket voice
-        pipeline so the reply can be shown appearing in real time as it is
-        generated, rather than only after the full text is ready.
+    def respond_stream(self, text_input: str, user_name: Optional[str] = None) -> Iterator[str]:
+        """Yields the reply in pieces as it is generated, on both the cloud
+        and the local path, so the voice pipeline can start speaking the
+        first sentence while the rest is still being written.
 
-        Only the local fallback path is actually streamed chunk by chunk
-        here. The cloud multi agent path (reasoning, then tool/retrieval,
-        then composing) still runs its three calls to completion and
-        yields the finished composed reply as one chunk; streaming a three
-        stage pipeline chunk by chunk, and deciding what a viewer should
-        see of the internal reasoning stage while it is in flight, was
-        judged out of scope for this pass. This keeps the honest
-        distinction intact: cloud path correctness has been reviewed but
-        not run live here (see ARCHITECTURE.md), and this does not pretend
-        otherwise by making it merely look streamed."""
-        if config.cloud_llm_configured():
+        The cloud fallback decision is made on the first piece: if the
+        cloud call fails before producing any text, the local agent
+        answers instead. If it fails after some text has already been
+        spoken, switching to a different model mid sentence would sound
+        worse than admitting the problem, so a short apology is added to
+        what was said instead."""
+        cloud_paused_for = self._cloud_retry_at - time.monotonic()
+        if config.cloud_llm_configured() and cloud_paused_for > 0:
+            print(f"Orchestrator: cloud failed recently, skipping it for another {cloud_paused_for:.0f}s.")
+        elif config.cloud_llm_configured():
+            cloud_stream = self._stream_cloud(text_input, user_name)
             try:
-                reply = self._respond_multi_agent_cloud(text_input)
+                first_chunk = next(cloud_stream, "")
+            except CloudUnavailableError as exc:
+                self._cloud_retry_at = time.monotonic() + _CLOUD_RETRY_AFTER_SECONDS
+                print(f"Orchestrator: cloud path unavailable ({exc}), falling back to local agent alone.")
+            else:
                 self.last_mode = f"cloud multi agent ({config.CLOUD_LLM_PROVIDER})"
                 print(f"Orchestrator mode: {self.last_mode}")
-                yield reply
+                yield first_chunk
+                try:
+                    yield from cloud_stream
+                except CloudUnavailableError as exc:
+                    print(f"Orchestrator: cloud stream dropped mid reply ({exc}).")
+                    yield " Sorry, I lost my connection there. Could you ask that again?"
                 return
-            except CloudUnavailableError as exc:
-                print(f"Orchestrator: cloud path unavailable ({exc}), falling back to local agent alone.")
         else:
             print("Orchestrator: no cloud LLM provider configured, using local agent alone.")
 
         self.last_mode = "local single agent (Llama via Ollama)"
         print(f"Orchestrator mode: {self.last_mode}")
-        yield from self.local_agent.respond_stream(text_input)
+        yield from self.local_agent.respond_stream(text_input, user_name)
 
-    def _respond_multi_agent_cloud(self, text_input: str) -> str:
-        reasoning_agent = _build_cloud_agent(
-            role_prompt=(
-                "You are the reasoning stage of a voice assistant. In two or three short "
-                "sentences, identify what the user is actually asking for and any context "
-                "needed to answer it well. Do not answer the user directly; only produce "
-                "the analysis."
-            )
-        )
-        analysis = reasoning_agent.respond(text_input)
+    def _stream_cloud(self, text_input: str, user_name: Optional[str]) -> Iterator[str]:
+        analysis = None
+        if config.CLOUD_REASONING_STAGE:
+            analysis = _build_cloud_agent(role_prompt=_REASONING_ROLE_PROMPT).respond(text_input)
 
         tool_context = None
         if self.tool_callback is not None:
@@ -392,23 +497,14 @@ class Orchestrator(ChatAgent):
             except Exception:
                 tool_context = None
 
-        composer_agent = _build_cloud_agent(
-            role_prompt=(
-                "You are the response stage of a voice assistant. You will be given the "
-                "user's message, an internal analysis of what they need, and optional extra "
-                "context. Reply directly to the user in natural spoken language, answering "
-                "only what they actually asked, nothing more and nothing less. Keep it "
-                "concise, with no mention of the analysis or internal process, and no "
-                "disclaimers or meta commentary about being an AI. The user's message is a "
-                "live speech to text transcript and may have imperfect grammar or missing "
-                "punctuation; never comment on or correct that, just answer what was meant."
-            )
-        )
-        composed_prompt = f"User said: {text_input}\n\nInternal analysis: {analysis}"
+        composed_prompt = f"User said: {text_input}"
+        if analysis:
+            composed_prompt += f"\n\nInternal analysis: {analysis}"
         if tool_context:
             composed_prompt += f"\n\nAdditional context: {tool_context}"
 
-        return composer_agent.respond(composed_prompt)
+        composer_agent = _build_cloud_agent(role_prompt=_with_user_name(_COMPOSER_ROLE_PROMPT, user_name))
+        yield from composer_agent.respond_stream(composed_prompt)
 
 
 def _run_interactive_test():
