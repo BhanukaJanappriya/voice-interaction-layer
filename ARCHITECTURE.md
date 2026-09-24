@@ -1,4 +1,4 @@
-# Architecture
+# Architecture: Pluggable Chat Agent Design
 
 This document explains two things in detail: the real time data flow
 through the backend, and the cloud multi agent collaboration design versus
