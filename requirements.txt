@@ -39,7 +39,7 @@ requests==2.34.2
 # Cloud providers (optional: only required if the corresponding
 # CLOUD_LLM_PROVIDER / CLOUD_SPEECH_PROVIDER is actually configured with
 # credentials in .env; the app runs and falls back to local without them)
-google-generativeai==0.8.6
+google-genai==2.25.0
 openai==3.17.0
 google-cloud-speech==2.40.0
 google-cloud-texttospeech==2.37.0

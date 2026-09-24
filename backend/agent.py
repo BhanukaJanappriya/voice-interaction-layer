@@ -267,47 +267,62 @@ class CloudUnavailableError(Exception):
     distinguishing "cloud is down, fall back" from a genuine bug."""
 
 
-_gemini_configured = False
+_gemini_client = None
 
 
 class GeminiAgent(ChatAgent):
-    """Adapter for Google's Gemini API. Only imports the google
-    generativeai SDK when actually used, so the rest of the codebase does
-    not require it to be installed or configured to run locally."""
+    """Adapter for Google's Gemini API, using the current google-genai SDK
+    (from google import genai; genai.Client). It replaced the deprecated
+    google-generativeai package, which Google no longer updates. Only
+    imported when actually used, so the rest of the codebase does not
+    require it to be installed or configured to run locally."""
 
     def __init__(self, model: str = None, system_prompt: Optional[str] = None):
         self.model_name = model or config.GEMINI_MODEL
         self.system_prompt = system_prompt
 
-    def _model(self):
-        global _gemini_configured
+    @staticmethod
+    def _client():
+        # One client for the whole process: it holds the HTTP connection,
+        # so creating one per request would redo the connection setup.
+        global _gemini_client
         if not config.GEMINI_API_KEY:
             raise CloudUnavailableError("GEMINI_API_KEY is not set.")
-        import google.generativeai as genai
+        if _gemini_client is None:
+            from google import genai
 
-        if not _gemini_configured:
-            genai.configure(api_key=config.GEMINI_API_KEY)
-            _gemini_configured = True
-        return genai.GenerativeModel(self.model_name, system_instruction=self.system_prompt)
+            _gemini_client = genai.Client(api_key=config.GEMINI_API_KEY)
+        return _gemini_client
 
     def respond(self, text_input: str) -> str:
         return "".join(self.respond_stream(text_input)).strip()
 
     def respond_stream(self, text_input: str) -> Iterator[str]:
-        """Yields the reply as Gemini generates it (stream=True), so the
-        voice pipeline can start speaking the first sentence before the
-        last one exists. Any failure, before or during the stream, is
-        raised as CloudUnavailableError."""
+        """Yields the reply as Gemini generates it
+        (client.models.generate_content_stream, the streaming form of
+        generate_content), so the voice pipeline can start speaking the
+        first sentence before the last one exists. Any failure, before or
+        during the stream, is raised as CloudUnavailableError."""
         start = time.perf_counter()
         try:
-            for chunk in self._model().generate_content(text_input, stream=True):
-                try:
-                    text = chunk.text
-                except ValueError:
-                    # A chunk with no text part (e.g. only safety metadata).
-                    continue
-                if text:
-                    yield text
+            from google.genai import types
+
+            stream = self._client().models.generate_content_stream(
+                model=self.model_name,
+                contents=text_input,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_prompt,
+                    # No tools are passed, so the SDK's automatic function
+                    # calling has nothing to do; disabling it also stops
+                    # the warning it logs on every streamed call.
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                ),
+            )
+            for chunk in stream:
+                # chunk.text is None for a chunk with no text part (e.g. only
+                # safety metadata).
+                if chunk.text:
+                    yield chunk.text
             print(f"Agent latency (Gemini, streaming): {time.perf_counter() - start:.2f}s")
         except CloudUnavailableError:
             raise
@@ -430,8 +445,8 @@ class Orchestrator(ChatAgent):
         """Called once at server startup so the first question does not pay
         for loading models: loads the local Llama model into Ollama and,
         if a cloud provider is configured, sends it one tiny request. That
-        both loads its SDK (importing google.generativeai alone took
-        several seconds here) and finds out right away if the key is not
+        both loads its SDK (importing the Gemini SDK alone took several
+        seconds here) and finds out right away if the key is not
         usable (bad model name, no credit left), in which case the circuit
         breaker is tripped now instead of on the user's first question."""
         self.local_agent.warm_up()
