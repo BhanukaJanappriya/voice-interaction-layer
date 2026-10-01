@@ -501,8 +501,16 @@ class Orchestrator(ChatAgent):
     about and debug than a clean either/or.
     """
 
-    def __init__(self, tool_callback: Optional[Callable[[str], Optional[str]]] = None):
+    def __init__(
+        self,
+        tool_callback: Optional[Callable[[str], Optional[str]]] = None,
+        external_agent_provider: Optional[Callable[[], Optional[ChatAgent]]] = None,
+    ):
         self.tool_callback = tool_callback
+        # Returns the external chat agent an admin has made active (see
+        # admin/service.py), or None for this built in assistant. Called
+        # once per turn, so the provider must be cheap (it is cached).
+        self.external_agent_provider = external_agent_provider
         self.local_agent = LlamaOllamaAgent(tool_callback=tool_callback)
         self.last_mode: str = "unknown"
         # Circuit breaker: after a cloud failure, go straight to the local
@@ -550,7 +558,34 @@ class Orchestrator(ChatAgent):
         answers instead. If it fails after some text has already been
         spoken, switching to a different model mid sentence would sound
         worse than admitting the problem, so a short apology is added to
-        what was said instead."""
+        what was said instead.
+
+        An active external agent (registered in the admin portal) answers
+        first, and the same rule applies to it: a failure before any text
+        falls back to the normal cloud/local path below."""
+        external_agent = self._active_external_agent()
+        if external_agent is not None:
+            external_stream = external_agent.respond_stream(text_input, user_name, language)
+            try:
+                first_chunk = next(external_stream, "")
+                if not first_chunk:
+                    raise ExternalAgentError("the agent returned an empty reply")
+            except ExternalAgentError as exc:
+                print(
+                    f"Orchestrator: external agent {external_agent.name} failed ({exc}), "
+                    "falling back to the built in assistant."
+                )
+            else:
+                self.last_mode = f"external agent ({external_agent.name})"
+                print(f"Orchestrator mode: {self.last_mode}")
+                yield first_chunk
+                try:
+                    yield from external_stream
+                except ExternalAgentError as exc:
+                    print(f"Orchestrator: external agent stream dropped mid reply ({exc}).")
+                    yield " Sorry, I lost my connection there. Could you ask that again?"
+                return
+
         cloud_paused_for = self._cloud_retry_at - time.monotonic()
         if config.cloud_llm_configured() and cloud_paused_for > 0:
             print(f"Orchestrator: cloud failed recently, skipping it for another {cloud_paused_for:.0f}s.")
@@ -580,6 +615,18 @@ class Orchestrator(ChatAgent):
         print(f"Orchestrator mode: {self.last_mode}")
         yield from self.local_agent.respond_stream(text_input, user_name, language)
 
+    def _active_external_agent(self) -> Optional[ChatAgent]:
+        """The external agent to try first, or None. A failing lookup (for
+        example the database being unavailable) must not cost the user
+        their answer, so it counts as none active."""
+        if self.external_agent_provider is None:
+            return None
+        try:
+            return self.external_agent_provider()
+        except Exception as exc:
+            print(f"Orchestrator: external agent lookup failed ({exc}), using the built in assistant.")
+            return None
+
     def _stream_cloud(self, text_input: str, user_name: Optional[str], language: Optional[str]) -> Iterator[str]:
         analysis = None
         if config.CLOUD_REASONING_STAGE:
@@ -604,6 +651,378 @@ class Orchestrator(ChatAgent):
             role_prompt=f"{_personalize(_COMPOSER_ROLE_PROMPT, user_name, language)}\n\n{GROUNDING_RULES}"
         )
         yield from composer_agent.respond_stream(composed_prompt)
+
+
+# ==========================================================================
+# BEGIN external chat agents (R2, admin portal)
+#
+# One self contained section: ExternalAgentError and ExternalHttpAgent, an
+# adapter that forwards the user's text to another chat agent over HTTP
+# (configured in the admin portal, see backend/admin/service.py) and
+# returns its text reply, which the voice pipeline then speaks exactly as
+# it speaks any other agent's reply. Nothing above this section was
+# changed for it.
+# ==========================================================================
+
+import re as _re
+import threading as _threading
+from typing import Iterable
+
+import urllib3 as _urllib3
+
+from url_safety import UnsafeUrlError, check_outbound_url, safe_session
+
+
+class ExternalAgentError(Exception):
+    """Raised by ExternalHttpAgent for every failure (refused URL, network
+    error, timeout, non 2xx status, oversized or unreadable reply, missing
+    response path), never a raw requests/urllib3 exception, so a caller
+    can fall back to the built in assistant on this one exception type.
+    The message is a plain sentence fit to show an admin."""
+
+
+# Only these three names are placeholders. A single regex pass replaces
+# them, so text the user said that happens to contain "{language}" is not
+# substituted a second time.
+_BODY_PLACEHOLDER = _re.compile(r"\{(text|user_name|language)\}")
+_SSE_DONE = "[DONE]"
+# A streamed reply may legitimately take longer overall than a single
+# JSON reply; the per read timeout still applies between events.
+_STREAM_TOTAL_TIMEOUT_FACTOR = 4
+_MAX_CONNECT_TIMEOUT = 5.0
+_READ_SIZE = 8192
+
+
+def render_body_template(
+    template: str, text: str, user_name: Optional[str] = None, language: Optional[str] = None
+):
+    """Fills {text}, {user_name} and {language} in a JSON body template
+    and returns the parsed JSON value. Each value is JSON string escaped
+    before it is inserted, so quotes, backslashes and newlines in what the
+    user said cannot end the string early or add fields. Placeholders must
+    therefore sit inside quotes ("{text}"). Missing values become empty
+    strings."""
+    values = {"text": text or "", "user_name": user_name or "", "language": language or ""}
+
+    def substitute(match) -> str:
+        return json.dumps(values[match.group(1)], ensure_ascii=False)[1:-1]
+
+    rendered = _BODY_PLACEHOLDER.sub(substitute, template or "")
+    try:
+        return json.loads(rendered)
+    except ValueError:
+        raise ExternalAgentError(
+            'The body template is not valid JSON once filled in. Placeholders must sit '
+            'inside quotes, for example {"message": "{text}"}.'
+        ) from None
+
+
+def extract_response_path(data, path: Optional[str]):
+    """Follows a dotted path such as "reply" or "choices.0.message.content"
+    into parsed JSON; a numeric segment indexes a list (negative counts
+    from the end). An empty path returns data itself."""
+    if not path:
+        return data
+    current = data
+    for part in path.split("."):
+        if isinstance(current, list):
+            try:
+                index = int(part)
+            except ValueError:
+                raise ExternalAgentError(
+                    f"Response path '{path}': found a list where '{part}' was expected; use a number."
+                ) from None
+            if not -len(current) <= index < len(current):
+                raise ExternalAgentError(f"Response path '{path}': list index {index} is out of range.")
+            current = current[index]
+        elif isinstance(current, dict):
+            if part not in current:
+                raise ExternalAgentError(f"The agent's reply has no '{part}' (response path '{path}').")
+            current = current[part]
+        else:
+            raise ExternalAgentError(f"Response path '{path}': cannot look up '{part}' inside a plain value.")
+    return current
+
+
+def _reply_value_as_text(value, path: Optional[str]) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if value is None:
+        raise ExternalAgentError(f"The agent's reply is empty at response path '{path}'.")
+    raise ExternalAgentError(
+        f"Response path '{path or '(whole reply)'}' points at a JSON object or list, not at text."
+    )
+
+
+def iter_sse_events(byte_chunks: Iterable[bytes]) -> Iterator[tuple[str, str]]:
+    """Parses a Server Sent Events byte stream into (event name, data)
+    pairs, following the WHATWG rules that matter here: "data:" lines of
+    one event are joined with newlines, a blank line ends the event, lines
+    starting with ":" are comments, and one space after the colon is
+    dropped. A final event without its closing blank line is still
+    delivered."""
+    buffer = b""
+    data_lines: list[str] = []
+    event_name = "message"
+
+    def dispatch():
+        nonlocal data_lines, event_name
+        if data_lines:
+            yield event_name, "\n".join(data_lines)
+        data_lines = []
+        event_name = "message"
+
+    for chunk in byte_chunks:
+        buffer += chunk
+        while b"\n" in buffer:
+            raw_line, buffer = buffer.split(b"\n", 1)
+            line = raw_line.rstrip(b"\r").decode("utf-8", errors="replace")
+            if not line:
+                yield from dispatch()
+                continue
+            if line.startswith(":"):
+                continue
+            field, _, value = line.partition(":")
+            if value.startswith(" "):
+                value = value[1:]
+            if field == "data":
+                data_lines.append(value)
+            elif field == "event":
+                event_name = value or "message"
+    if buffer.strip():
+        line = buffer.rstrip(b"\r").decode("utf-8", errors="replace")
+        field, _, value = line.partition(":")
+        if field == "data":
+            data_lines.append(value[1:] if value.startswith(" ") else value)
+    yield from dispatch()
+
+
+def sse_text_pieces(events: Iterable[tuple[str, str]], response_path: Optional[str]) -> Iterator[str]:
+    """Turns SSE events into reply text pieces. Each event's data is
+    either plain text (used as is) or JSON, where response_path picks the
+    piece (for example "choices.0.delta.content"); a JSON event without
+    that path (a role only or keep alive event) is skipped. "[DONE]" ends
+    the stream; an "error" event raises ExternalAgentError."""
+    for event_name, data in events:
+        if data.strip() == _SSE_DONE:
+            return
+        if event_name == "error":
+            raise ExternalAgentError("The agent reported an error in its event stream.")
+        try:
+            parsed = json.loads(data)
+        except ValueError:
+            parsed = None
+            piece = data
+        else:
+            if isinstance(parsed, (dict, list)):
+                try:
+                    piece = _reply_value_as_text(extract_response_path(parsed, response_path), response_path)
+                except ExternalAgentError:
+                    continue
+            elif isinstance(parsed, str):
+                piece = parsed
+            else:
+                piece = data
+        if piece:
+            yield piece
+
+
+class ExternalHttpAgent(ChatAgent):
+    """A chat agent reached over HTTP, configured in the admin portal.
+
+    POST (default): the body is body_template (JSON text) with {text},
+    {user_name} and {language} filled in, JSON escaped. GET: the same
+    template is filled in and must be a flat JSON object; its fields are
+    sent as query parameters instead of a body (for example
+    {"q": "{text}", "lang": "{language}"} becomes ?q=...&lang=...).
+
+    The reply is read from response_path in the JSON response. With
+    streaming=True the agent is asked for Server Sent Events and each
+    event's text is yielded as it arrives, so the voice pipeline can start
+    speaking before the reply is complete; if the agent answers with plain
+    JSON instead, that is parsed as a whole.
+
+    Safety: the URL is checked against url_safety before every request and
+    the connection is pinned to the checked address (DNS rebinding);
+    redirects are not followed; the reply is capped at
+    EXTERNAL_AGENT_MAX_RESPONSE_BYTES while it is read (Content-Length is
+    not trusted); connect and read timeouts are strict. Every failure is
+    raised as ExternalAgentError.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        url: str,
+        method: str = "POST",
+        auth_header_name: Optional[str] = None,
+        auth_header_value: Optional[str] = None,
+        body_template: str = '{"message": "{text}"}',
+        response_path: str = "reply",
+        timeout_seconds: Optional[float] = None,
+        streaming: bool = False,
+    ):
+        self.name = name
+        self.url = url
+        self.method = (method or "POST").strip().upper()
+        if self.method not in ("GET", "POST"):
+            raise ExternalAgentError(f"Unsupported HTTP method '{method}'; use GET or POST.")
+        self.auth_header_name = (auth_header_name or "").strip() or None
+        self.auth_header_value = auth_header_value or None
+        self.body_template = body_template or '{"message": "{text}"}'
+        self.response_path = (response_path or "").strip()
+        self.timeout_seconds = float(timeout_seconds or config.EXTERNAL_AGENT_DEFAULT_TIMEOUT)
+        self.streaming = bool(streaming)
+        # One HTTP session (kept alive connection) per thread: /chat and
+        # the voice pipeline may call the same cached agent concurrently,
+        # and requests.Session is not documented as thread safe.
+        self._local = _threading.local()
+
+    def __repr__(self) -> str:
+        # Deliberately leaves out the auth header value.
+        return f"ExternalHttpAgent(name={self.name!r}, url={self.url!r}, streaming={self.streaming})"
+
+    def respond(self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None) -> str:
+        return "".join(self.respond_stream(text_input, user_name, language)).strip()
+
+    def respond_stream(
+        self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None
+    ) -> Iterator[str]:
+        label = f"external agent {self.name}" + (", streaming" if self.streaming else "")
+        start = time.perf_counter()
+        try:
+            yield from self._generate(text_input, user_name, language)
+        finally:
+            print(f"Agent latency ({label}): {time.perf_counter() - start:.2f}s")
+
+    def _session(self):
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = safe_session()
+            self._local.session = session
+        return session
+
+    def _request_arguments(self, text_input: str, user_name: Optional[str], language: Optional[str]) -> dict:
+        headers = {
+            "Accept": "text/event-stream, application/json" if self.streaming else "application/json",
+            "User-Agent": "SLT-Mobitel-Voice-Assistant/1.0",
+        }
+        if self.auth_header_name and self.auth_header_value:
+            headers[self.auth_header_name] = self.auth_header_value
+        body = render_body_template(self.body_template, text_input, user_name, language)
+        if self.method == "GET":
+            if not isinstance(body, dict):
+                raise ExternalAgentError("For GET, the body template must be a JSON object; its fields become query parameters.")
+            params = {
+                key: value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                for key, value in body.items()
+            }
+            return {"params": params, "headers": headers}
+        headers["Content-Type"] = "application/json; charset=utf-8"
+        return {"data": json.dumps(body, ensure_ascii=False).encode("utf-8"), "headers": headers}
+
+    def _generate(self, text_input: str, user_name: Optional[str], language: Optional[str]) -> Iterator[str]:
+        arguments = self._request_arguments(text_input, user_name, language)
+        try:
+            check_outbound_url(self.url)
+        except UnsafeUrlError as exc:
+            raise ExternalAgentError(str(exc)) from None
+
+        total_budget = self.timeout_seconds * (_STREAM_TOTAL_TIMEOUT_FACTOR if self.streaming else 1)
+        deadline = time.monotonic() + total_budget
+        try:
+            response = self._session().request(
+                self.method,
+                self.url,
+                timeout=(min(self.timeout_seconds, _MAX_CONNECT_TIMEOUT), self.timeout_seconds),
+                allow_redirects=False,
+                stream=True,
+                **arguments,
+            )
+        except UnsafeUrlError as exc:
+            raise ExternalAgentError(str(exc)) from None
+        except requests.exceptions.Timeout:
+            raise ExternalAgentError(f"The agent did not answer within {self.timeout_seconds:g} seconds.") from None
+        except requests.exceptions.TooManyRedirects:
+            raise ExternalAgentError("The agent answered with a redirect. Redirects are not followed; enter the final URL instead.") from None
+        except requests.exceptions.SSLError:
+            raise ExternalAgentError("The agent's HTTPS certificate could not be verified.") from None
+        except requests.exceptions.ConnectionError:
+            raise ExternalAgentError("Could not connect to the agent (connection refused or host unreachable).") from None
+        except (requests.exceptions.RequestException, _urllib3.exceptions.HTTPError, OSError):
+            raise ExternalAgentError("The request to the agent failed.") from None
+
+        try:
+            status = response.status_code
+            if 300 <= status < 400:
+                raise ExternalAgentError(
+                    f"The agent answered with a redirect (HTTP {status}). Redirects are not followed; "
+                    "enter the final URL instead."
+                )
+            if not 200 <= status < 300:
+                reason = f" {str(response.reason)[:80]}" if response.reason else ""
+                raise ExternalAgentError(f"The agent answered with HTTP {status}{reason}.")
+
+            content_type = response.headers.get("Content-Type", "").lower()
+            byte_chunks = self._read_capped(response, deadline, total_budget)
+            if self.streaming and "text/event-stream" in content_type:
+                produced = False
+                for piece in sse_text_pieces(iter_sse_events(byte_chunks), self.response_path):
+                    produced = True
+                    yield piece
+                if not produced:
+                    raise ExternalAgentError("The agent's event stream ended without any reply text.")
+            else:
+                yield self._parse_whole(b"".join(byte_chunks), content_type)
+        finally:
+            response.close()
+
+    def _read_capped(self, response, deadline: float, total_budget: float) -> Iterator[bytes]:
+        """Yields the body as it arrives (read1 returns whatever is
+        available, so SSE events are not held back waiting for a full
+        buffer), stopping with ExternalAgentError once more than
+        EXTERNAL_AGENT_MAX_RESPONSE_BYTES (after decompression) have come
+        in or the total time budget is spent."""
+        limit = config.EXTERNAL_AGENT_MAX_RESPONSE_BYTES
+        total = 0
+        while True:
+            try:
+                chunk = response.raw.read1(_READ_SIZE, decode_content=True)
+            except (requests.exceptions.RequestException, _urllib3.exceptions.HTTPError, OSError) as exc:
+                if isinstance(exc, (_urllib3.exceptions.ReadTimeoutError, TimeoutError)):
+                    raise ExternalAgentError(
+                        f"The agent stopped sending for more than {self.timeout_seconds:g} seconds."
+                    ) from None
+                raise ExternalAgentError("The connection to the agent dropped while reading its reply.") from None
+            if not chunk:
+                return
+            total += len(chunk)
+            if total > limit:
+                raise ExternalAgentError(f"The agent's reply is larger than the {limit} byte limit.")
+            if time.monotonic() > deadline:
+                raise ExternalAgentError(f"The agent took longer than {total_budget:g} seconds in total.")
+            yield chunk
+
+    def _parse_whole(self, body: bytes, content_type: str) -> str:
+        text = body.decode("utf-8", errors="replace")
+        if not self.response_path and "json" not in content_type:
+            reply = text.strip()
+        else:
+            try:
+                data = json.loads(text)
+            except ValueError:
+                raise ExternalAgentError("The agent's reply is not valid JSON.") from None
+            reply = _reply_value_as_text(extract_response_path(data, self.response_path), self.response_path).strip()
+        if not reply:
+            raise ExternalAgentError("The agent returned an empty reply.")
+        return reply
+
+
+# ==========================================================================
+# END external chat agents
+# ==========================================================================
 
 
 def _run_interactive_test():
