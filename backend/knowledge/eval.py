@@ -142,7 +142,7 @@ def generate(system: str, prompt: str, session: requests.Session) -> tuple:
     response = session.post(
         f"{config.LOCAL_LLM_HOST.rstrip('/')}/api/generate",
         json={"model": config.LOCAL_LLM_MODEL, "system": system, "prompt": prompt, "stream": False,
-              "keep_alive": "30m", "options": {"temperature": 0}},
+              "keep_alive": "30m", "options": {"temperature": 0, "num_predict": 220}},
         timeout=180,
     )
     response.raise_for_status()
@@ -216,7 +216,7 @@ def run(answers: bool = True, cold_model: bool = False, passes: int = 3, index_d
         retriever._context_cache.clear()
         results = retriever.search(q["question"], top_k=top_k)
         selected = select_relevant(results)
-        context = format_context(selected)
+        context = format_context(selected, q["question"])
         facts = q.get("expected_facts", [])
         sources = q.get("expected_sources", [])
         rank = None

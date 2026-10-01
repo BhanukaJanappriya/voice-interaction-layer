@@ -53,18 +53,35 @@ from knowledge.index import INDEX_DIR, IndexMissingError, load_index
 RELATIVE_MARGIN = 0.12
 # Added to a package chunk's score when the query names it literally.
 LEXICAL_BOOST = 0.06
+# Keyword help for ranking: each distinct question word (an email address,
+# "APN", "roaming") found in a candidate chunk adds this much to its rank,
+# up to TERM_BOOST_MAX words. Embeddings blur exact words, and the chunk
+# holding the answer to "what email address can I write to" ranked 8th by
+# meaning alone. Only chunks already within TERM_BOOST_WINDOW of the best
+# embedding score are eligible, and the boost changes the order only: the
+# score reported, and used to decide whether anything is relevant at all,
+# stays the plain embedding score, so small talk cannot be lifted over the
+# threshold by a shared word like "good" or "hello".
+TERM_BOOST = 0.04
+TERM_BOOST_MAX = 4
+TERM_BOOST_WINDOW = 0.10
 # Size limits for the context block, which goes into the model prompt:
-# longer context means slower first words from the local model.
-MAX_CHUNK_CHARS = 900
-MAX_CONTEXT_CHARS = 3200
+# every extra character is read by the local model before it can start
+# speaking (measured: 4 chunks of about 900 characters took 404 ms to the
+# first token against 180 ms with none), so only the few best chunks go in,
+# each cut down to the sentences that match the question, and page furniture that never helps an answer is removed.
+MAX_CHUNKS = 3
+MAX_CHUNK_CHARS = 700
+MAX_CONTEXT_CHARS = 2200
 CACHE_SIZE = 256
 # How often to look for an index that was missing (built after startup).
 RELOAD_INTERVAL_SECONDS = 60
 
-CONTEXT_HEADER = (
-    "Knowledge base context (official SLT-Mobitel sources; details, prices and packages can "
-    "change after the retrieval date shown):"
-)
+CONTEXT_HEADER = "SLT-Mobitel notes (official sources; prices and packages can change after the date shown):"
+
+# Table furniture copied from the websites' package tables along with the
+# facts: buttons and a regulator reference number, never part of an answer.
+_NOISE = re.compile(r"(?:,\s*)?(?:View Charges/ ?More Info|Self-care App|TRC Code - [A-Z0-9/]+)", re.IGNORECASE)
 
 
 @dataclass
@@ -96,6 +113,7 @@ class KnowledgeRetriever:
         self._lock = threading.RLock()
         self.vectors: Optional[np.ndarray] = None
         self.chunks: list = []
+        self._lowered: list = []
         self.manifest: dict = {}
         self.loaded = False
         self.error: Optional[str] = None
@@ -130,6 +148,7 @@ class KnowledgeRetriever:
                 self.loaded = False
                 return False
             self.vectors, self.chunks, self.manifest = vectors, chunks, manifest
+            self._lowered = [f"{chunk.get('title') or ''} {chunk['text']}".lower() for chunk in chunks]
             self._package_rows = []
             for i, chunk in enumerate(chunks):
                 pkg = (chunk.get("metadata") or {}).get("package")
@@ -207,16 +226,22 @@ class KnowledgeRetriever:
             print(f"Retrieval skipped: {exc}")
             return []
         with self._lock:
-            vectors, chunks = self.vectors, self.chunks
+            vectors, chunks, lowered = self.vectors, self.chunks, self._lowered
         if vector.shape[0] != vectors.shape[1]:
             self.error = f"query has {vector.shape[0]} dimensions, index has {vectors.shape[1]} (rebuild the index)"
             return []
         scores = vectors @ vector
         for index, boost in self._lexical_boosts(normalized).items():
             scores[index] += boost
+        ranking = scores.copy()
+        terms = _query_terms(normalized)
+        if terms:
+            for index in np.nonzero(scores >= scores.max() - TERM_BOOST_WINDOW)[0]:
+                matched = sum(1 for term in terms if term in lowered[index])
+                ranking[index] += TERM_BOOST * min(matched, TERM_BOOST_MAX)
         k = max(1, min(top_k, len(chunks)))
-        top = np.argpartition(-scores, k - 1)[:k]
-        top = top[np.argsort(-scores[top])]
+        top = np.argpartition(-ranking, k - 1)[:k]
+        top = top[np.argsort(-ranking[top])]
         results = []
         for index in top:
             chunk = chunks[int(index)]
@@ -252,7 +277,7 @@ class KnowledgeRetriever:
                 # Not cached: an unavailable model or missing index may
                 # recover, and the next turn should try again.
                 return None
-            context = format_context(select_relevant(results))
+            context = format_context(select_relevant(results), text)
             self._context_cache[normalized] = context
             if len(self._context_cache) > CACHE_SIZE:
                 self._context_cache.popitem(last=False)
@@ -321,25 +346,69 @@ def select_relevant(results: list, min_score: Optional[float] = None) -> list:
     """Chunks worth putting in the prompt: above the absolute threshold
     and within RELATIVE_MARGIN of the best chunk."""
     threshold = config.RETRIEVAL_MIN_SCORE if min_score is None else min_score
-    if not results or results[0].score < threshold:
+    if not results:
         return []
-    floor = max(threshold, results[0].score - RELATIVE_MARGIN)
+    best = max(r.score for r in results)
+    if best < threshold:
+        return []
+    floor = max(threshold, best - RELATIVE_MARGIN)
     return [r for r in results if r.score >= floor]
 
 
-def format_context(results: list) -> Optional[str]:
+_WORD = re.compile(r"\w+", re.UNICODE)
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?;])\s+|\n+")
+_STOPWORDS = {
+    "the", "and", "for", "are", "was", "how", "what", "when", "who", "does", "can", "you", "your",
+    "with", "that", "this", "from", "have", "has", "will", "much", "many", "any", "get", "give",
+    "tell", "about", "please", "mobitel", "slt", "which", "where", "there", "their", "them",
+}
+
+
+def _query_terms(query: Optional[str]) -> set:
+    return {w.lower() for w in _WORD.findall(query or "") if len(w) > 2 and w.lower() not in _STOPWORDS}
+
+
+def _excerpt(text: str, terms: set, limit: int) -> str:
+    """At most limit characters of text: the run of consecutive sentences
+    (or lines) that mentions the most words from the question, the first
+    such run when several tie. Cutting a chunk at its start, as an earlier
+    version did, dropped the answer whenever it sat later in the chunk (the
+    tourist SIM plans, when Mobitel was founded), and the model then made
+    something up. Short text is returned whole."""
+    if len(text) <= limit:
+        return text
+    units = [u.strip() for u in _SENTENCE_BREAK.split(text) if u.strip()]
+    hits = [sum(1 for t in terms if t in u.lower()) for u in units]
+    best_score, best_run = -1, (0, 1)
+    for start in range(len(units)):
+        length, score, end = 0, 0, start
+        while end < len(units) and (end == start or length + len(units[end]) + 1 <= limit):
+            length += len(units[end]) + 1
+            score += hits[end]
+            end += 1
+        if score > best_score:
+            best_score, best_run = score, (start, end)
+    excerpt = " ".join(units[best_run[0]:best_run[1]])
+    if len(excerpt) > limit:
+        excerpt = excerpt[:limit].rsplit(" ", 1)[0]
+    prefix = "... " if best_run[0] > 0 else ""
+    suffix = " ..." if best_run[1] < len(units) or len(excerpt) < len(" ".join(units[best_run[0]:best_run[1]])) else ""
+    return prefix + excerpt + suffix
+
+
+def format_context(results: list, query: Optional[str] = None) -> Optional[str]:
     """The block the model sees. Each excerpt names its source and the
     date it was retrieved, so the model (and the logs) can say where a
-    price came from and how old it is."""
+    price came from and how old it is. With the question given, a long
+    chunk is cut down to its sentences that match it."""
     if not results:
         return None
     parts = [CONTEXT_HEADER]
     budget = MAX_CONTEXT_CHARS
-    for n, result in enumerate(results, 1):
-        text = result.text.strip()
-        if len(text) > MAX_CHUNK_CHARS:
-            text = text[:MAX_CHUNK_CHARS].rsplit(" ", 1)[0] + " ..."
-        header = f"[{n}] {result.title} (source: {result.source_url}, retrieved {result.retrieved_at[:10]})"
+    terms = _query_terms(query)
+    for n, result in enumerate(results[:MAX_CHUNKS], 1):
+        text = _excerpt(_NOISE.sub("", result.text).strip(), terms, MAX_CHUNK_CHARS)
+        header = f"[{n}] {result.title} | {result.source_url} | {result.retrieved_at[:10]}"
         block = f"{header}\n{text}"
         if len(block) > budget and n > 1:
             break

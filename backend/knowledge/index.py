@@ -50,8 +50,8 @@ VECTORS_PATH = INDEX_DIR / "vectors.npy"
 CHUNKS_PATH = INDEX_DIR / "chunks.jsonl"
 MANIFEST_PATH = INDEX_DIR / "manifest.json"
 
-MAX_TOKENS = 450
-OVERLAP_TOKENS = 60
+MAX_TOKENS = 160
+OVERLAP_TOKENS = 30
 
 
 class IndexMissingError(RuntimeError):
