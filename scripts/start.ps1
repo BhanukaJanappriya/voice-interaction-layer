@@ -1,10 +1,11 @@
 <#
-Starts the backend (FastAPI/uvicorn) and frontend (static file server) as
-background processes with no attached console window, using pythonw.exe
-instead of python.exe. Output goes to logs\*.log instead of a terminal, and
-process IDs are saved to logs\*.pid so stop.ps1 can find and stop them
-later. Run this once, then close the terminal if you want; the servers
-keep running because they are not attached to it.
+Starts the app, one FastAPI/uvicorn process that serves the frontend, the
+admin portal, the voice WebSocket, the APIs and the MCP server, as a
+background process with no attached console window, using pythonw.exe
+instead of python.exe. Output goes to logs\backend.log instead of a
+terminal, and the process ID is saved to logs\backend.pid so stop.ps1 can
+find and stop it later. Run this once, then close the terminal if you
+want; the server keeps running because it is not attached to it.
 #>
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -39,9 +40,8 @@ function Start-Background($name, $workingDir, $arguments) {
     Write-Host "$name started in the background (PID $($proc.Id)); log: logs\$name.log"
 }
 
-Start-Background "backend" (Join-Path $root "backend") "-m uvicorn server:app --host 127.0.0.1 --port 8000"
-Start-Background "frontend" (Join-Path $root "frontend") "-m http.server 5500"
+Start-Background "backend" $root "-m backend --host 127.0.0.1 --port 8000"
 
 Write-Host ""
-Write-Host "Open http://127.0.0.1:5500/index.html in your browser."
-Write-Host "Run scripts\stop.ps1 to stop both servers."
+Write-Host "Open http://127.0.0.1:8000/ in your browser (admin portal: http://127.0.0.1:8000/admin/)."
+Write-Host "Run scripts\stop.ps1 to stop it."

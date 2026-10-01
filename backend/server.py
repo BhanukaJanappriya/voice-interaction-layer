@@ -208,10 +208,10 @@ def _opt_out_of_windows_power_throttling():
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """Startup: power throttling opt out, database migrations and the first
-    admin account (before anything can touch the database), then the
-    background warm up, and the MCP session manager for as long as the app
-    runs."""
+    """One startup sequence for the whole app: power throttling opt out,
+    database migrations and the first admin account (before anything can
+    touch the database), then the background warm up, and the MCP session
+    manager for as long as the app runs."""
     _opt_out_of_windows_power_throttling()
     upgrade_to_head()
     seed_first_admin_from_env()
@@ -237,7 +237,9 @@ app.add_middleware(
 
 # Existing user verification and admin sign in (/auth), the admin portal's
 # API (/admin/api), and the MCP server with its OAuth endpoints (/mcp,
-# /oauth/token, /.well-known/...).
+# /oauth/token, /.well-known/...). The frontend and admin page themselves
+# are served as static files at the very end of this module, after every
+# route, so they never shadow one.
 app.include_router(auth_router)
 app.include_router(admin_router)
 
@@ -837,9 +839,10 @@ async def health():
         "cloud_speech_configured": config.cloud_speech_configured(),
         "cloud_speech_provider": config.CLOUD_SPEECH_PROVIDER,
         "supported_languages": config.SUPPORTED_LANGUAGES,
-        # Database migration state, the knowledge index (loaded, size,
-        # build date, last retrieval time), and which external chat agent is
-        # answering (None means the built in assistant).
+        # The single app's other parts: database migration state, the
+        # knowledge index (loaded, size, build date, last retrieval time),
+        # which external chat agent is answering (None means the built in
+        # assistant), and the MCP server.
         "database": await asyncio.to_thread(database_status),
         "knowledge": retriever.status(),
         "external_agent": admin_service.active_agent_summary(),
@@ -847,9 +850,11 @@ async def health():
     }
 
 
-# The admin portal page, after every route so it never shadows one;
-# html=True serves index.html and redirects /admin to /admin/.
+# Static files last, so every route above wins. The admin portal first,
+# since "/" would otherwise also match /admin/...; html=True serves
+# index.html for a directory and redirects /admin to /admin/.
 app.mount("/admin", StaticFiles(directory=FRONTEND_DIR / "admin", html=True), name="admin")
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 
 
 if __name__ == "__main__":
