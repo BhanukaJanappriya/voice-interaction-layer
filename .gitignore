@@ -12,3 +12,12 @@ logs/
 *service-account*.json
 *credentials*.json
 gcp-*.json
+
+# Local runtime data: database, generated secrets, scraped page cache,
+# knowledge base index. Rebuilt locally, never committed.
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.npy
+.pytest_cache/

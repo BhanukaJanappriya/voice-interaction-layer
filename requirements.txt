@@ -44,3 +44,19 @@ openai==3.17.0
 google-cloud-speech==2.40.0
 google-cloud-texttospeech==2.37.0
 azure-cognitiveservices-speech==1.51.2
+
+# Database (users, admins, external agents, MCP clients, audit log).
+# SQLite by default; PostgreSQL via DATABASE_URL also needs a driver such
+# as psycopg[binary], installed only where it is used.
+sqlalchemy==2.1.1
+alembic==1.20.0
+
+# Authentication: bcrypt hashes for PINs, passwords and client secrets,
+# signed JWTs for sessions and MCP access tokens, Fernet (from
+# cryptography) to encrypt stored external agent credentials.
+bcrypt==5.0.0
+pyjwt==2.15.1
+cryptography==50.0.1
+
+# Tests
+pytest==9.1.1

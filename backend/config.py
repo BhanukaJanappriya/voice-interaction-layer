@@ -13,7 +13,11 @@ callers can decide whether to attempt a cloud path or go straight to the
 local fallback.
 """
 
+import base64
+import json
 import os
+import secrets
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -48,6 +52,127 @@ AZURE_SPEECH_REGION = os.environ.get("AZURE_SPEECH_REGION", "").strip()
 LOCAL_WHISPER_MODEL_SIZE = os.environ.get("LOCAL_WHISPER_MODEL_SIZE", "base")
 
 SUPPORTED_LANGUAGES = {"en": "English", "si": "Sinhala", "ta": "Tamil"}
+
+# Repository root and the local, gitignored data directory (database,
+# knowledge base cache and index, generated secrets). Paths below default
+# to it so the app runs from a fresh clone with no extra setup.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = Path(os.environ.get("DATA_DIR", "").strip() or PROJECT_ROOT / "data")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return default
+    return value in ("1", "true", "yes")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+def _local_secret(name: str, factory) -> str:
+    """Returns a secret from the environment, or, when it is not set,
+    one generated once and kept in DATA_DIR/secrets.json (gitignored), so
+    tokens and encrypted fields survive a restart on a development machine
+    without anyone having to invent a key first. A real deployment sets
+    the environment variable instead; see .env.example."""
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    secrets_file = DATA_DIR / "secrets.json"
+    stored = {}
+    if secrets_file.exists():
+        try:
+            stored = json.loads(secrets_file.read_text(encoding="utf-8"))
+        except ValueError:
+            stored = {}
+    if not stored.get(name):
+        stored[name] = factory()
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        secrets_file.write_text(json.dumps(stored, indent=2), encoding="utf-8")
+    return stored[name]
+
+
+def _new_fernet_key() -> str:
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
+
+
+# Server startup: load Whisper, Ollama, TTS and the knowledge index before
+# the first request. Tests turn it off so they start in milliseconds.
+WARM_UP_ON_STARTUP = _env_bool("WARM_UP_ON_STARTUP", True)
+# The address this server is reached at, used in token issuer/audience
+# values and in the MCP authorization metadata.
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://127.0.0.1:8000").strip().rstrip("/")
+
+# Database: SQLite file by default; any SQLAlchemy URL (for example
+# postgresql+psycopg://user:pass@host/db) switches it with no code change.
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or f"sqlite:///{(DATA_DIR / 'app.db').as_posix()}"
+
+# Signing key for every token this server issues (user sessions, admin
+# sessions, MCP access tokens), and the key that encrypts stored external
+# agent credentials.
+JWT_SECRET = _local_secret("JWT_SECRET", lambda: secrets.token_urlsafe(48))
+FIELD_ENCRYPTION_KEY = _local_secret("FIELD_ENCRYPTION_KEY", _new_fernet_key)
+# Session cookies are sent over plain http on the local demo; set true
+# behind https.
+COOKIE_SECURE = _env_bool("COOKIE_SECURE", False)
+USER_SESSION_MINUTES = _env_int("USER_SESSION_MINUTES", 60)
+ADMIN_SESSION_MINUTES = _env_int("ADMIN_SESSION_MINUTES", 60)
+MCP_TOKEN_MINUTES = _env_int("MCP_TOKEN_MINUTES", 15)
+
+# Existing user verification (phone number + PIN)
+LOGIN_MAX_ATTEMPTS = _env_int("LOGIN_MAX_ATTEMPTS", 5)
+LOGIN_LOCKOUT_MINUTES = _env_int("LOGIN_LOCKOUT_MINUTES", 15)
+# Per client address, across all accounts, to slow down guessing.
+LOGIN_RATE_LIMIT_PER_MINUTE = _env_int("LOGIN_RATE_LIMIT_PER_MINUTE", 10)
+
+# First admin account, created at startup only when no admin exists yet.
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin").strip()
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "").strip()
+
+# External chat agents registered in the admin portal
+# Private, loopback and link local addresses are refused (SSRF protection)
+# unless this development flag is on.
+EXTERNAL_AGENT_ALLOW_PRIVATE = _env_bool("EXTERNAL_AGENT_ALLOW_PRIVATE", False)
+EXTERNAL_AGENT_MAX_RESPONSE_BYTES = _env_int("EXTERNAL_AGENT_MAX_RESPONSE_BYTES", 1_000_000)
+EXTERNAL_AGENT_DEFAULT_TIMEOUT = _env_float("EXTERNAL_AGENT_DEFAULT_TIMEOUT", 15.0)
+
+# Knowledge base (retrieval augmented generation)
+KNOWLEDGE_ENABLED = _env_bool("KNOWLEDGE_ENABLED", True)
+KNOWLEDGE_DIR = Path(os.environ.get("KNOWLEDGE_DIR", "").strip() or DATA_DIR / "knowledge")
+# Multilingual embedding model served by the same local Ollama as the
+# fallback LLM, so Sinhala and Tamil questions find English content.
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "bge-m3").strip()
+EMBEDDING_HOST = os.environ.get("EMBEDDING_HOST", "").strip() or LOCAL_LLM_HOST
+RETRIEVAL_TOP_K = _env_int("RETRIEVAL_TOP_K", 4)
+# Chunks scoring below this cosine similarity are not used as context.
+# 0.53 measured (docs/RAG_EVAL.md): small talk tops out at 0.524 with
+# bge-m3, real SLT Mobitel questions mostly score 0.55 or more.
+RETRIEVAL_MIN_SCORE = _env_float("RETRIEVAL_MIN_SCORE", 0.53)
+SCRAPER_USER_AGENT = os.environ.get(
+    "SCRAPER_USER_AGENT",
+    "SLTDigitalLab-KnowledgeBot/1.0 (voice assistant prototype; contact: SLT Digital Lab)",
+).strip()
+SCRAPER_DELAY_SECONDS = max(1.0, _env_float("SCRAPER_DELAY_SECONDS", 1.5))
+SCRAPER_MAX_PAGES = _env_int("SCRAPER_MAX_PAGES", 400)
+
+# MCP server
+MCP_ENABLED = _env_bool("MCP_ENABLED", True)
+
+
+def database_is_sqlite() -> bool:
+    return DATABASE_URL.startswith("sqlite")
 
 
 def cloud_llm_configured() -> bool:
