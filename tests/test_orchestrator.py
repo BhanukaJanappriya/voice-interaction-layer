@@ -1,10 +1,22 @@
 """Orchestrator: external agent first, fallback, and where retrieved
 context ends up (local system prompt, cloud composer prompt)."""
 
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# Ensure the project root is also available to the language server and test runner
+# when this file is opened directly from VS Code.
+if str(ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(ROOT.parent))
+
 import pytest
 
 import agent
-import config
+import config  # type: ignore[import-not-found]
 from conftest import orchestrator_integrated
 
 LOCAL_MODE = "local single agent (Llama via Ollama)"

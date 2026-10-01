@@ -8,6 +8,7 @@ integrated.
 """
 
 import base64
+import importlib
 import json
 from contextlib import asynccontextmanager
 
@@ -159,7 +160,7 @@ def _initialize(http, token):
 
 
 def _audit_rows(db_schema):
-    from db.models import AuditLog
+    AuditLog = importlib.import_module("db.models").AuditLog
 
     with db_schema.session_scope() as session:
         return [
@@ -174,12 +175,11 @@ def _audit_rows(db_schema):
             for row in session.query(AuditLog).order_by(AuditLog.id).all()
         ]
 
-
-# OAuth token endpoint
-
-
 def test_token_happy_path(mcp_http, new_mcp_client, db_schema):
-    from auth.tokens import AUDIENCE_MCP, decode_token, token_scopes
+    tokens_module = importlib.import_module("auth.tokens")
+    AUDIENCE_MCP = tokens_module.AUDIENCE_MCP
+    decode_token = tokens_module.decode_token
+    token_scopes = tokens_module.token_scopes
 
     row, secret = new_mcp_client(("knowledge:read",))
     response = _token(mcp_http, row.client_id, secret)
@@ -271,7 +271,10 @@ def test_mcp_without_token_is_401_with_www_authenticate(mcp_http):
 
 
 def test_mcp_bad_tokens_are_401(mcp_http, new_mcp_client):
-    from auth.tokens import AUDIENCE_ADMIN, AUDIENCE_MCP, issue_token
+    tokens_module = importlib.import_module("auth.tokens")
+    AUDIENCE_ADMIN = tokens_module.AUDIENCE_ADMIN
+    AUDIENCE_MCP = tokens_module.AUDIENCE_MCP
+    issue_token = tokens_module.issue_token
 
     row, _ = new_mcp_client()
     admin_token, _ = issue_token("1", AUDIENCE_ADMIN, 5)
