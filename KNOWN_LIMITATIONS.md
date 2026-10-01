@@ -130,22 +130,34 @@ beyond a demo or prototype.
 
 ## Sinhala and Tamil transcription accuracy (speech to text)
 
-**Status: partially solved locally; cloud is materially better.**
+**Status: Tamil works locally with the larger model; Sinhala does not work
+locally at all and needs Google Cloud Speech-to-Text, which is not enabled.**
 
-faster-whisper's multilingual model does support Sinhala and Tamil without
-any extra setup, and `backend/stt.py` will use it as a fallback for those
-languages. But Whisper's published accuracy on Sinhala and Tamil is well
-below its English accuracy (both are lower resource languages in its
-training data), and this has not been benchmarked on this project with
-real Sinhala/Tamil speech samples, since none were available in this
-environment. Treat the local fallback for these two languages as usable
-for a rough demo, not as a reliable transcript.
+Measured on 2026-10-02 with spoken test questions (six each, edge-tts
+voices, language hint set as the app does):
 
-**Real fix:** Google Cloud Speech to Text, which has explicit `si-LK` and
-`ta-IN` language codes and materially better accuracy for both. The
-adapter (`_transcribe_cloud_google` in `backend/stt.py`) exists and is
-wired into the fallback chain but has not been exercised against a live
-account for the same reason as above.
+- **Tamil:** `base` made 21.1% character errors, `small` 6.7%. The app
+  rechecks a final transcript the main model is unsure of with `small`
+  (STT_ACCURATE_MODEL), so Tamil is usable locally.
+- **Sinhala:** `base` returned romanized nonsense (161% character errors)
+  and `small` produced garbage (246%). Earlier notes called local Sinhala
+  "usable for a rough demo"; that was wrong. The adapter for Google Cloud
+  Speech-to-Text (`si-LK`, `ta-IN`) exists in `backend/stt.py` and is tried
+  first for those languages, but the API is not switched on in the Google
+  project of the configured credentials: every call answers 403 "Cloud
+  Speech-to-Text API has not been used in project ... before or it is
+  disabled". Enabling it at the activation link in that error message
+  (console.developers.google.com, API "Cloud Speech-to-Text API") is the
+  fix and needs no code change. It has therefore never run against a live
+  Sinhala utterance. Until then, a Sinhala speaker gets a wrong or empty
+  transcript; the text chat screen is unaffected.
+- After a cloud failure the app skips the cloud for 5 minutes instead of
+  trying it for every transcript, so a disabled API does not slow
+  conversations down.
+
+The spoken test sets are synthetic (text to speech voices), so real
+microphones, real Sri Lankan accents and real rooms will be harder than the
+numbers in ARCHITECTURE.md suggest.
 
 ## "Streaming" transcription is chunk based, not natively streaming
 
@@ -180,11 +192,17 @@ credit left, 403 key not allowed, 404 model not available to this key,
 429 rate limit or quota, 5xx Google side outage, no code at all for a
 network problem. The same text is in the server log.
 
-Diagnosed live on 2026-09-24: the key itself is valid (listing models
-succeeds), `gemini-2.5-flash-lite` and `gemini-2.5-flash` are retired for
-new users (404), so the default is now `gemini-3.5-flash-lite`, and every
-available model returns 402 because the project's prepaid credit is used
-up. That last one can only be fixed in AI Studio billing.
+Diagnosed live on 2026-09-24 and again on 2026-10-01: the key itself is
+valid (listing models succeeds, 61 visible), and pinned names such as
+`gemini-2.5-flash` and `gemini-2.5-flash-lite` are retired for newer
+accounts (404). The default is now the alias `gemini-flash-lite-latest`
+(`GEMINI_MODEL`), which always points at a current model, so a retirement
+cannot break it the same way again. Every model, the alias included,
+answers 402 "prepayment credits are depleted", because the project behind
+the key has no credit left. That cannot be fixed in code: top up billing at
+https://ai.studio/projects, or use a key from a project that has credit or
+a free tier. The cloud path then resumes after an app restart (a failure
+pauses it for 5 minutes, and a restart clears that).
 
 ## The cloud multi agent path has not been run against a live account
 
@@ -203,7 +221,11 @@ directly before trusting it in a full demo.
 
 ## Spectral gating noise reduction depends on a scipy version pin
 
-**Status: solved, but the cause is worth knowing.**
+**Status: solved, but the cause is worth knowing. Since 2026-10-02 the
+filter is off by default** (`STT_DENOISE=false`): on spoken test clips it
+raised Whisper's word errors from 3.3% to 11.0%, so transcription no longer
+runs it unless asked to. `denoise_audio()` and its pin remain for anyone who
+switches it on.
 
 The newest scipy release available at the time of building this (1.18.1)
 would not import on this machine: `ImportError: DLL load failed while
@@ -366,14 +388,38 @@ rebuilding.**
   package table, so the reply is general ("Fibre, 4G Home and roaming
   options") rather than a list of plans. Specific questions ("How much is
   the 7 day YouTube Combo?") get exact prices.
-- **The local model still sometimes ignores the rules.** With no relevant
-  context it usually says it does not have the detail, but in the
-  evaluation it still invented a price or a code a few times. The rules
-  reduce invention a lot (5% to 75% of expected facts), not to zero.
+- **The local model still misses facts that are in front of it.** In the
+  final evaluation 88% of the expected facts were in the notes the model
+  received, and 79% appeared in its English answers (6% without notes): a
+  3B model sometimes answers around a number or code instead of copying it
+  ("since 1994" when the notes said 163 years). The rules reduce invention a
+  lot, not to zero, and a larger or cloud model would close most of the gap.
+- **Contact numbers can come out as the wrong official number.** The crawled
+  contact pages hold several (customer service 1717, roaming hotline, head
+  office menus). A keyword boost on chunk titles makes the customer service
+  entry win for "hotline number", but other phrasings may surface another
+  genuine number rather than an invented one.
+- **Small talk sometimes carries irrelevant notes.** "What time is it" and
+  "play some music" score just above the 0.53 threshold against opening
+  hours pages; the strict prompt then says it has no such detail, which is
+  harmless, but it is not the friendly general answer.
+- **General answers are the model's own, not checked.** Outside SLT
+  Mobitel facts the assistant answers from the model's general knowledge
+  (a change made on 2026-10-01 at the owner's request, so it can hold a
+  normal conversation). Nothing verifies those answers: the local 3B
+  llama3.2 is right on common knowledge in the spot checks (capital cities,
+  how 5G works, advice, programming resources) but can be confidently wrong
+  on details, and the prompt only asks it to say so when unsure. The line
+  between "SLT Mobitel specific" and "general" is the model's judgement,
+  not code: an SLT Mobitel question the knowledge base does not cover
+  should get "I do not have that detail" (it did in the spot checks), but a
+  small model could sometimes answer it from general knowledge instead.
 - **Other operators.** A question about another operator's package
   retrieves SLT Mobitel's own package context (it scores above the
-  threshold); the prompt tells the model to decline, so the risk is an SLT
-  Mobitel answer to a Dialog question, not invented Dialog prices.
+  threshold); the prompt tells the model not to state other operators'
+  prices or packages and to suggest that operator's own website, which it
+  did in the spot checks, so the risk is an SLT Mobitel flavoured answer to
+  a Dialog question, not invented Dialog prices.
 - **The score threshold is tight.** 0.53 keeps all 18 small talk test
   phrases out (the highest scored 0.524) and lets real questions in, except
   one Tamil question at 0.492. New phrasings will land on either side of it
@@ -382,24 +428,29 @@ rebuilding.**
   reason as the rest of the cloud path (no working Gemini key); unit tests
   confirm the context reaches the composer prompt.
 
-## Grounded replies start speaking about 0.7 seconds later
+## Grounded replies start speaking about 0.3 seconds later
 
 **Status: measured, accepted for accuracy.**
 
 First audio after the final transcript went from a median of 0.81 s to
-1.55 s on the local Llama path (ARCHITECTURE.md has the table). Retrieval
-itself is 126 to 159 ms inside the running server, around the 150 ms
-budget; most of the rest is the 3B model reading about 2,500 characters of
-context (time to first token 180 ms without, 404 ms with) and starting with
-a full sentence instead of a short invented one. Fewer chunks would save
-about 100 ms at the cost of retrieval recall. A faster model, the cloud
-path, or keeping the context in a cached prompt prefix would be the real
-fix.
+1.11 s on the local Llama path (ARCHITECTURE.md has the table); the first
+knowledge base design cost 0.7 s. Retrieval itself is 148 to 176 ms inside
+the running server, slightly over the 150 ms target (75 ms p50 on its own);
+the rest is the 3B model reading the notes (time to first token 180 ms
+without, 321 ms with) and saying a full sentence instead of a short
+invented one. A faster model, the cloud path, or a cached prompt prefix
+would be the real fix.
 
 Whisper also used to hear "Mobitel" as "Mobital" or "Mobilo", which hurt
 retrieval; `STT_HOTWORDS` (default "SLT Mobitel") fixed every case in the
 test questions, but an unusual accent or noisy room can still produce
-other spellings.
+other spellings. The hotword also makes Whisper write "SLT Mobitel" for
+audio with no speech, which is why Whisper's speech filter is on.
+
+The larger model recheck adds about a second to the turns it handles, about
+19% of the synthetic test clips; real speech may trigger it more often.
+`STT_ACCURATE_MODEL=` (empty) turns it off, and the first start downloads
+the `small` model (about 460 MB).
 
 ## External chat agents: built and tested locally, not against a real one
 
@@ -437,3 +488,20 @@ table definitions were compiled with the PostgreSQL dialect, but no
 PostgreSQL server or driver was available here, so nothing has run
 against one. Column defaults are applied by the application, not the
 database, so rows must be written through the models.
+
+## Compiled packages can be blocked by Windows Application Control
+
+**Status: worked around for SQLAlchemy; others may need the same.**
+
+The policy that blocked scipy 1.18 (see above) also refused SQLAlchemy
+2.1's compiled speed-ups on the owner's machine: the first
+`python -m backend.db.seed` failed with `ImportError: DLL load failed while
+importing _processors_cy`. They loaded fine in the shell used for
+development, so this was only found on the owner's own terminal. SQLAlchemy
+ships a pure Python copy of every compiled module, so the fix is installing
+it without the `.pyd` files; the exact command is in requirements.txt.
+Other packages that ship only compiled code (bcrypt, cryptography,
+pydantic-core, numpy) have no such fallback; they imported fine on the
+owner's machine in earlier runs, but a stricter policy would stop the app
+at startup with the same kind of error, and the fix would be a different
+version or build of that package.

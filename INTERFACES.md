@@ -165,7 +165,21 @@ backend/admin/routes.py: router (prefix /admin/api), every route needs an admin 
     GET/POST /mcp-clients (the secret is returned once), DELETE
     /mcp-clients/{id} (revoke), GET /audit?limit=
 
+backend/knowledge/prompts.py
+    GROUNDED_RULES, GENERAL_RULES: the two short prompts (strict, answer only
+    from the notes / natural general answers that never invent SLT-Mobitel
+    prices, packages, codes or contact details)
+    def rules_for(context: Optional[str]) -> str     strict with notes, general without
+    def with_context(system_prompt, context) -> str   persona + matching rules (+ notes)
+
 backend/knowledge/retriever.py
+    def format_context(results, query=None) -> Optional[str]
+        The notes block: at most MAX_CHUNKS (3) chunks, each cut to at most
+        MAX_CHUNK_CHARS (700) characters, choosing the sentences that mention
+        the most words of query (added, optional), with table noise removed.
+    def select_relevant(results, min_score=None) -> list
+        Relevance is judged on the plain embedding score; the keyword boost
+        (TERM_BOOST) only changes the order.
     def get_retriever() -> KnowledgeRetriever        process wide instance
     class KnowledgeRetriever
         def warm_up(self) -> None
@@ -178,7 +192,8 @@ backend/knowledge/retriever.py
             "Retrieval latency: N ms".
         def get_package_details(self, name: str) -> list[dict]
         def status(self) -> dict      for /health
-    Rebuild: python -m backend.knowledge.build (from the repository root)
+    Rebuild: python -m backend.knowledge.build (from the repository root).
+    The index holds chunks of about 160 tokens (index.MAX_TOKENS).
 
 backend/db/base.py
     Base, engine, SessionLocal, session_scope() (commits on success),
@@ -198,6 +213,10 @@ backend/auth/passwords.py
     def hash_secret(plain) -> str / def verify_secret(plain, hashed) -> bool   (bcrypt)
 backend/auth/phone.py
     def normalize_sl_landline(raw) -> str      "+94XXXXXXXXX"; raises InvalidPhoneNumber
+backend/auth/manage_users.py (command line)
+    add / list / unlock / set-pin for customers; admin-password [--username]
+    resets an admin's password and clears its lockout
+
 backend/auth/users.py
     @dataclass(frozen=True) class VerifiedUser: id: int; display_name: str; phone_e164: str
     class AuthError(Exception): reason ("invalid" | "locked" | "rate_limited"), retry_after: Optional[int]
@@ -256,6 +275,16 @@ backend/mcp_server/ (MCP server)
         Tool without its scope -> 403 with WWW-Authenticate: Bearer
         error="insufficient_scope", scope="<scope>", and a JSON-RPC error
         body (code -32003, data.error "insufficient_scope").
+
+    Behaviour added to transcribe_stream() without changing its signature:
+    partial events always use the main local model (config.LOCAL_WHISPER_
+    MODEL_SIZE, beam search STT_BEAM_SIZE, hotwords STT_HOTWORDS, Whisper's
+    speech filter STT_VAD_FILTER) and no noise filter (STT_DENOISE is off).
+    The final event may be rechecked with config.STT_ACCURATE_MODEL when the
+    main model's average log probability is below STT_CONFIDENCE_FLOOR. A
+    failing cloud speech call is skipped for 5 minutes. Internal: _emit(audio,
+    language_hint, final=False), _transcribe_local(audio, language_hint,
+    final=False).
 
 backend/tts.py
     def speak_stream(sentences: Iterable[str], language: str = "en",

@@ -312,7 +312,7 @@ frontend/style.css) are returned to the lead as precise proposed patches.
 `EXTERNAL_AGENT_DEFAULT_TIMEOUT`, `KNOWLEDGE_ENABLED`, `KNOWLEDGE_DIR`,
 `EMBEDDING_MODEL`, `EMBEDDING_HOST`, `RETRIEVAL_TOP_K`,
 `RETRIEVAL_MIN_SCORE`, `SCRAPER_USER_AGENT`, `SCRAPER_DELAY_SECONDS`,
-`SCRAPER_MAX_PAGES`, `MCP_ENABLED`, `STT_HOTWORDS`. All read in config.py only; documented
+`SCRAPER_MAX_PAGES`, `MCP_ENABLED`, `STT_HOTWORDS`, `STT_DENOISE`, `STT_BEAM_SIZE`, `STT_VAD_FILTER`, `STT_ACCURATE_MODEL`, `STT_CONFIDENCE_FLOOR`. All read in config.py only; documented
 in `.env.example`.
 
 ## 7. Database schema (one database)
@@ -443,3 +443,39 @@ and "Mobilo" for "Mobitel", which hurt retrieval. faster-whisper's
 hotwords option with "SLT Mobitel" fixed every test case at no measurable
 cost, so it is on by default (`STT_HOTWORDS`); transcribe_stream()'s
 contract is unchanged.
+
+**ADR 11: Retrieval shape (changed 2026-10-02, after measuring).** The first
+design sent four chunks of about 900 characters to the local model and took
+911 ms to answer. Trimming chunks to their first characters lost the answer
+whenever it sat later in the chunk, so the index now holds smaller chunks
+(about 160 tokens, a deliberate change from the 300 to 500 tokens in the
+original brief), a long chunk is cut to the sentences matching the question,
+and ranking adds a small keyword boost (question words found in a chunk's
+text or title) that raised the right-source rate from 94% to 100% while
+relevance is still judged on the plain embedding score. Two short prompts
+chosen by code (strict when notes were found, general when not) replaced one
+long prompt, which let the small model mix its own knowledge into the notes
+and invent an email address (accuracy fell from 85% to 73% before the
+split). Ollama runs with a low temperature and bounded length and context.
+Result: prompts 30% smaller, first token 321 ms against 382 ms, answers
+632 ms against 911 ms, with English fact accuracy 79% against 85% on the
+old, partly guessed score.
+
+**ADR 12: Speech to text (2026-10-02, measured on 144 spoken clips).** The
+noise reduction filter made Whisper worse (11.0% word errors against 3.3%
+without it), so it is off. The brand hotword raised brand word accuracy from
+46% to 85% but made Whisper write "SLT Mobitel" for silence (30 of 30 noise
+clips with the larger model), so Whisper's own speech filter is on (0 of 30,
+no cost). The larger `small` model is 3 times slower (1.5 s per pass), so it
+only rechecks final transcripts the main model is unsure of (average log
+probability below -0.40, about 19% of clips), recovering about half the
+accuracy gap and helping Tamil most (21.1% to 6.7% character errors).
+Sinhala cannot be transcribed by either local model, so it depends on Google
+Cloud Speech-to-Text, which is built in but not enabled in the Google
+project; a failing cloud call is skipped for 5 minutes.
+
+**ADR 13: Gemini model name.** Pinned model names are retired by Google
+(gemini-2.5-flash now answers 404 for newer accounts), so the default is the
+`gemini-flash-lite-latest` alias, which always points at a current model.
+The configured key itself is valid; every model currently answers 402
+because the project has no credit left, which is a billing matter.

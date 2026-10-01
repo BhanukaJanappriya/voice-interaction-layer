@@ -33,7 +33,9 @@ FastAPI backend (backend/server.py, started by python -m backend)
     |
     +-> Streaming speech to text (backend/stt.py)
     |     local faster-whisper (English, and Sinhala/Tamil fallback),
-    |     biased toward "SLT Mobitel" with hotwords
+    |     biased toward "SLT Mobitel" with hotwords, no noise filter (it made
+    |     Whisper worse), Whisper's own speech filter, and a larger model that
+    |     rechecks a final transcript the main one is unsure of
     |     cloud Speech to Text for Sinhala/Tamil when configured
     |
     +-> Chat agent orchestrator (backend/agent.py)
@@ -371,22 +373,37 @@ venv\Scripts\python.exe -m backend.knowledge.eval                  measure it, w
   press releases, TRCSL) with a source URL on every entry, and a curated
   FAQ of 59 question and answer pairs. Raw pages and the index live under
   `data\` and are never committed.
-- **Embeddings and store.** bge-m3 through the local Ollama: multilingual,
-  so Sinhala and Tamil questions find English content. Vectors are a
-  numpy matrix searched with one matrix product (well under a millisecond
-  for 708 chunks); see the ADRs in docs/IMPLEMENTATION_PLAN.md.
+- **Embeddings and store.** The pages are cut into focused chunks of about
+  160 tokens (the original plan said 300 to 500; bigger chunks buried the
+  answer, see docs/RAG_EVAL.md), embedded with bge-m3 through the local
+  Ollama: multilingual, so Sinhala and Tamil questions find English
+  content. Vectors are a numpy matrix searched with one matrix product
+  (well under a millisecond for about 2,200 chunks); see the ADRs in
+  docs/IMPLEMENTATION_PLAN.md. Ranking adds a small keyword boost (a
+  question word found in a chunk's text or title) because meaning alone
+  blurs exact words like "email" or "hotline"; relevance is still judged on
+  the plain embedding score.
 - **How it reaches the answer.** The retriever is the Orchestrator's
   existing `tool_callback` hook. On the cloud path it is the tool/retrieval
   stage of the multi agent design; on the local path the retrieved text
   goes into the Llama system prompt, which is plain context for one model,
-  not multi agent collaboration. Grounding rules (knowledge/prompts.py) say
-  to use the context for SLT Mobitel facts, never invent prices or package
-  names, say prices can change and point to www.sltmobitel.lk or 1717, and
-  politely decline other operators' details.
-- **Measured.** Right source in the top 4 for 97% of 32 test questions;
-  expected facts in the local model's answers went from 5% to 75%;
-  retrieval takes 36 ms p50 and 51 ms p95 on its own. Details, per question
-  results and the Sinhala/Tamil caveats are in docs/RAG_EVAL.md.
+  not multi agent collaboration. Two short prompts (knowledge/prompts.py),
+  chosen by code rather than left to the model: when retrieval found notes,
+  the assistant answers only from them, copies prices, codes and numbers
+  exactly, and points to www.sltmobitel.lk or 1717 when the notes do not
+  cover the question; when it found none (general knowledge, how things
+  work, advice, small talk) it answers naturally from the model's own
+  knowledge and says so honestly when unsure, but never makes up
+  SLT Mobitel's own prices, packages, codes or contact details. It does not
+  state other operators' prices or packages, since it has none, and
+  suggests that operator's own website. Only the best three chunks, each
+  cut to the sentences that match the question, go to the model, and Ollama
+  runs with a low temperature and bounded length and context.
+- **Measured.** Right source in the top 4 for 100% of 32 test questions;
+  expected facts in the local model's English answers went from 6% to 79%;
+  retrieval takes 75 ms p50 and 105 ms p95 on its own, embedding call
+  included. Details, per question results and the Sinhala/Tamil caveats
+  are in docs/RAG_EVAL.md.
 
 ## Existing user verification
 
@@ -411,8 +428,10 @@ venv\Scripts\python.exe -m backend.knowledge.eval                  measure it, w
 Users are added with
 `venv\Scripts\python.exe -m backend.auth.manage_users add --phone "011 234 5678" --name "Name"`
 (the PIN is asked for without echo); `list`, `unlock` and `set-pin` also
-exist. `python -m backend.db.seed` adds three fictional demo users and
-prints their demo PINs.
+exist, and `admin-password` resets an admin's password and clears its
+lockout (the ADMIN_PASSWORD in .env only seeds the very first admin).
+`python -m backend.db.seed` adds three fictional demo users and prints
+their demo PINs.
 
 ## Admin portal and external chat agents
 
@@ -483,7 +502,7 @@ against a live Gemini/GPT account in this pass, only its local fallback
 (which has been, repeatedly, including with automated end to end tests).
 Scraped prices go stale until the knowledge base is rebuilt, the local
 model answers Sinhala and Tamil questions poorly even with the right
-context, grounded replies take about 0.7 s longer to start speaking, and
+context, grounded replies take about 0.3 s longer to start speaking, and
 the MCP server, PostgreSQL and a real HTTPS external agent were built and
 tested locally but not against real third party clients or servers.
 

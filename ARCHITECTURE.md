@@ -96,7 +96,7 @@ own line too ("Retrieval latency: N ms").
  offline, python -m backend.knowledge.build
    www.sltmobitel.lk + www.mobitel.lk  --scraper.py-->  data/knowledge/raw/ (cache, robots.txt obeyed)
    public_sources.jsonl, faq.jsonl     --normalize.py-> docs with source_url, retrieved_at, package fields
-                                       --index.py-----> chunks (about 450 tokens, 60 overlap; packages and
+                                       --index.py-----> chunks (about 160 tokens, 30 overlap; packages and
                                                         FAQ entries whole) -> bge-m3 (Ollama) ->
                                                         data/knowledge/index/vectors.npy + chunks.jsonl
 
@@ -107,13 +107,17 @@ own line too ("Retrieval latency: N ms").
    retriever.context_for(text)   embed the question (bge-m3, ~30 ms warm),
         |                        one matrix product over all chunks,
         |                        keep scores >= RETRIEVAL_MIN_SCORE (0.53),
-        |                        top 4, each tagged with source and date
+        |                        keyword boost for exact words, best 3 chunks,
+        |                        each cut to the sentences matching the
+        |                        question, tagged with source and date
         |                        (None for small talk, a missing index or
         |                        Ollama down: never raises)
         v
    cloud path: the tool/retrieval stage's output, handed to the composer
-               with the grounding rules in its role prompt
-   local path: grounding rules + context in the Llama system prompt
+               with the rules in its role prompt
+   local path: rules + context in the Llama system prompt
+   the rules: SLT-Mobitel facts only from the context (never invented),
+   anything else answered from the model's own knowledge, like a person
                (context for one model, not multi agent collaboration)
         |
         v
@@ -175,7 +179,7 @@ Net effect in that test: the assistant starts speaking about 0.8 seconds
 after the final transcript (previously 4 to 9 seconds), and the greeting
 starts about 0.2 seconds after connecting.
 
-### Before and after the knowledge base (2026-10-01)
+### Before and after the knowledge base and the speech changes (2026-10-02)
 
 Same harness (edge-tts spoken questions streamed in 0.5 s chunks over
 /ws/voice, local Llama because the Gemini key is unusable, Google TTS),
@@ -183,19 +187,60 @@ same machine, first audio measured from the final transcript:
 
 | Measure | Before (2026-09-30) | After | Why |
 | --- | --- | --- | --- |
-| First audio after the final transcript | 0.83, 0.62, 0.81 s (median 0.81 s) | 1.73, 0.89, 1.53, 1.56, 1.69, 1.25 s (median 1.55 s) | retrieval plus a longer, grounded first sentence, broken down below |
-| Retrieval, inside the running server | none | 126 to 159 ms (6 turns) | bge-m3 query embedding plus search; 36 ms p50 / 51 ms p95 measured on its own |
-| Local Llama time to first token, uncached prompt | 180 ms (no context) | 404 ms (4 chunks of context) | the model reads about 2,500 more characters before it starts; 2 chunks would be 304 ms |
-| Answer contains the expected facts (32 test questions) | 5% | 75% | docs/RAG_EVAL.md |
+| First audio after the final transcript | 0.83, 0.62, 0.81 s (median 0.81 s) | 1.19, 1.12, 1.08, 1.05, 1.39, 0.96, 1.10, 1.23 s (median 1.11 s) | retrieval plus a longer, grounded first sentence |
+| Retrieval, inside the running server | none | 148 to 176 ms (8 turns) | bge-m3 query embedding plus search; 75 ms p50 / 105 ms p95 on its own in the evaluation. Slightly over the 150 ms target while Whisper and Llama are also loaded |
+| Local Llama time to first token, uncached prompt | 180 ms (no context) | 321 ms with context (382 ms with the first knowledge base design) | three chunks of at most 700 characters cut to the matching sentences, shorter rules |
+| Local Llama answer time p50 | 911 ms (first knowledge base design) | 632 ms | system prompt 2,757 characters instead of 3,911 |
+| English answers containing the expected facts | 6% | 79% | docs/RAG_EVAL.md |
+| Word errors on 144 spoken test clips | 11.0% (noise filter on, no hotwords) | 3.3% | see the speech table below |
 
-So grounding costs about 0.7 s of extra wait before the first word, most
-of it the local model reading the context and saying a full sentence
-rather than an invented short one; retrieval itself sits at the 150 ms
-budget inside the server (one turn of six was 159 ms). Turns with no
-relevant context (small talk) pay only the retrieval. Cutting the context
-to 2 chunks would save about 100 ms at the cost of retrieval recall, so it
-was left at 4. The cloud path, when available, reads the context much
-faster than the local 3B model.
+Grounding now costs about 0.3 s of extra wait before the first word
+(0.7 s with the first design), most of it the local model reading the
+notes. Turns with no relevant notes (small talk, general questions) pay
+only the retrieval. Retrieval was cut down by sending only the best three
+chunks, each reduced to the sentences that match the question, with short
+prompts chosen by code (strict with notes, general without) and Ollama
+bounded (temperature 0.3, at most 220 generated tokens, a 2048 token
+context). The cloud path, when available, reads the context much faster
+than the local 3B model.
+
+### Speech to text: what was measured and what changed
+
+144 spoken clips (36 sentences, three voices: US English and two Indian
+English voices, the nearest available to Sri Lankan English; one voice also
+with background noise at about 12 dB), local faster-whisper, int8, CPU,
+power throttling off. Word error rate counts spelling variants such as
+fiber/fibre as errors, so absolute values read high.
+
+| Setup | Word errors | Brand words found | Per clip |
+| --- | --- | --- | --- |
+| base, noise filter on (before) | 11.0% | 46% | 462 ms |
+| base, noise filter on, hotwords | 7.3% | 73% | 497 ms |
+| base, no noise filter, hotwords (the default) | 3.3% | 85% | 469 ms |
+| small, no noise filter, hotwords | 2.4% | 91% | 1477 ms |
+| small.en (English only) | 2.0% | 89% | 1497 ms |
+| base.en (English only) | 3.8% | 81% | 505 ms |
+
+- The noise reduction filter was hurting: Whisper copes with noise on its
+  own, and the filter's artefacts made it worse. It is off by default
+  (`STT_DENOISE`).
+- With the brand hotword set, Whisper wrote "SLT Mobitel" for audio with no
+  speech at all (30 of 30 noise clips with `small`, 7 of 30 with `base`).
+  Whisper's own speech filter (`vad_filter`, `STT_VAD_FILTER`) brings that
+  to 0 of 30 with identical accuracy and speed, so it is on.
+- `small` is about 3 times slower per pass. Running it on every turn would
+  add a second to each reply, so only a final transcript the main model is
+  unsure of (average log probability below -0.40, about 19% of the test
+  clips) is rechecked with it, which takes word errors from 3.3% to about
+  2.8%; partial transcripts shown while the user speaks never use it.
+  Confidence is only a weak predictor of errors (mean -0.40 for wrong
+  transcripts, -0.32 for right ones), so this recovers about half the gap.
+- Tamil: character errors 21.1% with `base`, 6.7% with `small` (six spoken
+  questions), so the recheck matters most there.
+- Sinhala: neither local model can transcribe it (base writes romanized
+  nonsense, small writes garbage), so Sinhala voice input needs Google
+  Cloud Speech-to-Text, which is built in but not enabled in the Google
+  project yet (see KNOWN_LIMITATIONS.md).
 
 ## Cloud multi agent collaboration versus local fallback
 
