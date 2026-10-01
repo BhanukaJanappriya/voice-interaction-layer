@@ -108,6 +108,7 @@ from auth.admins import seed_first_admin_from_env
 from auth.dependencies import verified_user_from_request
 from auth.routes import router as auth_router
 from db.migrate import database_status, upgrade_to_head
+from knowledge.retriever import get_retriever
 from stt import transcribe_stream
 from stt import warm_up as warm_up_stt
 from tts import SentenceChunker, speak_stream, speak_text
@@ -115,7 +116,10 @@ from tts import precache as precache_speech
 from tts import warm_up as warm_up_tts
 from vad import SAMPLE_RATE, VoiceActivityDetector
 
-orchestrator = Orchestrator()
+# The SLT Mobitel knowledge base is the Orchestrator's tool/retrieval step
+# (its existing tool_callback hook).
+retriever = get_retriever()
+orchestrator = Orchestrator(tool_callback=retriever.context_for)
 
 
 def _warm_up():
@@ -136,6 +140,12 @@ def _warm_up():
         orchestrator.warm_up()
     except Exception as exc:
         print(f"Warm up: agent failed ({exc}).")
+    try:
+        # Loads the index and the embedding model, so the first question's
+        # retrieval is as fast as every later one.
+        retriever.warm_up()
+    except Exception as exc:
+        print(f"Warm up: knowledge retriever failed ({exc}).")
     try:
         warm_up_tts()
         # The introductions are fixed text, so the slow to synthesize
@@ -787,8 +797,10 @@ async def health():
         "cloud_speech_configured": config.cloud_speech_configured(),
         "cloud_speech_provider": config.CLOUD_SPEECH_PROVIDER,
         "supported_languages": config.SUPPORTED_LANGUAGES,
-        # Database migration state.
+        # Database migration state and the knowledge index (loaded, size,
+        # build date, last retrieval time).
         "database": await asyncio.to_thread(database_status),
+        "knowledge": retriever.status(),
     }
 
 

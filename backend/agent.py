@@ -44,6 +44,7 @@ from typing import Callable, Iterator, Optional
 import requests
 
 import config
+from knowledge.prompts import GROUNDING_RULES, with_context
 
 
 class ChatAgent(ABC):
@@ -108,6 +109,18 @@ _REPLY_LANGUAGES = {
         "guest": "விருந்தினர்",
     },
 }
+
+
+def _with_knowledge(system_prompt: str, knowledge_context: Optional[str]) -> str:
+    """Adds the SLT Mobitel grounding rules and, when retrieval found
+    something, the knowledge base context (with its sources) to a system
+    prompt. Without the rules the local model makes up plausible package
+    names and prices (seen before this existed: "SLT 50GB, SLT 100GB" for a
+    data package question). The wording lives in knowledge/prompts.py, so
+    the evaluation in docs/RAG_EVAL.md measures exactly this prompt. On the
+    local path this is plain context injection into one model, not multi
+    agent collaboration (see ARCHITECTURE.md)."""
+    return with_context(system_prompt, knowledge_context)
 
 
 def _personalize(system_prompt: str, user_name: Optional[str], language: Optional[str] = None) -> str:
@@ -175,21 +188,26 @@ class LlamaOllamaAgent(ChatAgent):
         except requests.exceptions.RequestException as exc:
             print(f"Agent warm up (local Llama) failed: {exc}")
 
-    def respond(self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None) -> str:
-        prompt = text_input
+    def _system_prompt(self, text_input: str, user_name: Optional[str], language: Optional[str]) -> str:
+        """The persona, who the user is, the reply language, the grounding
+        rules and any retrieved knowledge, all in Ollama's system field.
+        Retrieved context used to be prepended to the user prompt; in the
+        system prompt it is framing the model answers from, rather than
+        text it might read as part of the question."""
+        tool_context = None
         if self.tool_callback is not None:
             try:
                 tool_context = self.tool_callback(text_input)
             except Exception:
                 tool_context = None
-            if tool_context is not None:
-                prompt = f"Context: {tool_context}\n\nUser: {text_input}"
+        return _with_knowledge(_personalize(_VOICE_ASSISTANT_SYSTEM_PROMPT, user_name, language), tool_context)
 
+    def respond(self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None) -> str:
         url = f"{self.host}/api/generate"
         payload = {
             "model": self.model,
-            "prompt": prompt,
-            "system": _personalize(_VOICE_ASSISTANT_SYSTEM_PROMPT, user_name, language),
+            "prompt": text_input,
+            "system": self._system_prompt(text_input, user_name, language),
             "stream": False,
             "keep_alive": _OLLAMA_KEEP_ALIVE,
         }
@@ -234,20 +252,11 @@ class LlamaOllamaAgent(ChatAgent):
         request level failure; on error it yields a single chunk with the
         same wording respond() would have returned, so callers that just
         concatenate yielded chunks behave the same either way."""
-        prompt = text_input
-        if self.tool_callback is not None:
-            try:
-                tool_context = self.tool_callback(text_input)
-            except Exception:
-                tool_context = None
-            if tool_context is not None:
-                prompt = f"Context: {tool_context}\n\nUser: {text_input}"
-
         url = f"{self.host}/api/generate"
         payload = {
             "model": self.model,
-            "prompt": prompt,
-            "system": _personalize(_VOICE_ASSISTANT_SYSTEM_PROMPT, user_name, language),
+            "prompt": text_input,
+            "system": self._system_prompt(text_input, user_name, language),
             "stream": True,
             "keep_alive": _OLLAMA_KEEP_ALIVE,
         }
@@ -468,9 +477,10 @@ class Orchestrator(ChatAgent):
     that same provider stand in for separate agents:
 
         tool/retrieval agent -> looks up extra context via tool_callback
-                              (a stub today, same hook as the prototype)
-                              and folds anything it returns into the
-                              conversation.
+                              (the SLT Mobitel knowledge base retriever,
+                              knowledge/retriever.py, plugged into the same
+                              hook the prototype stubbed out) and folds
+                              anything it returns into the conversation.
         composer agent    -> turns the user's message plus any tool
                               context into the final spoken reply, streamed
                               as it is generated.
@@ -586,9 +596,13 @@ class Orchestrator(ChatAgent):
         if analysis:
             composed_prompt += f"\n\nInternal analysis: {analysis}"
         if tool_context:
-            composed_prompt += f"\n\nAdditional context: {tool_context}"
+            composed_prompt += f"\n\nKnowledge base excerpts (from the tool/retrieval stage):\n{tool_context}"
 
-        composer_agent = _build_cloud_agent(role_prompt=_personalize(_COMPOSER_ROLE_PROMPT, user_name, language))
+        # The grounding rules go in the composer's role prompt; the context
+        # itself travels with the message, as the retrieval stage's output.
+        composer_agent = _build_cloud_agent(
+            role_prompt=f"{_personalize(_COMPOSER_ROLE_PROMPT, user_name, language)}\n\n{GROUNDING_RULES}"
+        )
         yield from composer_agent.respond_stream(composed_prompt)
 
 
