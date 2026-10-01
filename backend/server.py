@@ -112,6 +112,7 @@ from auth.dependencies import verified_user_from_request
 from auth.routes import router as auth_router
 from db.migrate import database_status, upgrade_to_head
 from knowledge.retriever import get_retriever
+from mcp_server.mount import mount_mcp
 from stt import transcribe_stream
 from stt import warm_up as warm_up_stt
 from tts import SentenceChunker, speak_stream, speak_text
@@ -129,6 +130,10 @@ orchestrator = Orchestrator(
     tool_callback=retriever.context_for,
     external_agent_provider=admin_service.get_active_agent,
 )
+# MCP's ask_assistant gets its own instance: last_mode is per instance, so
+# sharing one with the voice and chat paths could report another request's
+# mode when they overlap.
+mcp_orchestrator = Orchestrator(tool_callback=retriever.context_for)
 
 
 def _warm_up():
@@ -205,13 +210,15 @@ def _opt_out_of_windows_power_throttling():
 async def _lifespan(_app: FastAPI):
     """Startup: power throttling opt out, database migrations and the first
     admin account (before anything can touch the database), then the
-    background warm up."""
+    background warm up, and the MCP session manager for as long as the app
+    runs."""
     _opt_out_of_windows_power_throttling()
     upgrade_to_head()
     seed_first_admin_from_env()
     if config.WARM_UP_ON_STARTUP:
         threading.Thread(target=_warm_up, daemon=True).start()
-    yield
+    async with mcp_handle.lifespan():
+        yield
 
 
 app = FastAPI(title="Voice Interaction Backend", lifespan=_lifespan)
@@ -228,10 +235,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Existing user verification and admin sign in (/auth), and the admin
-# portal's API (/admin/api).
+# Existing user verification and admin sign in (/auth), the admin portal's
+# API (/admin/api), and the MCP server with its OAuth endpoints (/mcp,
+# /oauth/token, /.well-known/...).
 app.include_router(auth_router)
 app.include_router(admin_router)
+
+
+def _mcp_search(query: str, top_k: int) -> list[dict]:
+    return [
+        {
+            "text": chunk.text,
+            "score": chunk.score,
+            "source_url": chunk.source_url,
+            "retrieved_at": chunk.retrieved_at,
+            "title": chunk.title,
+        }
+        for chunk in retriever.search(query, top_k)
+    ]
+
+
+def _mcp_ask(question: str, language: Optional[str]) -> tuple[str, str]:
+    reply = mcp_orchestrator.respond(question, None, language)
+    return reply, mcp_orchestrator.last_mode
+
+
+mcp_handle = mount_mcp(app, _mcp_search, retriever.get_package_details, _mcp_ask)
 
 # vad.py's calibrated noise floor plus WebRTC VAD's frame classification
 # reject most non-speech audio before it ever reaches transcription, but
@@ -814,6 +843,7 @@ async def health():
         "database": await asyncio.to_thread(database_status),
         "knowledge": retriever.status(),
         "external_agent": admin_service.active_agent_summary(),
+        "mcp": mcp_handle.status(),
     }
 
 

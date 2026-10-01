@@ -162,3 +162,77 @@ def test_connection_endpoint_refuses_private_url_without_flag(admin_client, stub
     result = admin_client.post(f"/admin/api/agents/{agent_id}/test", json={"message": "ping"}).json()
     assert result["ok"] is False
     assert stub_server.state.hits("/echo") == before
+
+
+# MCP clients
+
+
+def _find_secret(payload):
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if "secret" in key.lower() and isinstance(value, str) and value:
+                return value
+            found = _find_secret(value)
+            if found:
+                return found
+    return None
+
+
+def _create_mcp_client(admin_client, name="Claude Desktop", scopes=("knowledge:read",)):
+    require_path(admin_client.app, "/admin/api/mcp-clients")
+    response = admin_client.post("/admin/api/mcp-clients", json={"name": name, "scopes": list(scopes)})
+    if response.status_code == 422:
+        response = admin_client.post("/admin/api/mcp-clients", json={"name": name, "scopes": " ".join(scopes)})
+    assert response.status_code in (200, 201), response.text
+    return response.json()
+
+
+def test_mcp_client_secret_shown_once(admin_client, db_schema):
+    created = _create_mcp_client(admin_client)
+    secret = _find_secret(created)
+    assert secret, created
+    assert "client_id" in str(created)
+
+    listing = admin_client.get("/admin/api/mcp-clients")
+    assert listing.status_code == 200
+    assert secret not in listing.text
+    assert "secret_hash" not in listing.text
+    clients = items_of(listing.json())
+    assert len(clients) == 1 and clients[0]["name"] == "Claude Desktop"
+
+    from db.models import McpClient
+
+    with db_schema.session_scope() as session:
+        row = session.query(McpClient).one()
+        assert row.secret_hash != secret
+
+
+def test_mcp_client_revoke(admin_client, db_schema):
+    created = _create_mcp_client(admin_client)
+    client_pk = id_of(created)
+    response = admin_client.delete(f"/admin/api/mcp-clients/{client_pk}")
+    assert response.status_code in (200, 204), response.text
+
+    from db.models import McpClient
+
+    with db_schema.session_scope() as session:
+        row = session.get(McpClient, client_pk)
+        assert row is None or row.revoked_at is not None
+
+    clients = items_of(admin_client.get("/admin/api/mcp-clients").json())
+    for listed in clients:
+        if listed.get("id") == client_pk:
+            assert listed.get("revoked_at") or listed.get("revoked") is True
+
+
+def test_mcp_client_unknown_scope_rejected(admin_client):
+    require_path(admin_client.app, "/admin/api/mcp-clients")
+    response = admin_client.post("/admin/api/mcp-clients", json={"name": "x", "scopes": ["root:everything"]})
+    assert response.status_code in (400, 422)
+
+
+def test_audit_listing(admin_client):
+    require_path(admin_client.app, "/admin/api/audit")
+    response = admin_client.get("/admin/api/audit")
+    assert response.status_code == 200
+    assert isinstance(items_of(response.json()), list)
