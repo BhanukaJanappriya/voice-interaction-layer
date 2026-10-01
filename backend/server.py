@@ -16,11 +16,15 @@ Protocol (WebSocket at /ws/voice):
           and sends each chunk as it is captured.
         - Text frames: small JSON control messages,
           {"type": "start_session", "language_hint": "en" | "si" | "ta" | null,
-           "user_name": "..." | null, "greet": true | false}
+           "user_name": "..." | null, "greet": true | false,
+           "session_token": "..." | null}
           sent once at the start of a session, before any audio, and
-          {"type": "end_session"} to close cleanly. user_name is the name
-          given on the frontend's user screen (null means Guest); greet
-          (default true) asks the server to speak its introduction first.
+          {"type": "end_session"} to close cleanly. user_name null means
+          Guest; greet (default true) asks the server to speak its
+          introduction first. session_token (optional) is the token from
+          POST /auth/verify; with it, or with the user_session cookie on
+          the handshake, the user is a verified existing user and is
+          addressed by the name on their account, whatever user_name says.
 
     Server -> client (all JSON text frames):
         {"type": "status", "state": "calibrating" | "listening" | "thinking" | "speaking"}
@@ -94,12 +98,16 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import config
 from agent import Orchestrator
+from auth.admins import seed_first_admin_from_env
+from auth.dependencies import verified_user_from_request
+from auth.routes import router as auth_router
+from db.migrate import database_status, upgrade_to_head
 from stt import transcribe_stream
 from stt import warm_up as warm_up_stt
 from tts import SentenceChunker, speak_stream, speak_text
@@ -176,8 +184,14 @@ def _opt_out_of_windows_power_throttling():
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    """Startup: power throttling opt out, database migrations and the first
+    admin account (before anything can touch the database), then the
+    background warm up."""
     _opt_out_of_windows_power_throttling()
-    threading.Thread(target=_warm_up, daemon=True).start()
+    upgrade_to_head()
+    seed_first_admin_from_env()
+    if config.WARM_UP_ON_STARTUP:
+        threading.Thread(target=_warm_up, daemon=True).start()
     yield
 
 
@@ -194,6 +208,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Existing user verification and admin sign in.
+app.include_router(auth_router)
 
 # vad.py's calibrated noise floor plus WebRTC VAD's frame classification
 # reject most non-speech audio before it ever reaches transcription, but
@@ -593,6 +610,7 @@ async def voice_ws(websocket: WebSocket):
     language_hint: Optional[str] = None
     user_name: Optional[str] = None
     greet = True
+    session_token: Optional[str] = None
     try:
         start_message = await websocket.receive_text()
         payload = json.loads(start_message)
@@ -600,10 +618,20 @@ async def voice_ws(websocket: WebSocket):
             language_hint = payload.get("language_hint") or None
             user_name = (payload.get("user_name") or "").strip()[:40] or None
             greet = payload.get("greet", True) is not False
+            session_token = payload.get("session_token") or None
     except Exception as exc:
         await _send_json(websocket, {"type": "error", "message": f"Invalid start message: {exc}"})
         await websocket.close()
         return
+
+    # A verified existing user (session_token from POST /auth/verify, or
+    # the user_session cookie sent with the WebSocket handshake) is always
+    # addressed by the name on their account; a client supplied name is
+    # only used when there is no verified session, the Guest path, exactly
+    # as before. The lookup touches the database, so it runs on a thread.
+    verified_user = await asyncio.to_thread(verified_user_from_request, websocket, session_token)
+    if verified_user is not None:
+        user_name = verified_user.display_name
 
     # Text to speech is on by default: the assistant introduces itself out
     # loud, in the selected language, by name if one was given, before
@@ -669,7 +697,9 @@ async def voice_ws(websocket: WebSocket):
             # follows the language Whisper detected, as before.
             reply_language = language_hint or detected_language
 
-            introduced_name = _extract_user_name(final_text)
+            # A verified user's name comes from their account, so "my name
+            # is ..." only renames a Guest.
+            introduced_name = None if verified_user else _extract_user_name(final_text)
             if introduced_name and introduced_name != user_name:
                 user_name = introduced_name
                 await _send_json(websocket, {"type": "user_name", "name": user_name})
@@ -719,7 +749,7 @@ class ChatResponse(BaseModel):
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, http_request: Request):
     """Text only alternative to the voice pipeline, for the frontend's
     Start Chat screen. Runs the same Orchestrator the voice flow uses (so
     the same cloud multi agent versus local fallback behavior applies),
@@ -728,11 +758,16 @@ async def chat(request: ChatRequest):
     runs on a thread via run_in_executor rather than directly in this
     async handler, for the same reason server.py's WebSocket transcription
     does: a blocking call here would stall every other connection's event
-    loop turn until it finished."""
+    loop turn until it finished.
+
+    A verified user (Authorization: Bearer token or the user_session
+    cookie) is addressed by the name on their account, not by the
+    user_name in the body; without a verified session the body's name is
+    used as before."""
     loop = asyncio.get_running_loop()
-    reply = await loop.run_in_executor(
-        None, orchestrator.respond, request.text, request.user_name, request.language
-    )
+    verified_user = await asyncio.to_thread(verified_user_from_request, http_request)
+    user_name = verified_user.display_name if verified_user else request.user_name
+    reply = await loop.run_in_executor(None, orchestrator.respond, request.text, user_name, request.language)
     return ChatResponse(reply=reply, mode=orchestrator.last_mode)
 
 
@@ -752,6 +787,8 @@ async def health():
         "cloud_speech_configured": config.cloud_speech_configured(),
         "cloud_speech_provider": config.CLOUD_SPEECH_PROVIDER,
         "supported_languages": config.SUPPORTED_LANGUAGES,
+        # Database migration state.
+        "database": await asyncio.to_thread(database_status),
     }
 
 

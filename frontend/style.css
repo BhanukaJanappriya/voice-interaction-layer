@@ -469,6 +469,15 @@ body {
   margin-top: 0;
 }
 
+/* Why phone and PIN verification did not go through, shown inside the
+   existing user panel. */
+.verify-error {
+  margin: 0;
+  color: var(--bad);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
 /* Mic permission modal: a small explanatory dialog shown before the
    browser's own native permission prompt, so a first time visitor has
    context for why that prompt is about to appear rather than being

@@ -54,8 +54,39 @@ let audioSendAllowed = false;
 let currentPartialBubble = null;
 let selectedLanguage = null;
 let selectedMode = null; // "voice" | "chat", set when leaving the select screen
-let userName = null; // null means Guest; set from the existing user name prompt
+let userName = null; // null means Guest; set from the verified account for an existing user
+// Session token from POST /auth/verify, kept in memory only (never in
+// localStorage). The backend also sets an httpOnly cookie, which is what
+// identifies the user when this page is served by the backend itself; the
+// token covers the development setup where the page comes from another
+// port and that cookie is not sent.
+let sessionToken = null;
 let greetingsGiven = { voice: false, chat: false }; // avoids re-greeting on every back-and-forth navigation
+
+// Where the backend is. When this page is served by the backend itself
+// (the single app, python -m backend), everything is on the page's own
+// origin. When it is opened from the separate static development server
+// on port 5500, the hidden #backend-url field still decides.
+function servedByBackend() {
+  return window.location.protocol.startsWith("http") && window.location.port !== "5500";
+}
+
+function backendHttpBase() {
+  if (servedByBackend()) return window.location.origin;
+  return backendUrlInput.value.trim().replace(/^ws/i, "http").replace(/\/ws\/voice.*$/i, "");
+}
+
+function backendWsUrl() {
+  if (servedByBackend()) {
+    const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+    return `${scheme}://${window.location.host}/ws/voice`;
+  }
+  return backendUrlInput.value.trim();
+}
+
+function authHeaders() {
+  return sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {};
+}
 
 // Screen router: a language picker, a start chat / start voice choice, a
 // new or existing user check, then the actual chat or voice screen. Plain
@@ -91,23 +122,88 @@ document.querySelectorAll("[data-nav]").forEach((el) => {
 
 // New or existing user screen: gates both the chat and voice screens
 // (reached from either "Start Chat" or "Start Voice") so the agent can
-// address the visitor by name, if given, or as Guest otherwise. This is a
-// purely local, honest personalization, not a real login: no account
-// system exists, and clicking "Existing user" just asks for a name to use
-// rather than checking it against anything. See KNOWN_LIMITATIONS.md.
+// address the visitor by name or as Guest. New user continues as Guest
+// straight away. Existing user is verified: the landline number and PIN
+// are checked by POST /auth/verify against the customer database, and the
+// name the assistant uses comes from that account, resolved again by the
+// backend from the session on every request rather than trusted from here.
 const goChatButton = document.getElementById("go-chat");
 const goVoiceButton = document.getElementById("go-voice");
 const goExistingButton = document.getElementById("go-existing");
 const goNewButton = document.getElementById("go-new");
 const userChoiceButtons = document.getElementById("user-choice-buttons");
 const existingNamePrompt = document.getElementById("existing-name-prompt");
-const userNameInput = document.getElementById("user-name-input");
+const userPhoneInput = document.getElementById("user-phone-input");
+const userPinInput = document.getElementById("user-pin-input");
+const verifyError = document.getElementById("verify-error");
 const confirmNameButton = document.getElementById("confirm-name");
 const cancelExistingButton = document.getElementById("cancel-existing");
+
+function showVerifyError(message) {
+  if (!verifyError) return;
+  verifyError.textContent = message || "";
+  verifyError.classList.toggle("hidden", !message);
+}
 
 function resetUserScreen() {
   if (userChoiceButtons) userChoiceButtons.classList.remove("hidden");
   if (existingNamePrompt) existingNamePrompt.classList.add("hidden");
+  if (userPinInput) userPinInput.value = "";
+  showVerifyError("");
+}
+
+// Plain words for each way verification can fail (see backend/auth/routes.py).
+async function verifyErrorMessage(response) {
+  let detail = "";
+  try {
+    const data = await response.json();
+    detail = typeof data.detail === "string" ? data.detail : "";
+  } catch (err) {
+    /* no JSON body */
+  }
+  const retryAfter = parseInt(response.headers.get("Retry-After") || "0", 10);
+  const minutes = Math.max(1, Math.ceil(retryAfter / 60));
+  if (response.status === 423) {
+    return `Too many incorrect attempts. This account is locked for about ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+  }
+  if (response.status === 429) {
+    return "Too many attempts from this device. Please wait a minute and try again.";
+  }
+  if (response.status === 422) {
+    return detail || "Please enter a valid Sri Lankan landline number and a 4 to 6 digit PIN.";
+  }
+  return "That number and PIN do not match our records.";
+}
+
+async function verifyExistingUser() {
+  const phone = userPhoneInput.value.trim();
+  const pin = userPinInput.value.trim();
+  if (!phone || !pin) {
+    showVerifyError("Please enter your landline number and PIN.");
+    return;
+  }
+  confirmNameButton.disabled = true;
+  showVerifyError("");
+  try {
+    const response = await fetch(`${backendHttpBase()}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone, pin }),
+    });
+    if (!response.ok) {
+      showVerifyError(await verifyErrorMessage(response));
+      return;
+    }
+    const data = await response.json();
+    sessionToken = data.token;
+    userName = data.display_name;
+    userPinInput.value = "";
+    proceedToSelectedMode();
+  } catch (err) {
+    showVerifyError("Could not reach the server. Please try again.");
+  } finally {
+    confirmNameButton.disabled = false;
+  }
 }
 
 function goToUserScreen(mode) {
@@ -123,13 +219,8 @@ if (goExistingButton) {
   goExistingButton.addEventListener("click", () => {
     userChoiceButtons.classList.add("hidden");
     existingNamePrompt.classList.remove("hidden");
-    try {
-      const saved = localStorage.getItem("userName");
-      if (saved) userNameInput.value = saved;
-    } catch (err) {
-      /* localStorage unavailable; the field just starts empty */
-    }
-    userNameInput.focus();
+    showVerifyError("");
+    userPhoneInput.focus();
   });
 }
 
@@ -140,31 +231,24 @@ if (cancelExistingButton) {
 if (goNewButton) {
   goNewButton.addEventListener("click", () => {
     userName = null;
+    sessionToken = null;
     proceedToSelectedMode();
   });
 }
 
 if (confirmNameButton) {
-  confirmNameButton.addEventListener("click", () => {
-    const name = userNameInput.value.trim();
-    userName = name || null;
-    try {
-      if (name) localStorage.setItem("userName", name);
-    } catch (err) {
-      /* localStorage unavailable; the name just will not be remembered next visit */
-    }
-    proceedToSelectedMode();
-  });
+  confirmNameButton.addEventListener("click", verifyExistingUser);
 }
 
-if (userNameInput) {
-  userNameInput.addEventListener("keydown", (event) => {
+[userPhoneInput, userPinInput].forEach((input) => {
+  if (!input) return;
+  input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       confirmNameButton.click();
     }
   });
-}
+});
 
 // A canned greeting rather than one generated by the LLM: a fixed
 // introduction is instant and reliable. This copy is only for the text
@@ -586,7 +670,7 @@ async function startConversation(greet = false) {
   if (isActive || isConnecting) return;
   isConnecting = true;
 
-  const backendUrl = backendUrlInput.value.trim();
+  const backendUrl = backendWsUrl();
   if (!backendUrl) {
     setCaption("No backend URL is configured.");
     isConnecting = false;
@@ -621,8 +705,16 @@ async function startConversation(greet = false) {
   socket.binaryType = "arraybuffer";
 
   socket.onopen = () => {
+    // session_token is null for a Guest; for a verified user the backend
+    // takes the name from the account it identifies, not from user_name.
     socket.send(
-      JSON.stringify({ type: "start_session", language_hint: selectedLanguage, user_name: userName, greet })
+      JSON.stringify({
+        type: "start_session",
+        language_hint: selectedLanguage,
+        user_name: userName,
+        greet,
+        session_token: sessionToken,
+      })
     );
   };
 
@@ -753,15 +845,20 @@ if (endChatButton) {
   endChatButton.addEventListener("click", endVoiceChat);
 }
 
-// Logout: this app has no real account system (see KNOWN_LIMITATIONS.md),
-// so "logging out" just forgets the locally remembered name and sends the
-// visitor back to the very first screen, the closest honest equivalent to
-// signing out of something that was never a real login.
+// Logout: ends a verified user's session on the backend (clears its
+// cookie), forgets the name and token here, and sends the visitor back to
+// the very first screen. For a Guest there is no session to end.
 const logoutButton = document.getElementById("logout-button");
 
 if (logoutButton) {
   logoutButton.addEventListener("click", () => {
     stopConversation();
+    if (sessionToken) {
+      fetch(`${backendHttpBase()}/auth/logout`, { method: "POST", headers: authHeaders() }).catch(() => {
+        /* backend unreachable; the short lived session simply expires */
+      });
+    }
+    sessionToken = null;
     userName = null;
     greetingsGiven.voice = false;
     greetingsGiven.chat = false;
@@ -820,8 +917,7 @@ const chatTranscript = document.getElementById("chat-transcript");
 const chatModeBadge = document.getElementById("chat-mode-badge");
 
 function chatHttpUrl() {
-  const wsUrl = backendUrlInput.value.trim();
-  return wsUrl.replace(/^ws/i, "http").replace(/\/ws\/voice.*$/i, "") + "/chat";
+  return `${backendHttpBase()}/chat`;
 }
 
 function setChatModeBadge(mode) {
@@ -849,7 +945,7 @@ if (chatForm) {
     try {
       const response = await fetch(chatHttpUrl(), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ text, language: selectedLanguage, user_name: userName }),
       });
       if (!response.ok) {

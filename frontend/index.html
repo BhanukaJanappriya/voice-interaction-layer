@@ -121,9 +121,16 @@
         <button id="go-new" class="choice-button choice-button-solid" type="button">New user</button>
       </div>
 
+      <!-- Existing users are verified against the customer database: their
+           landline number finds the account and a PIN confirms it is them
+           (a number alone is public, see docs/IMPLEMENTATION_PLAN.md ADR 4).
+           The name the assistant uses then comes from that account. -->
       <div id="existing-name-prompt" class="name-prompt hidden">
-        <label for="user-name-input">What should I call you?</label>
-        <input id="user-name-input" type="text" placeholder="Your name" autocomplete="name" maxlength="40">
+        <label for="user-phone-input">Your landline number</label>
+        <input id="user-phone-input" type="tel" placeholder="011 234 5678" autocomplete="tel" inputmode="tel" maxlength="20">
+        <label for="user-pin-input">PIN</label>
+        <input id="user-pin-input" type="password" placeholder="4 to 6 digits" autocomplete="current-password" inputmode="numeric" maxlength="6">
+        <p id="verify-error" class="verify-error hidden" role="alert"></p>
         <button id="confirm-name" class="choice-button choice-button-solid" type="button">Continue</button>
         <button id="cancel-existing" class="back-link" type="button">Use a different option</button>
       </div>
