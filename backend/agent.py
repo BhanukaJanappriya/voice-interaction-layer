@@ -44,7 +44,7 @@ from typing import Callable, Iterator, Optional
 import requests
 
 import config
-from knowledge.prompts import GROUNDING_RULES, with_context
+from knowledge.prompts import rules_for, with_context
 
 
 class ChatAgent(ABC):
@@ -155,6 +155,16 @@ def _personalize(system_prompt: str, user_name: Optional[str], language: Optiona
 # hit that regularly.
 _OLLAMA_KEEP_ALIVE = "30m"
 
+# Bounds on every local generation. A voice reply is one to three
+# sentences, so a runaway answer (seen with the small model in Sinhala,
+# where a single reply once kept Ollama busy until it failed) is cut at
+# num_predict tokens; a low temperature keeps prices, codes and emails
+# copied exactly instead of paraphrased (Ollama's default is 0.8); and a
+# 2048 token context is plenty for the notes plus the question while
+# costing less to prepare than the default 4096. warm_up() sends the same
+# options, since a different num_ctx makes Ollama reload the model.
+_OLLAMA_OPTIONS = {"temperature": 0.3, "num_predict": 220, "num_ctx": 2048}
+
 
 class LlamaOllamaAgent(ChatAgent):
     """Chat agent backed by a local Ollama server. This is the local
@@ -181,7 +191,7 @@ class LlamaOllamaAgent(ChatAgent):
         try:
             requests.post(
                 f"{self.host}/api/generate",
-                json={"model": self.model, "keep_alive": _OLLAMA_KEEP_ALIVE},
+                json={"model": self.model, "keep_alive": _OLLAMA_KEEP_ALIVE, "options": _OLLAMA_OPTIONS},
                 timeout=self.timeout_seconds,
             ).raise_for_status()
             print(f"Agent warm up (local Llama): {time.perf_counter() - start:.2f}s")
@@ -210,6 +220,7 @@ class LlamaOllamaAgent(ChatAgent):
             "system": self._system_prompt(text_input, user_name, language),
             "stream": False,
             "keep_alive": _OLLAMA_KEEP_ALIVE,
+            "options": _OLLAMA_OPTIONS,
         }
 
         start = time.perf_counter()
@@ -259,6 +270,7 @@ class LlamaOllamaAgent(ChatAgent):
             "system": self._system_prompt(text_input, user_name, language),
             "stream": True,
             "keep_alive": _OLLAMA_KEEP_ALIVE,
+            "options": _OLLAMA_OPTIONS,
         }
 
         start = time.perf_counter()
@@ -648,7 +660,7 @@ class Orchestrator(ChatAgent):
         # The grounding rules go in the composer's role prompt; the context
         # itself travels with the message, as the retrieval stage's output.
         composer_agent = _build_cloud_agent(
-            role_prompt=f"{_personalize(_COMPOSER_ROLE_PROMPT, user_name, language)}\n\n{GROUNDING_RULES}"
+            role_prompt=f"{_personalize(_COMPOSER_ROLE_PROMPT, user_name, language)}\n\n{rules_for(tool_context)}"
         )
         yield from composer_agent.respond_stream(composed_prompt)
 
