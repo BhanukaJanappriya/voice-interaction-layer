@@ -58,5 +58,10 @@ bcrypt==5.0.0
 pyjwt==2.15.1
 cryptography==50.0.1
 
+# Knowledge base scraper (HTML parsing). Embeddings come from the local
+# Ollama server (bge-m3), so no extra machine learning package is needed.
+beautifulsoup4==4.15.0
+httpx==0.28.1
+
 # Tests
 pytest==9.1.1
