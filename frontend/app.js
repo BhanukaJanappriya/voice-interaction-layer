@@ -96,14 +96,39 @@ function authHeaders() {
 // the required flow, regardless of what hash a reload happens to land on.
 const SCREEN_IDS = ["language", "select", "user", "voice", "chat"];
 
+// The screen being left fades out for a moment (CSS .screen.leaving) before
+// the next one fades in, instead of an abrupt cut. Skipped when the visitor
+// asks for reduced motion. navToken makes a second navigation that starts
+// during the fade win, so rapid clicks cannot leave two screens showing.
+const SCREEN_FADE_MS = 120;
+let navToken = 0;
+
 function navigateTo(screenName) {
   if (!SCREEN_IDS.includes(screenName)) screenName = "language";
-  SCREEN_IDS.forEach((id) => {
-    const el = document.getElementById(`screen-${id}`);
-    if (el) el.classList.toggle("active", id === screenName);
-  });
   window.location.hash = screenName;
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  const current = document.querySelector(".screen.active");
+  const target = document.getElementById(`screen-${screenName}`);
+  const token = ++navToken;
+
+  const show = () => {
+    if (token !== navToken) return;
+    SCREEN_IDS.forEach((id) => {
+      const el = document.getElementById(`screen-${id}`);
+      if (el) {
+        el.classList.remove("leaving");
+        el.classList.toggle("active", id === screenName);
+      }
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!current || current === target || reduceMotion) {
+    show();
+    return;
+  }
+  current.classList.add("leaving");
+  setTimeout(show, SCREEN_FADE_MS);
 }
 
 document.querySelectorAll(".choice-button[data-language]").forEach((button) => {
@@ -340,7 +365,11 @@ if (themeToggle) {
   applyThemeIcon();
   themeToggle.addEventListener("click", () => {
     const next = currentTheme() === "dark" ? "light" : "dark";
-    document.documentElement.setAttribute("data-theme", next);
+    // Fade the colors for a moment (style.css .theme-fade) rather than flip.
+    const root = document.documentElement;
+    root.classList.add("theme-fade");
+    setTimeout(() => root.classList.remove("theme-fade"), 320);
+    root.setAttribute("data-theme", next);
     try {
       localStorage.setItem("theme", next);
     } catch (err) {
@@ -354,20 +383,22 @@ if (themeToggle) {
 // custom properties that style.css's .bg-glow radial gradient reads.
 // Throttled to one update per animation frame so it stays smooth without
 // flooding style recalculation on every mousemove event.
+const bgGlow = document.querySelector(".bg-glow");
+const GLOW_HALF_SIZE = 480; // half of .bg-glow's 960px box (style.css)
 let glowUpdateQueued = false;
-let lastPointer = { x: "50%", y: "30%" };
+let lastPointer = { x: window.innerWidth / 2, y: window.innerHeight * 0.3 };
 
 function applyGlowPosition() {
   glowUpdateQueued = false;
-  document.documentElement.style.setProperty("--mx", lastPointer.x);
-  document.documentElement.style.setProperty("--my", lastPointer.y);
+  // Moving the box with transform stays on the compositor; the old way,
+  // writing CSS variables on the root, restyled the whole page per frame.
+  if (bgGlow) {
+    bgGlow.style.transform = `translate3d(${lastPointer.x - GLOW_HALF_SIZE}px, ${lastPointer.y - GLOW_HALF_SIZE}px, 0)`;
+  }
 }
 
 window.addEventListener("mousemove", (event) => {
-  lastPointer = {
-    x: `${(event.clientX / window.innerWidth) * 100}%`,
-    y: `${(event.clientY / window.innerHeight) * 100}%`,
-  };
+  lastPointer = { x: event.clientX, y: event.clientY };
   if (!glowUpdateQueued) {
     glowUpdateQueued = true;
     requestAnimationFrame(applyGlowPosition);
@@ -942,6 +973,15 @@ if (chatForm) {
     chatInput.value = "";
     chatInput.disabled = true;
 
+    // Three pulsing dots while the answer is on its way.
+    const typingBubble = addBubble("assistant", "", null, chatTranscript);
+    typingBubble.classList.add("bubble-typing");
+    for (let i = 0; i < 3; i++) {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      typingBubble.appendChild(dot);
+    }
+
     try {
       const response = await fetch(chatHttpUrl(), {
         method: "POST",
@@ -952,9 +992,11 @@ if (chatForm) {
         throw new Error(`Backend returned ${response.status}`);
       }
       const data = await response.json();
+      typingBubble.remove();
       addBubble("assistant", data.reply, data.mode, chatTranscript);
       setChatModeBadge(data.mode);
     } catch (err) {
+      typingBubble.remove();
       addBubble("assistant", `Error: could not reach the backend (${err.message}).`, null, chatTranscript);
     } finally {
       chatInput.disabled = false;
