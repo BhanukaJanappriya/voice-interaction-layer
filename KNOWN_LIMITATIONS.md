@@ -292,47 +292,148 @@ Someone who pauses for longer than a second mid sentence will be cut off
 and answered early; raising it back to 3 chunks trades that for a slower
 reply.
 
-## "Existing user" is a name to be addressed by, not a real login
+## Existing users are verified by landline number and PIN
 
-**Status: honest local personalization, not authentication.**
+**Status: built and tested end to end (automated and through the real
+app); the PIN is the weak point.**
 
-The new or existing user screen (`frontend/index.html`'s `#screen-user`,
-logic in `frontend/app.js`) asks whether a visitor is new or existing.
-Choosing "Existing user" asks for a name and remembers it in that
-browser's `localStorage` so it can prefill the field on a later visit in
-the same browser; choosing "New user" addresses them as Guest. There is no
-account system, no password, and nothing is checked against anything: two
-different people typing the same name are treated identically, and the
-same person on a different browser or device starts over as a stranger.
-The name is sent to the backend with the session, used in the spoken
-introduction, and given to the agent on every turn so its own replies
-address the user by name (or as Guest when none was given). The
-introduction itself is in the language picked on the first screen
-(English, Sinhala or Tamil, `_GREETINGS` in `backend/server.py`), with
-"Guest" also said in that language. The agent's replies and the canned
-closing lines follow the same selected language (`_REPLY_LANGUAGES` in
-`backend/agent.py`), and so does the voice that speaks them.
+"Existing user" used to be a typed name kept in the browser. It is now a
+check against the customer database (`backend/auth`): the landline number
+is validated and normalized to E.164, a PIN set at registration confirms
+it, and the voice session and `POST /chat` take the name from the verified
+session on the server. What this does not solve:
+
+- **A 4 to 6 digit PIN is guessable on its own.** Five wrong PINs lock the
+  account for 15 minutes and each client address gets 10 attempts per
+  minute, which makes guessing slow, not impossible: someone patient could
+  try about 480 PINs a day per account. A landline cannot receive an SMS
+  code; a voice call one time code would need a telephony provider.
+- **The lockout answer reveals that a number is registered.** A wrong
+  number and a wrong PIN get the same answer, but only a registered number
+  can become "locked" after five tries.
+- **The rate limit lives in memory**, per process, and resets on restart.
+  Behind a proxy, uvicorn needs `--proxy-headers` and
+  `--forwarded-allow-ips` or every user shares the proxy's address.
+- **Logout clears the cookie, not the token.** Sessions are stateless JWTs
+  (60 minutes); a copied token keeps working until it expires.
+- **No self registration.** Users are added with
+  `python -m backend.auth.manage_users` or the demo seed; there is no sign
+  up screen or user management page in the admin portal.
+- The rest of the earlier behavior is unchanged: the introduction, replies
+  and closing lines are in the language picked on the first screen
+  (`_GREETINGS` in `backend/server.py`, `_REPLY_LANGUAGES` in
+  `backend/agent.py`). A Guest can still say "my name is ..." to be called
+  that (`_extract_user_name`, English only, ignores "I'm ..."); a verified
+  user keeps the name on their account.
 
 **Local Llama cannot really answer in Sinhala or Tamil.** Tested on
 2026-09-24 with llama3.2 (3B): asked in Sinhala, it produced Sinhala
 script that is not meaningful Sinhala; asked in Tamil, it produced
-grammatical Tamil with a factually unrelated answer. The language
-instruction is followed, the model simply is not good enough in those
-languages. Gemini handles both properly, so Sinhala and Tamil replies
-need a working Gemini key (see the credit issue above), or a local model
-with real Sinhala and Tamil support set as `LOCAL_LLM_MODEL`.
+grammatical Tamil with a factually unrelated answer. The RAG evaluation on
+2026-10-01 confirmed it with the right context in hand: 33% of expected
+facts for Sinhala and 0% for Tamil, against 88% for English, while
+retrieval itself found the right source for every Sinhala and Tamil
+question. Gemini handles both languages properly, so Sinhala and Tamil
+replies need a working Gemini key (see the credit issue above), or a local
+model with real Sinhala and Tamil support set as `LOCAL_LLM_MODEL`.
 Sinhala is spoken by edge-tts (Google has no Sinhala voice), which took
 2.5 to 9 seconds per sentence over the network here, so the Guest version
-of the Sinhala introduction is synthesized at server startup and cached;
-a named Sinhala greeting still synthesizes its first sentence live. A user can
-also say "my name is ..." or "call me ..." during a voice conversation;
-the backend picks that up with a simple phrase match
-(`_extract_user_name` in `backend/server.py`), uses it from then on, and
-the browser remembers it like a typed name. That match is English only,
-deliberately ignores "I'm ..." (too often "I'm good"), and uses whatever
-Whisper heard, so an unusual name can come out misspelled or as a
-similar sounding common name.
+of the Sinhala introduction is synthesized at server startup and cached.
 
-**Real fix:** an actual account system (even a simple one, a persisted
-user record keyed by something more durable than a browser's local
-storage) if genuine returning user recognition across devices is needed.
+## Knowledge base answers can go stale, and come from two official sites
+
+**Status: working and measured (docs/RAG_EVAL.md); freshness depends on
+rebuilding.**
+
+- **Prices change.** The index is a snapshot from the last
+  `python -m backend.knowledge.build`. Every chunk carries its source URL
+  and retrieval date, and the assistant is told to say prices can change
+  and to point to www.sltmobitel.lk or 1717, but it will quote the
+  snapshot's price until the index is rebuilt. Nothing rebuilds it on a
+  schedule.
+- **Two sites, not one.** The brief named www.sltmobitel.lk, but that site
+  loads every package table and price in the browser from a separate API
+  (apphub.mobitel.lk) that needs a client id issued to the website; the
+  crawler does not call it, and Playwright, which could render those
+  pages, is not installed. The owner approved also crawling
+  www.mobitel.lk, the same company's older, server rendered official site,
+  which has the package tables. Measured: with the brief's site alone the
+  right source is in the top 4 for 31% of test questions and there are no
+  prices at all; with both, 97%. If www.mobitel.lk is retired, package
+  coverage goes with it until the Playwright route is built.
+- **Broad questions get thin answers.** "What data packages do you
+  offer?" matches the site's generic category tiles better than any one
+  package table, so the reply is general ("Fibre, 4G Home and roaming
+  options") rather than a list of plans. Specific questions ("How much is
+  the 7 day YouTube Combo?") get exact prices.
+- **The local model still sometimes ignores the rules.** With no relevant
+  context it usually says it does not have the detail, but in the
+  evaluation it still invented a price or a code a few times. The rules
+  reduce invention a lot (5% to 75% of expected facts), not to zero.
+- **Other operators.** A question about another operator's package
+  retrieves SLT Mobitel's own package context (it scores above the
+  threshold); the prompt tells the model to decline, so the risk is an SLT
+  Mobitel answer to a Dialog question, not invented Dialog prices.
+- **The score threshold is tight.** 0.53 keeps all 18 small talk test
+  phrases out (the highest scored 0.524) and lets real questions in, except
+  one Tamil question at 0.492. New phrasings will land on either side of it
+  now and then.
+- **The cloud path's use of the context is not live tested**, for the same
+  reason as the rest of the cloud path (no working Gemini key); unit tests
+  confirm the context reaches the composer prompt.
+
+## Grounded replies start speaking about 0.7 seconds later
+
+**Status: measured, accepted for accuracy.**
+
+First audio after the final transcript went from a median of 0.81 s to
+1.55 s on the local Llama path (ARCHITECTURE.md has the table). Retrieval
+itself is 126 to 159 ms inside the running server, around the 150 ms
+budget; most of the rest is the 3B model reading about 2,500 characters of
+context (time to first token 180 ms without, 404 ms with) and starting with
+a full sentence instead of a short invented one. Fewer chunks would save
+about 100 ms at the cost of retrieval recall. A faster model, the cloud
+path, or keeping the context in a cached prompt prefix would be the real
+fix.
+
+Whisper also used to hear "Mobitel" as "Mobital" or "Mobilo", which hurt
+retrieval; `STT_HOTWORDS` (default "SLT Mobitel") fixed every case in the
+test questions, but an unusual accent or noisy room can still produce
+other spellings.
+
+## External chat agents: built and tested locally, not against a real one
+
+**Status: built and tested against local stub servers (JSON, SSE, errors,
+SSRF refusals, size cap, timeouts), plus the admin page in Chrome.**
+
+No real third party agent over HTTPS has been registered: TLS certificate
+checking with the connection pinning used for SSRF protection is covered
+by reasoning and code review, not a live test. DNS resolution has no
+timeout of its own, so a hanging DNS server can delay a turn beyond the
+agent's configured timeout. An agent whose host does not resolve yet
+cannot be saved (the address check runs at save time). The admin page was
+checked at desktop width in both themes, not on a phone.
+
+## MCP server: built and tested with the official SDK client, not with desktop MCP apps
+
+**Status: built and tested end to end with the official Python SDK client
+(token discovery, tools, 401/403, revocation, audit).**
+
+It has not been tried from Claude Desktop, MCP Inspector or other MCP
+apps. Many of those expect an interactive authorization code flow with
+dynamic client registration; this server deliberately offers only the
+client credentials grant for machine clients (docs/IMPLEMENTATION_PLAN.md,
+ADR 6), so those apps need a static bearer header or client credentials
+support. `/oauth/token` has no rate limit beyond bcrypt's own cost. The
+SDK's Host and Origin checks only accept loopback and the host in
+`PUBLIC_BASE_URL`, so browser based MCP clients on other origins are
+refused, on purpose.
+
+## PostgreSQL is supported by configuration, not tested
+
+SQLAlchemy and the Alembic migration are written to run on PostgreSQL
+(timezone aware timestamps, named constraints, native booleans), and the
+table definitions were compiled with the PostgreSQL dialect, but no
+PostgreSQL server or driver was available here, so nothing has run
+against one. Column defaults are applied by the application, not the
+database, so rows must be written through the models.

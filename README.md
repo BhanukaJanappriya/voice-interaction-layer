@@ -16,34 +16,50 @@ falls back to a local model when the cloud is not available.
 
 ## Architecture
 
+One FastAPI process (`python -m backend`) is the whole app: it serves the
+frontend, the admin portal, the voice WebSocket, the APIs and the MCP
+server, with one config, one database and one startup sequence. Inside it
+stays modular: each part below is its own module or package with its own
+interface (see INTERFACES.md).
+
 ```
 Browser microphone
     |  (float32 PCM chunks, streamed over WebSocket)
     v
-FastAPI backend (backend/server.py)
+FastAPI backend (backend/server.py, started by python -m backend)
     |
     +-> Voice activity detection (backend/vad.py)
     |     WebRTC VAD + a per session ambient noise calibration step
     |
     +-> Streaming speech to text (backend/stt.py)
-    |     local faster-whisper (English, and Sinhala/Tamil fallback)
+    |     local faster-whisper (English, and Sinhala/Tamil fallback),
+    |     biased toward "SLT Mobitel" with hotwords
     |     cloud Speech to Text for Sinhala/Tamil when configured
     |
     +-> Chat agent orchestrator (backend/agent.py)
-    |     cloud multi agent (tool/retrieval -> composer, streamed)
-    |     when a cloud LLM is configured and reachable, else local
-    |     Llama (via Ollama), streaming its reply token by token as it
-    |     is generated (cloud path yields its finished reply as one
-    |     chunk; see KNOWN_LIMITATIONS.md)
+    |     1. an external chat agent, if an admin made one active
+    |        (backend/admin, ExternalHttpAgent), else
+    |     2. cloud multi agent (tool/retrieval -> composer, streamed)
+    |        when a cloud LLM is configured and reachable, else
+    |     3. local Llama (via Ollama), streaming token by token
+    |     The tool/retrieval step is the SLT Mobitel knowledge base
+    |     (backend/knowledge): bge-m3 embeddings, official sources only.
     |
     +-> Text to speech (backend/tts.py)
-          cloud neural voice (Google/Azure) when configured, else a
-          local SAPI5 voice for English; Sinhala/Tamil without cloud
-          speak a short notice instead of mangling the text
+          cloud neural voice (Google/Azure) when configured, else
+          edge-tts, else a local SAPI5 voice for English
 
-Frontend (frontend/): a single page, no framework, connecting to the
-backend over WebSocket. It is a small four screen flow rather than one
-bare control panel:
+Also in the same process:
+    /auth        existing user verification (landline + PIN), admin sign in (backend/auth)
+    /admin/      admin portal page; /admin/api its API (backend/admin)
+    /mcp         MCP server for other agents, OAuth client credentials (backend/mcp_server)
+    /health      providers, database, knowledge index, active external agent, MCP
+    one database SQLite by default, PostgreSQL by DATABASE_URL (backend/db, Alembic)
+```
+
+Frontend (frontend/): a single page, no framework, served by the same
+process and connecting to it over WebSocket. It is a small four screen flow
+rather than one bare control panel:
 
 ```
 Choose your language  ->  Start Chat or Start Voice  ->  Chat screen
@@ -76,15 +92,21 @@ cd voice-interaction-layer
 python -m venv venv
 venv\Scripts\python.exe -m pip install -r requirements.txt
 ollama pull llama3.2:latest
-copy .env.example .env
+ollama pull bge-m3
+copy .env.example backend\.env
+venv\Scripts\python.exe -m backend.knowledge.build
+venv\Scripts\python.exe -m backend.db.seed
 scripts\start.ps1
 ```
-`scripts\start.ps1` starts both the backend and the frontend as background
-processes (no console window, output goes to `logs\*.log`), then open
-`http://127.0.0.1:5500/index.html`. Run `scripts\stop.ps1` when you are
-done. The sections below explain each step and what is optional, plus how
-to run each piece directly in a terminal if you want to watch its output
-while developing.
+`scripts\start.ps1` starts the app as one background process (no console
+window, output goes to `logs\backend.log`), then open
+`http://127.0.0.1:8000/`. Run `scripts\stop.ps1` when you are done. Set
+`ADMIN_PASSWORD` in `backend\.env` before the first start to get an admin
+login for `http://127.0.0.1:8000/admin/`. The knowledge base build crawls
+two official sites politely (about 20 minutes the first time, incremental
+after that); the seed adds three fictional demo users. The sections below
+explain each step and what is optional, plus how to run each piece
+directly in a terminal if you want to watch its output while developing.
 
 ## Setup
 
@@ -105,15 +127,26 @@ while developing.
    ollama pull llama3.2:latest
    ```
 
-3. Copy `.env.example` to `.env` and fill in whichever cloud credentials
-   you actually have (Gemini or OpenAI for the LLM, Google Cloud or Azure
-   for speech). None of these are required to run the app; see
-   KNOWN_LIMITATIONS.md for exactly what each one unlocks.
+3. Copy `.env.example` to `backend\.env` and fill in whichever cloud
+   credentials you actually have (Gemini or OpenAI for the LLM, Google
+   Cloud or Azure for speech). None of these are required to run the app;
+   see KNOWN_LIMITATIONS.md for exactly what each one unlocks. Secrets
+   (`JWT_SECRET`, `FIELD_ENCRYPTION_KEY`) may stay empty on a development
+   machine: a random value is generated once and kept in
+   `data\secrets.json`. Set real values anywhere shared.
 
 4. The first run of the STT module downloads the faster-whisper model
    (about 142 MB for "base") from Hugging Face and caches it locally.
    Needs internet once; every run after that is fully offline for the
    local path.
+
+5. The multilingual embedding model for the knowledge base, served by the
+   same Ollama, then the knowledge base itself:
+   ```
+   ollama pull bge-m3
+   venv\Scripts\python.exe -m backend.knowledge.build
+   ```
+   The database needs no setup: migrations run at startup.
 
 ## Running
 
@@ -121,16 +154,16 @@ while developing.
 ```
 scripts\start.ps1
 ```
-This launches the backend and frontend with `pythonw.exe` (Python with no
-attached console window), so neither one occupies a terminal or prints
-into one; each writes to its own log file under `logs\` instead
-(`logs\backend.log`, `logs\frontend.log`). The script itself returns
-immediately once both are started. Stop them with:
+This launches the app with `pythonw.exe` (Python with no attached console
+window), so it does not occupy a terminal or print into one; it writes to
+`logs\backend.log` instead. The script itself returns immediately once the
+process is started. Stop it with:
 ```
 scripts\stop.ps1
 ```
-Open `http://127.0.0.1:5500/index.html`; the app always starts on the
-language screen, then lets you choose Start Chat or Start Voice.
+Open `http://127.0.0.1:8000/`; the app always starts on the language
+screen, then lets you choose Start Chat or Start Voice. The admin portal
+is at `http://127.0.0.1:8000/admin/`.
 
 **Development: run a piece directly, to watch its own output live.**
 
@@ -144,21 +177,27 @@ cd backend
 ..\venv\Scripts\python.exe tts.py      # sample sentence in English, Sinhala, Tamil
 ```
 
-Backend in the foreground:
+The whole app in the foreground (one process, the same one start.ps1 runs):
 ```
-cd backend
-..\venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
+venv\Scripts\python.exe -m backend
 ```
 `GET http://127.0.0.1:8000/health` reports which cloud providers are
-actually configured right now; `POST http://127.0.0.1:8000/chat` with a
-JSON body of `{"text": "...", "language": "en"}` drives the text chat
-screen directly, without a browser.
+actually configured right now, plus the database, the knowledge index,
+the active external agent and the MCP server; `POST
+http://127.0.0.1:8000/chat` with a JSON body of `{"text": "...",
+"language": "en"}` drives the text chat screen directly, without a
+browser.
 
-Frontend in the foreground (any static file server works; this is a plain
-HTML/CSS/JS page):
+The old split setup still works for frontend work: serve `frontend\` with
+`..\venv\Scripts\python.exe -m http.server 5500` from inside `frontend\`
+and the page talks to the backend at `127.0.0.1:8000` (with a bearer token
+instead of the session cookie, since it is another origin).
+
+Tests (no microphone, cloud keys or network needed; the `live` ones need
+Ollama and the built knowledge base):
 ```
-cd frontend
-..\venv\Scripts\python.exe -m http.server 5500
+venv\Scripts\python.exe -m pytest -m "not live"
+venv\Scripts\python.exe -m pytest -m live
 ```
 
 ## Why these tools were chosen
@@ -235,10 +274,12 @@ mode answered, are identical in both screens; it just skips STT and TTS
 entirely, since text in and text out needs neither.
 
 **Between that choice and the actual screen: a new or existing user
-check, then a greeting.** Existing users are asked for a name (remembered
-locally, see KNOWN_LIMITATIONS.md for why this is a name to be addressed
-by, not real authentication); new users are addressed as Guest. Either
-way, landing on the voice or chat screen triggers an immediate,
+check, then a greeting.** Existing users are verified: they enter their
+landline number and a PIN, inside the same panel the name field used to
+be in, and the backend checks both against the customer database (see
+"Existing user verification" below). The assistant then addresses them by
+the name on their account. New users are addressed as Guest, exactly as
+before. Either way, landing on the voice or chat screen triggers an immediate,
 personalized introduction rather than a blank waiting screen, and the
 voice screen additionally shows an explanatory modal before the browser's
 own native microphone permission prompt, so that prompt does not appear
@@ -306,6 +347,131 @@ fallback if WebGL is unavailable. See KNOWN_LIMITATIONS.md for why this
 is text paced rather than true audio driven lip sync, and what a real fix
 would involve.
 
+## SLT Mobitel knowledge base (retrieval, not fine tuning)
+
+The assistant answers SLT Mobitel questions (packages, prices, data
+bundles, roaming, FAQs, support, the company) from a local knowledge base
+instead of from what the model happens to remember, which before this
+meant invented package names. Retrieval rather than fine tuning because
+prices and packages change: rebuilding the index takes one command, and
+every answer can be traced to a source page and its retrieval date.
+
+```
+venv\Scripts\python.exe -m backend.knowledge.build                 crawl (incremental), normalize, index
+venv\Scripts\python.exe -m backend.knowledge.build --skip-scrape   rebuild from the cached pages only
+venv\Scripts\python.exe -m backend.knowledge.eval                  measure it, writes docs/RAG_EVAL.md
+```
+
+- **Sources.** The official sites www.sltmobitel.lk and www.mobitel.lk
+  (the same company's older site, needed because the new site loads its
+  package tables in the browser, see docs/RAG_EVAL.md), crawled politely:
+  robots.txt obeyed, a clear User Agent, at least 1.5 s between requests
+  (10 s where robots.txt asks), no login, cart or account pages. Plus a
+  committed, hand checked file of public sources (Wikipedia, official
+  press releases, TRCSL) with a source URL on every entry, and a curated
+  FAQ of 59 question and answer pairs. Raw pages and the index live under
+  `data\` and are never committed.
+- **Embeddings and store.** bge-m3 through the local Ollama: multilingual,
+  so Sinhala and Tamil questions find English content. Vectors are a
+  numpy matrix searched with one matrix product (well under a millisecond
+  for 708 chunks); see the ADRs in docs/IMPLEMENTATION_PLAN.md.
+- **How it reaches the answer.** The retriever is the Orchestrator's
+  existing `tool_callback` hook. On the cloud path it is the tool/retrieval
+  stage of the multi agent design; on the local path the retrieved text
+  goes into the Llama system prompt, which is plain context for one model,
+  not multi agent collaboration. Grounding rules (knowledge/prompts.py) say
+  to use the context for SLT Mobitel facts, never invent prices or package
+  names, say prices can change and point to www.sltmobitel.lk or 1717, and
+  politely decline other operators' details.
+- **Measured.** Right source in the top 4 for 97% of 32 test questions;
+  expected facts in the local model's answers went from 5% to 75%;
+  retrieval takes 36 ms p50 and 51 ms p95 on its own. Details, per question
+  results and the Sinhala/Tamil caveats are in docs/RAG_EVAL.md.
+
+## Existing user verification
+
+"Existing user" is a real check now, not a typed name:
+
+- The landline number is validated as a Sri Lankan landline (valid area
+  code, 0XX XXXXXXX, +94 or 0094 forms) and normalized to E.164 before the
+  lookup; mobile numbers are refused.
+- A number alone is public information (directories, bills), so it only
+  says who the user claims to be. A PIN chosen at registration (4 to 6
+  digits, stored only as a bcrypt hash) confirms it. Landlines cannot
+  receive SMS, so an SMS one time code was not an option.
+- Five wrong PINs in a row lock the account for 15 minutes, and each
+  client address gets at most 10 attempts per minute. A wrong number and a
+  wrong PIN get the same answer, so the check does not reveal who is a
+  customer.
+- On success the backend sets an httpOnly session cookie (and returns a
+  short lived token for the separate port 5500 development page). The
+  voice session and `POST /chat` take the user's name from that verified
+  session on the server, not from what the browser sends.
+
+Users are added with
+`venv\Scripts\python.exe -m backend.auth.manage_users add --phone "011 234 5678" --name "Name"`
+(the PIN is asked for without echo); `list`, `unlock` and `set-pin` also
+exist. `python -m backend.db.seed` adds three fictional demo users and
+prints their demo PINs.
+
+## Admin portal and external chat agents
+
+`http://127.0.0.1:8000/admin/`, styled with the main app's own stylesheet
+and theme toggle. The first admin is created at startup from
+`ADMIN_USERNAME` and `ADMIN_PASSWORD` when no admin exists yet.
+
+An admin can register another chat agent by URL (method, an auth header
+whose value is stored encrypted and never shown again, a JSON body
+template such as `{"message": "{text}"}`, the JSON path of the reply text,
+a timeout, optional Server Sent Events streaming), test it with a sample
+message, and make one agent active. While one is active, every user turn
+goes to it and its text reply is spoken by this project's own pipeline
+(sentence chunking, streaming TTS, the 3D avatar and its events), with the
+mode badge showing "external agent (name)". If it fails before saying
+anything, the built in assistant answers that turn instead.
+
+Outbound calls are guarded against server side request forgery: http and
+https only, every resolved address must be public (private, loopback,
+link local, metadata and similar addresses are refused, checked again at
+connect time against DNS rebinding), no redirects, a response size cap
+and strict timeouts. `EXTERNAL_AGENT_ALLOW_PRIVATE=true` lifts the
+address check for local development only.
+
+The same portal creates and revokes MCP clients and shows the MCP audit log.
+
+## MCP server
+
+Other agents can use this assistant over MCP (streamable HTTP) at
+`<PUBLIC_BASE_URL>/mcp`. Create a client in the admin portal (MCP
+clients) and copy its secret; it is shown once and only a hash is kept.
+Scopes: `knowledge:read` (`search_knowledge`, `get_package_details`) and
+`assistant:ask` (`ask_assistant`).
+
+Get a token (valid `MCP_TOKEN_MINUTES`, default 15):
+```
+curl -u "CLIENT_ID:CLIENT_SECRET" -d grant_type=client_credentials http://127.0.0.1:8000/oauth/token
+```
+Then call `/mcp` with `Authorization: Bearer <access_token>`. A missing or
+invalid token gets 401 with a `WWW-Authenticate` header pointing at
+`/.well-known/oauth-protected-resource/mcp`, which is how MCP clients
+discover the token endpoint; a tool outside the token's scopes gets 403
+`insufficient_scope`. Revoking a client takes effect on its next request.
+Every token request and tool call is in the audit log, without any
+question or answer text. `PUBLIC_BASE_URL` must be the address clients
+actually use: it is the token issuer and audience, and requests with any
+other Host header are refused.
+
+## Database
+
+One database for users, admins, external agents, MCP clients and the
+audit log: SQLite in `data\app.db` by default, PostgreSQL by setting
+`DATABASE_URL` (plus a driver such as `psycopg[binary]`), no code change.
+Migrations (Alembic) run at startup; by hand, from the repository root:
+```
+alembic upgrade head            (or: venv\Scripts\python.exe -m backend.db.migrate)
+alembic revision --autogenerate -m "what changed"    after changing backend/db/models.py; review it, then alembic check
+```
+
 ## Current limitations
 
 See KNOWN_LIMITATIONS.md for the full, honest list. In short: Sinhala and
@@ -315,6 +481,11 @@ cloud credentials that are not configured on this machine right now; the
 streaming ASR model; and the multi agent cloud path has not been exercised
 against a live Gemini/GPT account in this pass, only its local fallback
 (which has been, repeatedly, including with automated end to end tests).
+Scraped prices go stale until the knowledge base is rebuilt, the local
+model answers Sinhala and Tamil questions poorly even with the right
+context, grounded replies take about 0.7 s longer to start speaking, and
+the MCP server, PostgreSQL and a real HTTPS external agent were built and
+tested locally but not against real third party clients or servers.
 
 ## Suggested next steps
 
