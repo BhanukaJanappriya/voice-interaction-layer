@@ -1,7 +1,7 @@
 # Backend service
 fastapi==0.141.1
 uvicorn[standard]==0.53.0
-websockets==17.1
+websockets==16.1.1
 python-dotenv==1.2.3
 
 # Local speech to text (English always local; also used as the Sinhala/Tamil
@@ -48,6 +48,12 @@ azure-cognitiveservices-speech==1.51.2
 # Database (users, admins, external agents, MCP clients, audit log).
 # SQLite by default; PostgreSQL via DATABASE_URL also needs a driver such
 # as psycopg[binary], installed only where it is used.
+# On a machine whose Windows Application Control policy blocks compiled
+# extensions (the same policy described for scipy above), SQLAlchemy 2.1's
+# .pyd speed-ups fail with "DLL load failed while importing
+# _processors_cy". Every one has a pure Python twin, so install it without
+# them (set DISABLE_SQLALCHEMY_CEXT=1 first):
+#   pip install --force-reinstall --no-deps --no-binary sqlalchemy sqlalchemy==2.1.1
 sqlalchemy==2.1.1
 alembic==1.20.0
 
