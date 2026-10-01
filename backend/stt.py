@@ -74,7 +74,11 @@ def warm_up() -> None:
 
 def _transcribe_local(audio: np.ndarray, language_hint: Optional[str]) -> tuple[str, str]:
     model = _get_local_model(config.LOCAL_WHISPER_MODEL_SIZE)
-    segments, info = model.transcribe(audio, language=language_hint)
+    # Hotwords bias Whisper toward the brand name it otherwise hears as
+    # "Mobital" or "Mobilo", which then misses the knowledge base and
+    # confuses the agent. Measured on spoken test questions: every
+    # "Mobital" came out as "Mobitel" with this set.
+    segments, info = model.transcribe(audio, language=language_hint, hotwords=config.STT_HOTWORDS or None)
     text = "".join(segment.text for segment in segments).strip()
     return text, (language_hint or info.language)
 

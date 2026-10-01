@@ -50,6 +50,8 @@ AZURE_SPEECH_REGION = os.environ.get("AZURE_SPEECH_REGION", "").strip()
 
 # Local STT fallback
 LOCAL_WHISPER_MODEL_SIZE = os.environ.get("LOCAL_WHISPER_MODEL_SIZE", "base")
+# Words Whisper should expect (faster-whisper hotwords). Empty turns it off.
+STT_HOTWORDS = os.environ.get("STT_HOTWORDS", "SLT Mobitel").strip()
 
 SUPPORTED_LANGUAGES = {"en": "English", "si": "Sinhala", "ta": "Tamil"}
 
