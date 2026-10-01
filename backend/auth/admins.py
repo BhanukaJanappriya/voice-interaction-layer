@@ -119,6 +119,24 @@ def verify_admin(username: str, password: str, client_ip: str) -> VerifiedAdmin:
     raise AuthError("invalid")
 
 
+def set_admin_password(username: str, password: str) -> bool:
+    """Replaces an admin's password and clears any lockout. False when
+    there is no such admin. This is the operator's way to recover an
+    account (seed_first_admin_from_env deliberately ignores .env once an
+    admin exists), so it is only reachable from the command line, never
+    from the web. Raises ValueError for a password that is too short or
+    too long."""
+    password_hash = hash_secret(validate_password(password))
+    with session_scope() as session:
+        admin = session.scalar(select(Admin).where(Admin.username == (username or "").strip()))
+        if admin is None:
+            return False
+        admin.password_hash = password_hash
+        admin.failed_attempts = 0
+        admin.locked_until = None
+        return True
+
+
 def get_admin(admin_id: int) -> Optional[VerifiedAdmin]:
     with session_scope() as session:
         admin = session.get(Admin, admin_id)

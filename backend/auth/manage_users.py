@@ -1,10 +1,16 @@
-"""Command line tool for customer accounts, for whoever runs the server.
+"""Command line tool for customer and admin accounts, for whoever runs the server.
 
 From the repository root:
     python -m backend.auth.manage_users add --phone "011 234 5678" --name "Nimal Perera" --pin 1234 [--language si]
     python -m backend.auth.manage_users list
     python -m backend.auth.manage_users unlock --phone "011 234 5678"
     python -m backend.auth.manage_users set-pin --phone "011 234 5678" --pin 4321
+    python -m backend.auth.manage_users admin-password [--username admin] [--password ...]
+
+admin-password replaces an admin's password and clears its lockout. It is
+the way back in when the admin account was created with a different
+password than the one in .env (the .env values only seed the very first
+admin), or when the password is forgotten.
 
 A command line tool rather than a web page because registering a customer
 with a PIN is an operator task for this prototype; there is no self
@@ -17,6 +23,8 @@ import argparse
 import getpass
 import sys
 
+import config
+from auth.admins import set_admin_password
 from auth.phone import InvalidPhoneNumber, format_for_display
 from auth.users import UserAlreadyExists, create_user, list_users, set_pin, unlock_user
 from db.migrate import upgrade_to_head
@@ -28,6 +36,15 @@ def _read_pin(given):
     first = getpass.getpass("PIN (4 to 6 digits): ")
     if getpass.getpass("Repeat PIN: ") != first:
         raise ValueError("The two PINs do not match.")
+    return first
+
+
+def _read_password(given):
+    if given:
+        return given
+    first = getpass.getpass("New admin password (at least 10 characters): ")
+    if getpass.getpass("Repeat password: ") != first:
+        raise ValueError("The two passwords do not match.")
     return first
 
 
@@ -49,6 +66,10 @@ def main(argv=None) -> int:
     pin = commands.add_parser("set-pin", help="replace a customer's PIN (also unlocks)")
     pin.add_argument("--phone", required=True)
     pin.add_argument("--pin")
+
+    admin = commands.add_parser("admin-password", help="replace an admin's password (also unlocks)")
+    admin.add_argument("--username", default=config.ADMIN_USERNAME or "admin")
+    admin.add_argument("--password", help="at least 10 characters; asked for without echo when omitted")
 
     args = parser.parse_args(argv)
     upgrade_to_head()
@@ -79,6 +100,11 @@ def main(argv=None) -> int:
                 print("No user with that number.")
                 return 1
             print("PIN replaced.")
+        elif args.command == "admin-password":
+            if not set_admin_password(args.username, _read_password(args.password)):
+                print(f"No admin named {args.username!r}.")
+                return 1
+            print(f"Password replaced for admin {args.username!r}; any lockout is cleared.")
     except (InvalidPhoneNumber, UserAlreadyExists, ValueError) as exc:
         print(f"Error: {exc}")
         return 1
