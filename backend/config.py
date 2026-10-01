@@ -51,6 +51,10 @@ AZURE_SPEECH_REGION = os.environ.get("AZURE_SPEECH_REGION", "").strip()
 # Local STT fallback
 LOCAL_WHISPER_MODEL_SIZE = os.environ.get("LOCAL_WHISPER_MODEL_SIZE", "base")
 # Words Whisper should expect (faster-whisper hotwords). Empty turns it off.
+# The other local transcription settings (STT_DENOISE, STT_BEAM_SIZE,
+# STT_ACCURATE_MODEL, STT_CONFIDENCE_FLOOR, STT_VAD_FILTER) are defined
+# further down, after
+# the helper functions they use.
 STT_HOTWORDS = os.environ.get("STT_HOTWORDS", "SLT Mobitel").strip()
 
 SUPPORTED_LANGUAGES = {"en": "English", "si": "Sinhala", "ta": "Tamil"}
@@ -168,6 +172,26 @@ SCRAPER_USER_AGENT = os.environ.get(
 ).strip()
 SCRAPER_DELAY_SECONDS = max(1.0, _env_float("SCRAPER_DELAY_SECONDS", 1.5))
 SCRAPER_MAX_PAGES = _env_int("SCRAPER_MAX_PAGES", 400)
+
+# Local speech to text accuracy (see stt.py). Measured on 144 spoken test
+# clips (three voices, one with background noise): the noise reduction
+# filter that used to run before every transcription made Whisper worse,
+# 11.0% word errors against 3.3% without it, so it is off by default.
+STT_DENOISE = _env_bool("STT_DENOISE", False)
+# Beam search width: how many candidate transcripts Whisper compares.
+STT_BEAM_SIZE = _env_int("STT_BEAM_SIZE", 5)
+# Whisper's own speech filter, run before decoding. With the brand hotword
+# set, Whisper writes words such as "SLT Mobitel" for audio that contains no
+# speech (30 of 30 noise clips with the larger model, 7 of 30 with the base
+# one); with this filter on, 0 of 30, at no cost in accuracy or speed.
+STT_VAD_FILTER = _env_bool("STT_VAD_FILTER", True)
+# A larger model for the final transcript of a turn when the main one is
+# not confident (empty turns it off). The final transcript decides what is
+# asked, so a second look at the uncertain ones is worth its extra second.
+STT_ACCURATE_MODEL = os.environ.get("STT_ACCURATE_MODEL", "small").strip()
+# Average log probability of a transcript below which the larger model is
+# asked to check it (closer to 0 means more confident).
+STT_CONFIDENCE_FLOOR = _env_float("STT_CONFIDENCE_FLOOR", -0.40)
 
 # MCP server
 MCP_ENABLED = _env_bool("MCP_ENABLED", True)

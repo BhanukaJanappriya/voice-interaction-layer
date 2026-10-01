@@ -38,16 +38,17 @@ from faster_whisper import WhisperModel
 import config
 from vad import SAMPLE_RATE, VoiceActivityDetector, denoise_audio
 
-_model: Optional[WhisperModel] = None
-_model_size: Optional[str] = None
+_models: dict = {}
 
 
 def _get_local_model(model_size: str) -> WhisperModel:
-    global _model, _model_size
-    if _model is None or _model_size != model_size:
-        _model = WhisperModel(model_size, device="cpu", compute_type="int8")
-        _model_size = model_size
-    return _model
+    """One loaded model per size, kept for the life of the process: the main
+    one for every pass, and the larger one only if configured."""
+    model = _models.get(model_size)
+    if model is None:
+        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        _models[model_size] = model
+    return model
 
 
 @dataclass
@@ -65,25 +66,84 @@ def warm_up() -> None:
     versus about 0.4s and 0.03s per call once loaded). server.py calls this
     once at startup."""
     start = time.time()
-    denoise_audio(np.zeros(SAMPLE_RATE, dtype=np.float32))
-    model = _get_local_model(config.LOCAL_WHISPER_MODEL_SIZE)
-    segments, _info = model.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32), language="en")
-    list(segments)
+    if config.STT_DENOISE:
+        denoise_audio(np.zeros(SAMPLE_RATE, dtype=np.float32))
+    silence = np.zeros(SAMPLE_RATE, dtype=np.float32)
+    for size in filter(None, [config.LOCAL_WHISPER_MODEL_SIZE, config.STT_ACCURATE_MODEL]):
+        try:
+            segments, _info = _get_local_model(size).transcribe(silence, language="en")
+            list(segments)
+        except Exception as exc:
+            # The larger model is optional (it may need a download that is
+            # not possible right now); the main one failing is reported by
+            # the first real transcription.
+            print(f"STT warm up: model '{size}' not available ({exc}).")
     print(f"STT warm up: {time.time() - start:.2f}s")
 
 
-def _transcribe_local(audio: np.ndarray, language_hint: Optional[str]) -> tuple[str, str]:
-    model = _get_local_model(config.LOCAL_WHISPER_MODEL_SIZE)
-    # Hotwords bias Whisper toward the brand name it otherwise hears as
-    # "Mobital" or "Mobilo", which then misses the knowledge base and
-    # confuses the agent. Measured on spoken test questions: every
-    # "Mobital" came out as "Mobitel" with this set.
-    segments, info = model.transcribe(audio, language=language_hint, hotwords=config.STT_HOTWORDS or None)
+def _run_whisper(
+    model: WhisperModel, audio: np.ndarray, language_hint: Optional[str]
+) -> tuple[str, str, Optional[float]]:
+    """One Whisper pass: (text, language, confidence), where confidence is
+    the average log probability of the segments (None when nothing was
+    heard). Hotwords bias Whisper toward the brand name it otherwise hears
+    as "Mobital" or "Mobilo", which then misses the knowledge base and
+    confuses the agent: measured on spoken test questions, brand words
+    recognised went from 46% to 85% with this set and the noise filter
+    off."""
+    segments, info = model.transcribe(
+        audio,
+        language=language_hint,
+        beam_size=config.STT_BEAM_SIZE,
+        hotwords=config.STT_HOTWORDS or None,
+        vad_filter=config.STT_VAD_FILTER,
+    )
+    segments = list(segments)
     text = "".join(segment.text for segment in segments).strip()
-    return text, (language_hint or info.language)
+    confidence = float(np.mean([segment.avg_logprob for segment in segments])) if segments else None
+    return text, (language_hint or info.language), confidence
+
+
+def _transcribe_local(audio: np.ndarray, language_hint: Optional[str], final: bool = False) -> tuple[str, str]:
+    """The partial transcripts shown while the user is still talking use
+    the fast main model only. The final transcript, which decides what is
+    asked, gets a second look from the larger model when the main one was
+    unsure of it (see STT_ACCURATE_MODEL and STT_CONFIDENCE_FLOOR): most
+    turns are clear and pay nothing extra."""
+    text, lang, confidence = _run_whisper(_get_local_model(config.LOCAL_WHISPER_MODEL_SIZE), audio, language_hint)
+    accurate = config.STT_ACCURATE_MODEL
+    if (
+        final
+        and accurate
+        and accurate != config.LOCAL_WHISPER_MODEL_SIZE
+        and text
+        and confidence is not None
+        and confidence < config.STT_CONFIDENCE_FLOOR
+    ):
+        try:
+            second_text, second_lang, _ = _run_whisper(_get_local_model(accurate), audio, language_hint)
+            if second_text:
+                print(f"STT: confidence {confidence:.2f} was low, rechecked with '{accurate}'.")
+                return second_text, second_lang
+        except Exception as exc:
+            print(f"STT: recheck with '{accurate}' failed ({exc}); keeping the first transcript.")
+    return text, lang
+
+
+# After a cloud speech failure (for example the API not being enabled in the
+# Google project, which answers 403 every time) the cloud is skipped for a
+# while instead of being tried again for every transcript: partial
+# transcripts are produced every 1.5 seconds of speech, so a failing call
+# each time would add its network delay to the whole conversation. Same idea
+# as the circuit breaker around the cloud language model in agent.py.
+_CLOUD_RETRY_AFTER_SECONDS = 300
+_cloud_retry_at = 0.0
 
 
 def _transcribe_cloud_google(audio: np.ndarray, language_hint: str) -> Optional[tuple[str, str]]:
+    global _cloud_retry_at
+    if time.monotonic() < _cloud_retry_at:
+        return None
     try:
         from google.cloud import speech
 
@@ -102,7 +162,9 @@ def _transcribe_cloud_google(audio: np.ndarray, language_hint: str) -> Optional[
         ).strip()
         return (text, language_hint) if text else None
     except Exception as exc:
-        print(f"STT cloud error (google): {exc}; falling back to local Whisper.")
+        _cloud_retry_at = time.monotonic() + _CLOUD_RETRY_AFTER_SECONDS
+        reason = " ".join(str(exc).split())[:240]
+        print(f"STT cloud error (google): {reason}; skipping the cloud for {_CLOUD_RETRY_AFTER_SECONDS}s, using local Whisper.")
         return None
 
 
@@ -120,9 +182,10 @@ def _transcribe_cloud(audio: np.ndarray, language_hint: str) -> Optional[tuple[s
     return None
 
 
-def _emit(audio: np.ndarray, language_hint: Optional[str]) -> tuple[str, str]:
+def _emit(audio: np.ndarray, language_hint: Optional[str], final: bool = False) -> tuple[str, str]:
     start = time.time()
-    audio = denoise_audio(audio)
+    if config.STT_DENOISE:
+        audio = denoise_audio(audio)
 
     if language_hint in ("si", "ta"):
         cloud_result = _transcribe_cloud(audio, language_hint)
@@ -135,7 +198,7 @@ def _emit(audio: np.ndarray, language_hint: Optional[str]) -> tuple[str, str]:
             "using local Whisper instead (lower accuracy expected for this language)."
         )
 
-    text, lang = _transcribe_local(audio, language_hint)
+    text, lang = _transcribe_local(audio, language_hint, final)
     print(f"STT latency ({language_hint or 'auto'}, local): {time.time() - start:.2f}s")
     return text, lang
 
@@ -194,7 +257,7 @@ def transcribe_stream(
             chunks_since_partial = 0
 
         if trailing_silence_chunks >= SILENCE_CHUNKS_TO_FINALIZE:
-            text, lang = _emit(np.concatenate(buffer), language_hint)
+            text, lang = _emit(np.concatenate(buffer), language_hint, final=True)
             yield TranscriptEvent(text=text, is_final=True, language=lang)
             buffer = []
             speech_started = False
@@ -204,7 +267,7 @@ def transcribe_stream(
     # Stream ended (e.g. WebSocket closed) while mid utterance: flush what
     # was captured as a final event rather than dropping it silently.
     if speech_started and buffer:
-        text, lang = _emit(np.concatenate(buffer), language_hint)
+        text, lang = _emit(np.concatenate(buffer), language_hint, final=True)
         if text:
             yield TranscriptEvent(text=text, is_final=True, language=lang)
 
