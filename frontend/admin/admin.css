@@ -1,0 +1,514 @@
+/* Admin portal layout only. Colors, cards, buttons, badges, modals, the
+   theme toggle and both themes all come from /style.css (the main app's
+   stylesheet), so the portal reads as part of the same product; this file
+   only adds what the main app has no need for (a wider page, tables, a
+   form grid) and uses the same variables for every color. */
+
+.page.admin-page {
+  max-width: 1040px;
+}
+
+.admin-loading {
+  margin: 40px 0;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.admin-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.login-card {
+  max-width: 400px;
+  width: 100%;
+  margin: 0 auto;
+  align-items: stretch;
+}
+
+.login-icon {
+  align-self: center;
+  margin-bottom: 0;
+}
+
+.login-card .choice-button {
+  margin-top: 6px;
+}
+
+.admin-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.admin-signed-in strong {
+  color: var(--text);
+}
+
+.admin-logout {
+  margin-top: 0;
+  align-self: auto;
+}
+
+.admin-card {
+  gap: 16px;
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.card-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.card-subtitle {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  max-width: 640px;
+}
+
+.compact-button {
+  padding: 9px 16px;
+  font-size: 0.9rem;
+  border-radius: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Selector matches the specificity of style.css's plain .choice-button
+   rule, which would otherwise win. */
+.choice-button.danger-button:not(.choice-button-outline):not(.choice-button-solid) {
+  width: 100%;
+  background: var(--bad);
+  border: none;
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(224, 90, 90, 0.28);
+}
+
+.choice-button.danger-button:not(.choice-button-outline):not(.choice-button-solid):hover {
+  color: #fff;
+  filter: brightness(1.06);
+}
+
+.danger-icon {
+  background: rgba(224, 90, 90, 0.12);
+  color: var(--bad);
+}
+
+.danger-icon .icon {
+  color: var(--bad);
+}
+
+/* Tables */
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-table th {
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  background: var(--blue-dim);
+  white-space: nowrap;
+}
+
+.admin-table tbody tr:hover td {
+  background: rgba(47, 111, 237, 0.04);
+}
+
+.admin-table .row-selected td {
+  background: var(--green-dim);
+}
+
+.admin-table .row-selected:hover td {
+  background: var(--green-dim);
+}
+
+.admin-table .empty-row td {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 18px 12px;
+}
+
+.col-radio {
+  width: 84px;
+}
+
+.col-actions {
+  width: 1%;
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+.cell-main {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cell-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.cell-url {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.8rem;
+}
+
+.cell-mono {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.cell-nowrap {
+  white-space: nowrap;
+}
+
+.cell-detail {
+  max-width: 260px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.row-actions {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.small-icon-button {
+  width: 34px;
+  height: 34px;
+  box-shadow: none;
+}
+
+.small-icon-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
+}
+
+.radio-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.admin-page input[type="radio"],
+.admin-page input[type="checkbox"],
+.modal-card input[type="checkbox"] {
+  accent-color: var(--blue);
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.admin-table .badge {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.badges-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.badge-bad {
+  color: var(--bad);
+  border-color: var(--bad);
+  background: rgba(224, 90, 90, 0.1);
+}
+
+.badge-warn {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: rgba(232, 161, 61, 0.1);
+}
+
+/* Messages and test results */
+
+.form-message {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.form-message-error {
+  color: var(--bad);
+}
+
+.form-message-ok {
+  color: var(--good);
+}
+
+.test-result {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: var(--blue-dim);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.test-result.test-ok {
+  background: var(--green-dim);
+  border-color: var(--green);
+}
+
+.test-result.test-failed {
+  background: rgba(224, 90, 90, 0.08);
+  border-color: var(--bad);
+}
+
+.test-result-title {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.test-result-reply {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Forms */
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  width: 100%;
+  text-align: left;
+}
+
+.span-2 {
+  grid-column: 1 / -1;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.form-field > label,
+.form-field > legend {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  padding: 0;
+}
+
+.form-field input[type="text"],
+.form-field input[type="url"],
+.form-field input[type="password"],
+.form-field input[type="number"],
+.form-field select,
+.form-field textarea {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 0.92rem;
+  font-family: inherit;
+}
+
+.form-field textarea {
+  resize: vertical;
+  min-height: 84px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.85rem;
+}
+
+.form-field input:focus,
+.form-field select:focus,
+.form-field textarea:focus,
+.name-prompt input:focus {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+  border-color: var(--blue);
+}
+
+.field-hint {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.form-actions .back-link {
+  margin-top: 0;
+}
+
+.form-actions-spacer {
+  flex: 1;
+}
+
+.mcp-form {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 14px 18px;
+}
+
+.mcp-form .form-field:first-child {
+  flex: 1 1 260px;
+}
+
+.scope-field {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding-bottom: 10px;
+}
+
+.scope-field legend {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+/* Modals: the main app's .modal-card, widened and left aligned for forms */
+
+.admin-modal-card {
+  max-width: 640px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  align-items: stretch;
+  text-align: left;
+}
+
+.secret-card {
+  max-width: 520px;
+  align-items: center;
+  text-align: center;
+}
+
+.secret-warning {
+  color: var(--text) !important;
+}
+
+.secret-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "label label" "value copy";
+  gap: 4px 8px;
+  width: 100%;
+  text-align: left;
+  align-items: center;
+}
+
+.secret-label {
+  grid-area: label;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.secret-value {
+  grid-area: value;
+  display: block;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--blue-dim);
+  color: var(--text);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.85rem;
+  word-break: break-all;
+  user-select: all;
+}
+
+.secret-row .icon-button {
+  grid-area: copy;
+}
+
+@media (max-width: 700px) {
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .card-header .compact-button {
+    align-self: flex-start;
+  }
+
+  .admin-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .cell-url {
+    max-width: 180px;
+  }
+}

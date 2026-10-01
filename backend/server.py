@@ -100,9 +100,12 @@ from typing import Optional
 import numpy as np
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
+from admin import service as admin_service
+from admin.routes import router as admin_router
 from agent import Orchestrator
 from auth.admins import seed_first_admin_from_env
 from auth.dependencies import verified_user_from_request
@@ -116,10 +119,16 @@ from tts import precache as precache_speech
 from tts import warm_up as warm_up_tts
 from vad import SAMPLE_RATE, VoiceActivityDetector
 
+FRONTEND_DIR = config.PROJECT_ROOT / "frontend"
+
 # The SLT Mobitel knowledge base is the Orchestrator's tool/retrieval step
-# (its existing tool_callback hook).
+# (its existing tool_callback hook), and an external chat agent made active
+# in the admin portal, if any, answers before the built in paths.
 retriever = get_retriever()
-orchestrator = Orchestrator(tool_callback=retriever.context_for)
+orchestrator = Orchestrator(
+    tool_callback=retriever.context_for,
+    external_agent_provider=admin_service.get_active_agent,
+)
 
 
 def _warm_up():
@@ -219,8 +228,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Existing user verification and admin sign in.
+# Existing user verification and admin sign in (/auth), and the admin
+# portal's API (/admin/api).
 app.include_router(auth_router)
+app.include_router(admin_router)
 
 # vad.py's calibrated noise floor plus WebRTC VAD's frame classification
 # reject most non-speech audio before it ever reaches transcription, but
@@ -797,11 +808,18 @@ async def health():
         "cloud_speech_configured": config.cloud_speech_configured(),
         "cloud_speech_provider": config.CLOUD_SPEECH_PROVIDER,
         "supported_languages": config.SUPPORTED_LANGUAGES,
-        # Database migration state and the knowledge index (loaded, size,
-        # build date, last retrieval time).
+        # Database migration state, the knowledge index (loaded, size,
+        # build date, last retrieval time), and which external chat agent is
+        # answering (None means the built in assistant).
         "database": await asyncio.to_thread(database_status),
         "knowledge": retriever.status(),
+        "external_agent": admin_service.active_agent_summary(),
     }
+
+
+# The admin portal page, after every route so it never shadows one;
+# html=True serves index.html and redirects /admin to /admin/.
+app.mount("/admin", StaticFiles(directory=FRONTEND_DIR / "admin", html=True), name="admin")
 
 
 if __name__ == "__main__":
