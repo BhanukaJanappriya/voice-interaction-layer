@@ -122,6 +122,16 @@ from vad import SAMPLE_RATE, VoiceActivityDetector
 from voicekit.api import create_router as create_voicekit_router
 from voicekit.settings import VoicekitSettings
 
+# LiveKit is an optional transport. Importing it loads a native library, so a
+# machine that cannot load it (see KNOWN_LIMITATIONS.md) keeps /ws/voice.
+try:
+    from livekit_transport import router as livekit_router
+    from livekit_transport import start_worker as start_livekit_worker
+except Exception as _livekit_import_error:  # pragma: no cover, depends on the machine
+    livekit_router = None
+    start_livekit_worker = None
+    print(f"LiveKit transport unavailable ({type(_livekit_import_error).__name__}); /ws/voice still works.")
+
 FRONTEND_DIR = config.PROJECT_ROOT / "frontend"
 
 # The SLT Mobitel knowledge base is the Orchestrator's tool/retrieval step
@@ -208,6 +218,10 @@ def _opt_out_of_windows_power_throttling():
         print(f"Power throttling opt out failed ({exc}); transcription may be slower.")
 
 
+# The running LiveKit worker handle, set at startup when VOICE_TRANSPORT is livekit.
+livekit_state: dict = {}
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """One startup sequence for the whole app: power throttling opt out,
@@ -219,8 +233,17 @@ async def _lifespan(_app: FastAPI):
     seed_first_admin_from_env()
     if config.WARM_UP_ON_STARTUP:
         threading.Thread(target=_warm_up, daemon=True).start()
-    async with mcp_handle.lifespan():
-        yield
+    if config.VOICE_TRANSPORT == "livekit" and start_livekit_worker is not None:
+        # Never raises: an unreachable LiveKit server is retried in the
+        # background and shown on /health, it does not stop the app.
+        livekit_state["worker"] = start_livekit_worker(sys.modules[__name__])
+    try:
+        async with mcp_handle.lifespan():
+            yield
+    finally:
+        worker = livekit_state.get("worker")
+        if worker is not None:
+            await asyncio.to_thread(worker.stop, 5)
 
 
 app = FastAPI(title="Voice Interaction Backend", lifespan=_lifespan)
@@ -245,8 +268,11 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(admin_router)
 
-# voicekit, the reusable text to speech API (/api/tts/stream, /ws/tts), which
-# refuses every request until VOICEKIT_API_KEYS lists at least one key.
+# Additive routers: the LiveKit token endpoint (/api/livekit) and voicekit,
+# the reusable text to speech API (/api/tts/stream, /ws/tts), which refuses
+# every request until VOICEKIT_API_KEYS lists at least one key.
+if livekit_router is not None:
+    app.include_router(livekit_router)
 if config.VOICEKIT_ENABLED:
     app.include_router(
         create_voicekit_router(
@@ -909,6 +935,13 @@ async def health():
         "knowledge": retriever.status(),
         "external_agent": admin_service.active_agent_summary(),
         "mcp": mcp_handle.status(),
+        "livekit": {
+            "transport": config.VOICE_TRANSPORT,
+            "configured": config.livekit_configured(),
+            "available": livekit_router is not None,
+            "worker": livekit_state["worker"].status() if livekit_state.get("worker") else None,
+        },
+        "avatar_renderer": config.AVATAR_RENDERER,
         "voicekit": {"enabled": config.VOICEKIT_ENABLED, "api_keys_configured": bool(config.VOICEKIT_API_KEYS)},
     }
 
