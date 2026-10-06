@@ -112,6 +112,9 @@ from auth.dependencies import verified_user_from_request
 from auth.routes import router as auth_router
 from db.migrate import database_status, upgrade_to_head
 from knowledge.retriever import get_retriever
+from mcp_client.tools import compose_tool_callbacks, hub_context_for
+from mcp_client.tools import status as mcp_hub_status
+from mcp_client.tools import warm_up as warm_up_mcp_hub
 from mcp_server.mount import mount_mcp
 from stt import transcribe_stream
 from stt import warm_up as warm_up_stt
@@ -138,14 +141,17 @@ FRONTEND_DIR = config.PROJECT_ROOT / "frontend"
 # (its existing tool_callback hook), and an external chat agent made active
 # in the admin portal, if any, answers before the built in paths.
 retriever = get_retriever()
+# The MCP hub's search tool adds to the knowledge base notes, never replaces
+# them: retrieval runs first and a hub failure leaves its output untouched.
+_tool_callback = compose_tool_callbacks(retriever.context_for, hub_context_for)
 orchestrator = Orchestrator(
-    tool_callback=retriever.context_for,
+    tool_callback=_tool_callback,
     external_agent_provider=admin_service.get_active_agent,
 )
 # MCP's ask_assistant gets its own instance: last_mode is per instance, so
 # sharing one with the voice and chat paths could report another request's
 # mode when they overlap.
-mcp_orchestrator = Orchestrator(tool_callback=retriever.context_for)
+mcp_orchestrator = Orchestrator(tool_callback=_tool_callback)
 
 
 def _warm_up():
@@ -172,6 +178,10 @@ def _warm_up():
         retriever.warm_up()
     except Exception as exc:
         print(f"Warm up: knowledge retriever failed ({exc}).")
+    try:
+        warm_up_mcp_hub()
+    except Exception as exc:
+        print(f"Warm up: MCP hub failed ({exc}).")
     try:
         warm_up_tts()
         # The introductions are fixed text, so the slow to synthesize
@@ -935,6 +945,7 @@ async def health():
         "knowledge": retriever.status(),
         "external_agent": admin_service.active_agent_summary(),
         "mcp": mcp_handle.status(),
+        "mcp_hub": mcp_hub_status(),
         "livekit": {
             "transport": config.VOICE_TRANSPORT,
             "configured": config.livekit_configured(),
