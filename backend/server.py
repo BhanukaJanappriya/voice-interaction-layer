@@ -116,6 +116,7 @@ from mcp_client.tools import compose_tool_callbacks, hub_context_for
 from mcp_client.tools import status as mcp_hub_status
 from mcp_client.tools import warm_up as warm_up_mcp_hub
 from mcp_server.mount import mount_mcp
+from otp.routes import router as otp_router
 from stt import transcribe_stream
 from stt import warm_up as warm_up_stt
 from tts import SentenceChunker, speak_stream, speak_text
@@ -276,6 +277,7 @@ app.add_middleware(
 # are served as static files at the very end of this module, after every
 # route, so they never shadow one.
 app.include_router(auth_router)
+app.include_router(otp_router)
 app.include_router(admin_router)
 
 # Additive routers: the LiveKit token endpoint (/api/livekit) and voicekit,
