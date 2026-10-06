@@ -31,6 +31,14 @@
   --bad: #e05a5a;
   --radius: 18px;
   --shadow: 0 10px 30px rgba(31, 62, 100, 0.08);
+  /* Control sizes that follow the desktop screen: the corner buttons (gender,
+     logout, theme, history, end), their spacing and distance from the edge,
+     and the large microphone and captions buttons. 42 px, 8 px, 16 px and
+     60 px are what they were at a 1440 px wide screen. */
+  --ctl: clamp(38px, 2.9vw, 54px);
+  --ctl-gap: clamp(6px, 0.6vw, 12px);
+  --ctl-edge: clamp(12px, 1.2vw, 28px);
+  --ctl-lg: clamp(54px, 4.2vw, 76px);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -127,8 +135,8 @@ body {
    below), so they all look and behave the same without repeating this
    block per button. */
 .icon-button {
-  width: 42px;
-  height: 42px;
+  width: var(--ctl);
+  height: var(--ctl);
   border-radius: 50%;
   border: 1px solid var(--card-border);
   background: var(--card);
@@ -166,8 +174,35 @@ body {
    filled mic reads as "not listening right now" more clearly than the
    same blue every other active toggle in this app already uses. */
 .mic-toggle {
-  width: 60px;
-  height: 60px;
+  width: var(--ctl-lg);
+  height: var(--ctl-lg);
+}
+
+/* The captions button takes the microphone button's size and look: the same
+   large white circle with a blue icon, whether captions are on or off. Off
+   dims the icon instead of changing the shape, so the two buttons read as a
+   pair. (The microphone's red means "muted", which has no meaning for captions.) */
+.caption-toggle,
+.caption-toggle[aria-pressed="true"] {
+  width: var(--ctl-lg);
+  height: var(--ctl-lg);
+  background: var(--card);
+  border-color: var(--card-border);
+  color: var(--blue);
+}
+
+.caption-toggle[aria-pressed="false"] {
+  color: var(--text-dim);
+}
+
+.caption-toggle .icon {
+  width: calc(var(--ctl-lg) * 0.37);
+  height: calc(var(--ctl-lg) * 0.37);
+}
+
+.mic-toggle .icon {
+  width: calc(var(--ctl-lg) * 0.37);
+  height: calc(var(--ctl-lg) * 0.37);
 }
 
 .mic-toggle[aria-pressed="true"] {
@@ -189,8 +224,8 @@ body {
 
 .theme-toggle {
   position: fixed;
-  top: 16px;
-  right: 16px;
+  top: var(--ctl-edge);
+  right: var(--ctl-edge);
   z-index: 10;
 }
 
@@ -201,8 +236,8 @@ body {
    scroll away or crowd the avatar's own space in the middle. */
 .voice-topbar-left {
   position: fixed;
-  top: 16px;
-  left: 16px;
+  top: var(--ctl-edge);
+  left: var(--ctl-edge);
   z-index: 10;
 }
 
@@ -212,8 +247,8 @@ body {
    beside it without either button needing to know about the other. */
 .voice-topbar-right {
   position: fixed;
-  top: 16px;
-  right: 66px;
+  top: var(--ctl-edge);
+  right: calc(var(--ctl-edge) + var(--ctl) + var(--ctl-gap));
   z-index: 10;
 }
 
@@ -221,15 +256,23 @@ body {
    logout button's own offset plus its 42px width and an 8px gap. */
 .voice-topbar-gender {
   position: fixed;
-  top: 16px;
-  right: 116px;
+  top: var(--ctl-edge);
+  right: calc(var(--ctl-edge) + 2 * (var(--ctl) + var(--ctl-gap)));
   z-index: 10;
 }
 
 .gender-letter {
   font-weight: 700;
-  font-size: 15px;
+  font-size: calc(var(--ctl) * 0.36);
   line-height: 1;
+}
+
+/* Icons inside the corner buttons grow and shrink with the buttons. */
+.theme-toggle svg,
+.voice-topbar-left .icon,
+.voice-topbar-right .icon {
+  width: calc(var(--ctl) * 0.43);
+  height: calc(var(--ctl) * 0.43);
 }
 
 /* One time code step inside the existing user form: same inputs and
@@ -255,7 +298,7 @@ body {
   z-index: 10;
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: clamp(14px, 1.4vw, 28px);
 }
 
 .voice-screen {
@@ -333,7 +376,7 @@ body {
    no extra rule needed here. */
 .icon {
   display: inline-flex;
-  color: var(--blue);
+  color: var(--white);
   flex-shrink: 0;
 }
 
