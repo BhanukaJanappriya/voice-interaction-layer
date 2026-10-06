@@ -328,6 +328,17 @@ def _in_language(lines: dict, language: Optional[str]) -> str:
     return lines.get(language) or lines["en"]
 
 
+# The two voice styles tts.py understands. The browser's male/female switch
+# sends one of them (start_session.voice_style, or a set_voice message during
+# a session); anything else, or nothing, keeps the original female voice.
+_VOICE_STYLES = ("female_natural", "male")
+DEFAULT_VOICE_STYLE = "female_natural"
+
+
+def _valid_voice_style(value) -> str:
+    return value if value in _VOICE_STYLES else DEFAULT_VOICE_STYLE
+
+
 # Lets the user tell the assistant their name by voice, not only on the
 # user screen: "my name is Nimal", "call me Nimal". "I'm ..." is left out
 # on purpose, since "I'm good" or "I'm looking for a plan" would otherwise
@@ -426,7 +437,12 @@ class _ChunkQueueSource:
         return item
 
 
-async def _run_one_utterance(websocket: WebSocket, language_hint: Optional[str], vad: VoiceActivityDetector):
+async def _run_one_utterance(
+    websocket: WebSocket,
+    language_hint: Optional[str],
+    vad: VoiceActivityDetector,
+    voice_holder: Optional[dict] = None,
+):
     """Streams audio chunks from the websocket into transcribe_stream()
     running on a background thread, forwarding each partial or final event
     to the client the moment it is produced. Returns
@@ -472,6 +488,8 @@ async def _run_one_utterance(websocket: WebSocket, language_hint: Optional[str],
                         session_ended = True
                         chunk_source.close()
                         return
+                    if payload.get("type") == "set_voice" and voice_holder is not None:
+                        voice_holder["voice_style"] = _valid_voice_style(payload.get("voice_style"))
         except WebSocketDisconnect:
             session_ended = True
             chunk_source.close()
@@ -574,7 +592,9 @@ class _SentenceAnnouncer:
             pass  # client gone or slow; the audio itself still plays
 
 
-async def _speak(websocket: WebSocket, text: str, language: Optional[str]) -> float:
+async def _speak(
+    websocket: WebSocket, text: str, language: Optional[str], voice_style: str = DEFAULT_VOICE_STYLE
+) -> float:
     """Plays an already complete text via TTS (the introduction and the
     canned closing lines), then sends "speaking_done". speak_text() blocks
     for the entire playback, so it runs on a thread via run_in_executor:
@@ -587,7 +607,7 @@ async def _speak(websocket: WebSocket, text: str, language: Optional[str]) -> fl
     tts_start = time.time()
     try:
         await loop.run_in_executor(
-            None, speak_text, text, language or "en", "female_natural", _SentenceAnnouncer(websocket, loop)
+            None, speak_text, text, language or "en", voice_style, _SentenceAnnouncer(websocket, loop)
         )
     except Exception as exc:
         await _send_json(websocket, {"type": "error", "message": f"TTS error: {exc}"})
@@ -595,7 +615,13 @@ async def _speak(websocket: WebSocket, text: str, language: Optional[str]) -> fl
     return time.time() - tts_start
 
 
-async def _speak_canned_reply(websocket: WebSocket, text: str, language: Optional[str], mode: str) -> float:
+async def _speak_canned_reply(
+    websocket: WebSocket,
+    text: str,
+    language: Optional[str],
+    mode: str,
+    voice_style: str = DEFAULT_VOICE_STYLE,
+) -> float:
     """Announces a canned line (the introduction, the closing question or
     the goodbye) the same way a real agent reply is announced, skipping
     the agent call and the chunk by chunk streaming entirely, since the
@@ -603,11 +629,15 @@ async def _speak_canned_reply(websocket: WebSocket, text: str, language: Optiona
     stops sending microphone audio while the line is being synthesized."""
     await _send_json(websocket, {"type": "status", "state": "thinking"})
     await _send_json(websocket, {"type": "agent_response", "text": text, "mode": mode})
-    return await _speak(websocket, text, language)
+    return await _speak(websocket, text, language, voice_style)
 
 
 async def _speak_streamed_reply(
-    websocket: WebSocket, text_input: str, user_name: Optional[str], language: Optional[str]
+    websocket: WebSocket,
+    text_input: str,
+    user_name: Optional[str],
+    language: Optional[str],
+    voice_style: str = DEFAULT_VOICE_STYLE,
 ) -> tuple[str, float, Optional[float]]:
     """Generates the agent's reply and speaks it at the same time. Each
     sentence goes to TTS the moment the agent finishes writing it, so the
@@ -623,7 +653,7 @@ async def _speak_streamed_reply(
     sentence_source = _ChunkQueueSource()
     chunker = SentenceChunker()
     tts_task = loop.run_in_executor(
-        None, speak_stream, sentence_source, language or "en", "female_natural", announcer
+        None, speak_stream, sentence_source, language or "en", voice_style, announcer
     )
 
     agent_start = time.time()
@@ -663,6 +693,7 @@ async def voice_ws(websocket: WebSocket):
     user_name: Optional[str] = None
     greet = True
     session_token: Optional[str] = None
+    voice_holder = {"voice_style": DEFAULT_VOICE_STYLE}
     try:
         start_message = await websocket.receive_text()
         payload = json.loads(start_message)
@@ -671,6 +702,7 @@ async def voice_ws(websocket: WebSocket):
             user_name = (payload.get("user_name") or "").strip()[:40] or None
             greet = payload.get("greet", True) is not False
             session_token = payload.get("session_token") or None
+            voice_holder["voice_style"] = _valid_voice_style(payload.get("voice_style"))
     except Exception as exc:
         await _send_json(websocket, {"type": "error", "message": f"Invalid start message: {exc}"})
         await websocket.close()
@@ -695,7 +727,9 @@ async def voice_ws(websocket: WebSocket):
     try:
         if greet:
             greeting_text, greeting_language = _greeting(user_name, language_hint)
-            await _speak_canned_reply(websocket, greeting_text, greeting_language, "Introduction")
+            await _speak_canned_reply(
+                websocket, greeting_text, greeting_language, "Introduction", voice_holder["voice_style"]
+            )
     except WebSocketDisconnect:
         return
 
@@ -732,7 +766,7 @@ async def voice_ws(websocket: WebSocket):
             turn_start = time.time()
             await _send_json(websocket, {"type": "status", "state": "listening"})
 
-            final_text, detected_language, session_ended = await _run_one_utterance(websocket, language_hint, vad)
+            final_text, detected_language, session_ended = await _run_one_utterance(websocket, language_hint, vad, voice_holder)
 
             if session_ended:
                 return
@@ -759,7 +793,11 @@ async def voice_ws(websocket: WebSocket):
             if awaiting_close_confirmation:
                 if _sounds_negative(final_text) or _sounds_like_closing_signal(final_text):
                     await _speak_canned_reply(
-                        websocket, _in_language(_CLOSING_GOODBYE_TEXT, reply_language), reply_language, "closing"
+                        websocket,
+                        _in_language(_CLOSING_GOODBYE_TEXT, reply_language),
+                        reply_language,
+                        "closing",
+                        voice_holder["voice_style"],
                     )
                     await _send_json(websocket, {"type": "end_chat"})
                     return
@@ -768,14 +806,18 @@ async def voice_ws(websocket: WebSocket):
                 awaiting_close_confirmation = False
             elif _sounds_like_closing_signal(final_text):
                 await _speak_canned_reply(
-                    websocket, _in_language(_CLOSING_QUESTION_TEXT, reply_language), reply_language, "closing"
+                    websocket,
+                    _in_language(_CLOSING_QUESTION_TEXT, reply_language),
+                    reply_language,
+                    "closing",
+                    voice_holder["voice_style"],
                 )
                 awaiting_close_confirmation = True
                 continue
 
             await _send_json(websocket, {"type": "status", "state": "thinking"})
             reply_text, agent_time, first_audio_at = await _speak_streamed_reply(
-                websocket, final_text, user_name, reply_language
+                websocket, final_text, user_name, reply_language, voice_holder["voice_style"]
             )
             if not reply_text:
                 continue
