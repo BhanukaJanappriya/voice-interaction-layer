@@ -26,7 +26,10 @@ load_dotenv()
 # Cloud LLM (multi agent orchestration when reachable)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
-CLOUD_LLM_PROVIDER = os.environ.get("CLOUD_LLM_PROVIDER", "gemini").strip().lower()  # "gemini" or "gpt"
+# "livekit" (LiveKit Inference, called with the LiveKit key and secret below),
+# "gemini" or "gpt". The cloud provider answers first; when it is not set up or
+# fails, the local Ollama model answers alone.
+CLOUD_LLM_PROVIDER = os.environ.get("CLOUD_LLM_PROVIDER", "livekit").strip().lower()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest").strip()
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 # Extra "reasoning" model call before the reply is composed (see
@@ -209,6 +212,15 @@ LIVEKIT_API_KEY = os.environ.get("LIVEKIT_API_KEY", "").strip()
 LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "").strip()
 LIVEKIT_TOKEN_TTL_SECONDS = _env_int("LIVEKIT_TOKEN_TTL_SECONDS", 600)
 LIVEKIT_AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME", "voice-assistant").strip()
+# LiveKit Inference: the language model that writes the replies when
+# CLOUD_LLM_PROVIDER=livekit. Measured through the gateway from the development
+# machine, first token took 1.3 to 2.2 s (gpt-4o-mini fastest of four tried),
+# against 0.3 to 0.9 s for the local model; see ARCHITECTURE.md.
+LIVEKIT_LLM_MODEL = os.environ.get("LIVEKIT_LLM_MODEL", "openai/gpt-4o-mini").strip()
+LIVEKIT_INFERENCE_URL = os.environ.get("LIVEKIT_INFERENCE_URL", "https://agent-gateway.livekit.cloud/v1").strip().rstrip("/")
+LIVEKIT_LLM_TIMEOUT_SECONDS = _env_float("LIVEKIT_LLM_TIMEOUT_SECONDS", 12.0)
+# Same cap the local model uses (see agent.py), so a long answer is not read out.
+LIVEKIT_LLM_MAX_TOKENS = _env_int("LIVEKIT_LLM_MAX_TOKENS", 220)
 
 # Which avatar the page draws: "talkinghead" is the lip synced avatar in
 # frontend/avatar (its model files come from frontend/avatar/fetch_assets.py;
@@ -299,6 +311,8 @@ def cloud_llm_configured() -> bool:
     Does not make a network call, so it cannot detect an invalid key or an
     outage; that is handled at call time by the agent's own fallback logic.
     """
+    if CLOUD_LLM_PROVIDER == "livekit":
+        return livekit_configured()
     if CLOUD_LLM_PROVIDER == "gemini":
         return bool(GEMINI_API_KEY)
     if CLOUD_LLM_PROVIDER == "gpt":

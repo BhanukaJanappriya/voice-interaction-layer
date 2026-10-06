@@ -937,7 +937,10 @@ async def health():
         "status": "ok",
         "cloud_llm_configured": config.cloud_llm_configured(),
         "cloud_llm_provider": config.CLOUD_LLM_PROVIDER,
-        "cloud_llm_model": config.GEMINI_MODEL if config.CLOUD_LLM_PROVIDER == "gemini" else config.OPENAI_MODEL,
+        "cloud_llm_model": {
+            "livekit": config.LIVEKIT_LLM_MODEL,
+            "gemini": config.GEMINI_MODEL,
+        }.get(config.CLOUD_LLM_PROVIDER, config.OPENAI_MODEL),
         # Why the cloud LLM is currently not answering (None if it is, or
         # if it has not been tried yet), so a quick check tells the story.
         "cloud_llm_last_error": orchestrator.last_cloud_error,

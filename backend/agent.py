@@ -454,6 +454,12 @@ def _build_cloud_agent(role_prompt: Optional[str] = None) -> ChatAgent:
     """Instantiates the configured cloud provider's agent class for one
     collaboration role. Kept as a small factory so the Orchestrator does
     not need an if/elif per provider at every call site."""
+    if config.CLOUD_LLM_PROVIDER == "livekit":
+        # Imported here, like the other providers' SDKs: it needs livekit-api,
+        # and it imports this module, so a top level import would be circular.
+        from livekit_inference import LiveKitInferenceAgent
+
+        return LiveKitInferenceAgent(system_prompt=role_prompt)
     if config.CLOUD_LLM_PROVIDER == "gpt":
         return GptAgent(system_prompt=role_prompt)
     return GeminiAgent(system_prompt=role_prompt)
