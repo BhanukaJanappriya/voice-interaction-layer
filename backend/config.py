@@ -197,6 +197,99 @@ STT_CONFIDENCE_FLOOR = _env_float("STT_CONFIDENCE_FLOOR", -0.40)
 MCP_ENABLED = _env_bool("MCP_ENABLED", True)
 
 
+# Voice transport: "livekit" is real time browser audio in and out through a
+# LiveKit room, "websocket" is the original /ws/voice pipeline with server
+# side playback. Both stay available; this only picks what the frontend uses.
+# livekit without LIVEKIT_URL, key and secret behaves as websocket (the page
+# asks GET /api/livekit/config and falls back), so a missing server never
+# leaves the page without a voice.
+VOICE_TRANSPORT = os.environ.get("VOICE_TRANSPORT", "livekit").strip().lower()
+LIVEKIT_URL = os.environ.get("LIVEKIT_URL", "").strip()
+LIVEKIT_API_KEY = os.environ.get("LIVEKIT_API_KEY", "").strip()
+LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "").strip()
+LIVEKIT_TOKEN_TTL_SECONDS = _env_int("LIVEKIT_TOKEN_TTL_SECONDS", 600)
+LIVEKIT_AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME", "voice-assistant").strip()
+
+# Which avatar the page draws: "talkinghead" is the lip synced avatar in
+# frontend/avatar (its model files come from frontend/avatar/fetch_assets.py;
+# without them, or without WebGL, the page falls back), "legacy" is bot3d.js
+# (Three.js r128) and the flat 2D face.
+AVATAR_RENDERER = os.environ.get("AVATAR_RENDERER", "talkinghead").strip().lower()
+
+# voicekit: the reusable text to speech package and its HTTP/WebSocket API.
+VOICEKIT_ENABLED = _env_bool("VOICEKIT_ENABLED", True)
+# Comma separated API keys accepted by /api/tts/stream and /ws/tts. Empty
+# means the API refuses every request (it is never open by default).
+VOICEKIT_API_KEYS = [k.strip() for k in os.environ.get("VOICEKIT_API_KEYS", "").split(",") if k.strip()]
+VOICEKIT_MAX_TEXT_CHARS = _env_int("VOICEKIT_MAX_TEXT_CHARS", 2000)
+VOICEKIT_RATE_LIMIT_PER_MINUTE = _env_int("VOICEKIT_RATE_LIMIT_PER_MINUTE", 30)
+# Folder holding local open voice models (Piper .onnx files), if any.
+VOICEKIT_LOCAL_VOICE_DIR = Path(
+    os.environ.get("VOICEKIT_LOCAL_VOICE_DIR", "").strip() or DATA_DIR / "voices"
+)
+
+# MCP hub (this app as an MCP client). The key only ever comes from the
+# environment; nothing here is logged.
+MCP_HUB_URL = os.environ.get("MCP_HUB_URL", "https://mcphub.sltdigitallab.lk").strip().rstrip("/")
+MCP_HUB_AUTH_HEADER = os.environ.get("MCP_HUB_AUTH_HEADER", "X-API-Key").strip()
+MCP_HUB_API_KEY = os.environ.get("MCP_HUB_API_KEY", "").strip()
+MCP_HUB_ENABLED = _env_bool("MCP_HUB_ENABLED", True)
+MCP_HUB_TIMEOUT_SECONDS = _env_float("MCP_HUB_TIMEOUT_SECONDS", 8.0)
+MCP_HUB_RETRIES = _env_int("MCP_HUB_RETRIES", 2)
+# The longest a spoken reply waits for the hub's notes. Measured against the
+# real hub, a knowledge search takes 3 to 7 seconds, far over the first word
+# budget, so the reply path gives up after this and answers from retrieval.
+MCP_HUB_CONTEXT_BUDGET_SECONDS = _env_float("MCP_HUB_CONTEXT_BUDGET_SECONDS", 1.0)
+# Whether the hub's search tool is also asked on every spoken reply. Off by
+# default: it takes 3 to 7 seconds (measured 2026-10-05), which would delay the
+# first word, and it overlaps the local knowledge base. The hub is still used
+# for one time codes either way.
+MCP_HUB_IN_REPLIES = _env_bool("MCP_HUB_IN_REPLIES", False)
+# After a failed hub call, skip the hub for this long (same idea as the
+# 5 minute cloud LLM breaker in agent.py).
+MCP_HUB_BREAKER_SECONDS = _env_int("MCP_HUB_BREAKER_SECONDS", 300)
+# Comma separated names of hub tools offered to the Orchestrator. Empty
+# means every tool that takes one required text argument.
+MCP_HUB_TOOLS = [t.strip() for t in os.environ.get("MCP_HUB_TOOLS", "").split(",") if t.strip()]
+# Hub tool that finds a customer by landline number (empty: use the local DB).
+MCP_HUB_CUSTOMER_LOOKUP_TOOL = os.environ.get("MCP_HUB_CUSTOMER_LOOKUP_TOOL", "").strip()
+
+# Existing user verification methods, comma separated: "pin" (landline plus
+# PIN, as before) and/or "otp" (landline plus a one time code).
+AUTH_METHODS = [m.strip().lower() for m in os.environ.get("AUTH_METHODS", "pin").split(",") if m.strip()]
+OTP_LENGTH = _env_int("OTP_LENGTH", 6)
+OTP_TTL_SECONDS = _env_int("OTP_TTL_SECONDS", 300)
+OTP_MAX_ATTEMPTS = _env_int("OTP_MAX_ATTEMPTS", 3)
+OTP_RESEND_COOLDOWN_SECONDS = _env_int("OTP_RESEND_COOLDOWN_SECONDS", 60)
+OTP_RATE_LIMIT_PER_NUMBER_PER_HOUR = _env_int("OTP_RATE_LIMIT_PER_NUMBER_PER_HOUR", 5)
+OTP_RATE_LIMIT_PER_IP_PER_HOUR = _env_int("OTP_RATE_LIMIT_PER_IP_PER_HOUR", 20)
+# "console" (development only, prints the code), "email" or "sms".
+OTP_SENDER = os.environ.get("OTP_SENDER", "console").strip().lower()
+# Where codes come from: "hub" (the MCP hub's own customer lookup and OTP
+# tools), "local" (generated and checked here, delivered by OTP_SENDER), or
+# "auto" (the hub while it is reachable, local otherwise).
+OTP_BACKEND = os.environ.get("OTP_BACKEND", "auto").strip().lower()
+SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
+SMTP_PORT = _env_int("SMTP_PORT", 587)
+SMTP_USER = os.environ.get("SMTP_USER", "").strip()
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "").strip()
+SMTP_FROM = os.environ.get("SMTP_FROM", "").strip()
+SMS_GATEWAY_URL = os.environ.get("SMS_GATEWAY_URL", "").strip()
+SMS_GATEWAY_API_KEY = os.environ.get("SMS_GATEWAY_API_KEY", "").strip()
+SMS_GATEWAY_AUTH_HEADER = os.environ.get("SMS_GATEWAY_AUTH_HEADER", "Authorization").strip()
+SMS_SENDER_ID = os.environ.get("SMS_SENDER_ID", "SLTMobitel").strip()
+
+
+def livekit_configured() -> bool:
+    """True when a LiveKit URL, key and secret are all present (no network call)."""
+    return bool(LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET)
+
+
+def mcp_hub_configured() -> bool:
+    """True when the hub is enabled and an API key is present (no network call)."""
+    return bool(MCP_HUB_ENABLED and MCP_HUB_URL and MCP_HUB_API_KEY)
+
+
 def database_is_sqlite() -> bool:
     return DATABASE_URL.startswith("sqlite")
 
