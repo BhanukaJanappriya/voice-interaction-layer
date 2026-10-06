@@ -35,6 +35,11 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Where one time codes go (backend/otp). Both optional: a customer
+    # without contact details is treated like an unknown number.
+    mobile_e164: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String(254), nullable=True)
+
 
 class Admin(Base):
     __tablename__ = "admins"
@@ -110,3 +115,25 @@ class AuditLog(Base):
     mcp_client_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("mcp_clients.id", ondelete="SET NULL"), nullable=True
     )
+
+
+class OtpChallenge(Base):
+    """One requested one time code. Holds only keyed hashes (backend/otp/
+    hashing.py), never a phone number, address, destination or code.
+    user_id is NULL for a decoy challenge (unknown number, anti enumeration)."""
+
+    __tablename__ = "otp_challenges"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    phone_hash: Mapped[str] = mapped_column(String(64), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    destination_hash: Mapped[str] = mapped_column(String(64))
+    channel: Mapped[str] = mapped_column(String(8))  # "sms" | "email"
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    client_ip_hash: Mapped[str] = mapped_column(String(64), index=True)
+    # Hub OTP backend only: Fernet sealed {phone, hub session id}.
+    hub_ref: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
