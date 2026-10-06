@@ -550,6 +550,18 @@ these parts were not run for real. Read this list before relying on a claim.
   documentation without the SDK or a key. The local Piper provider never
   produced audio here (no model files, no espeak-ng). Kokoro is not implemented.
 
+## LiveKit is tried first, with a fallback; a stale .env hides the new parts
+
+The page uses LiveKit only when the server is set to it, has keys and its voice
+agent is running (`agent_ready`), and falls back to `/ws/voice` on a refused
+token, a failed connection or an agent that does not answer within 20 seconds.
+That timeout is a guess based on one measured start (about 5 seconds to the
+greeting), not a tuned value, and it means a failing LiveKit costs up to 20
+seconds before the fallback starts when the room connects but no agent arrives.
+A `backend/.env` copied from an older template keeps `VOICE_TRANSPORT=websocket`
+and `AVATAR_RENDERER=legacy`, which override the new defaults: the page then
+shows the old bot and the male and female switch changes only the voice.
+
 ## The first word over LiveKit is slower without a cloud voice
 
 voicekit's edge-tts provider returns audio only once a whole sentence is
@@ -581,8 +593,10 @@ ignored like `mpfb.glb` (downloaded by `fetch_assets.py`). Without it the
 toggle changes only the voice and shows a short notice. Two of its inputs
 (Visemes 02 and Faceunits 01) are described as CC0 on the MakeHuman pages but
 the licence file inside each zip was not read; confirm before shipping
-(docs/THIRD_PARTY.md). The model is bare chested with a static hair mesh and is
-not compressed.
+(docs/THIRD_PARTY.md). The model wears a plain blue T-shirt and jeans (a CC0
+MakeHuman outfit, texture repainted without its logo), is barefoot, has a static
+hair mesh and is not compressed. It was checked in a head and shoulders view;
+the trousers and arms in full body framing were not looked at.
 
 ## Licence and policy decisions that are not mine to make
 

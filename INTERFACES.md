@@ -427,7 +427,12 @@ backend/livekit_transport/
             -> {url, token, room, identity, expires_at}; 503 when LiveKit is not configured.
             A verified user (session_token, bearer or cookie) gets identity user-<id> and
             the name from the account; anyone else gets guest-<random>.
-        GET /config -> {transport, livekit_configured, avatar_renderer}
+        GET /config -> {transport, livekit_configured, avatar_renderer, agent_ready}
+            agent_ready is false while the worker of this process is starting,
+            retrying or stopped; POST /token then answers 503 too, and the page
+            uses /ws/voice (set_agent_status_provider(fn) is how server.py gives
+            the router the worker's status; with no provider the agent is assumed
+            to run elsewhere and agent_ready is true)
     class LiveKitVoiceSession(room, settings: SessionSettings, bindings: Bindings, **injectables)
         async run() -> None   one conversation on a connected rtc room; returns when it ends
         async aclose()
