@@ -74,3 +74,12 @@ httpx==0.28.1
 
 # Tests
 pytest==9.1.1
+
+# LiveKit transport (VOICE_TRANSPORT=livekit). livekit-agents declares
+# openai<3 for its own optional plugins, which this project does not use, so
+# pip warns about the openai pin above; keep the pin, nothing here imports it.
+# Install with: pip install --no-deps livekit livekit-api livekit-agents
+livekit==1.1.20
+livekit-api==1.2.1
+livekit-agents==1.8.4
+
