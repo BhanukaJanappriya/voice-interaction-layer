@@ -1,6 +1,6 @@
-# Male avatar build (headless Blender, MPFB)
+﻿# Male avatar build (headless Blender, MPFB)
 
-Output: `frontend/avatar/assets/male.glb` (18.4 MB, git ignored by `*.glb`). Rebuild with the steps below. Total time about 3 minutes.
+Output: `frontend/avatar/assets/male.glb` (19.3 MB, git ignored by `*.glb`). Rebuild with the steps below. Total time about 3 minutes.
 
 ## One time setup
 
@@ -24,7 +24,7 @@ blender --background --python frontend\avatar\tools\make_male_avatar.py -- --out
 python frontend\avatar\tools\validate_glb.py frontend\avatar\assets\male.glb frontend\avatar\assets\mpfb.glb
 ```
 
-The script follows TalkingHead `blender/MPFB/MPFB.md`: male basemesh (gender 1.0, caucasian), TalkingHead rig and weights, CC0 young caucasian male skin, low-poly eyes, eyebrow001, eyelashes01, teeth_base, tongue01, short02 hair (all GameEngine PBR), export copy with Meta visemes, ARKit face units and interpolation to child meshes, bake masks and helper removal, TalkingHead `scale_character` and `fix_bone_axes` (A pose) helpers, alpha fix (opaque for skin, teeth, tongue, brow and lash strips; alpha clip 0.3 for eyes and hair), glTF binary export without animation.
+The script follows TalkingHead `blender/MPFB/MPFB.md`: male basemesh (gender 1.0, caucasian), TalkingHead rig and weights, CC0 young caucasian male skin, low-poly eyes, eyebrow001, eyelashes01, teeth_base, tongue01, short02 hair, and the CC0 MakeHuman `male_casualsuit04` (short sleeve crew neck T-shirt plus jeans, from the clothes folder of the system pack; fitted by MPFB, texture repainted in memory as a plain mid blue with no logo, trim or watermark and scaled to 1024 px; its face morph targets are dropped) (all GameEngine PBR), export copy with Meta visemes, ARKit face units and interpolation to child meshes, bake masks and helper removal, TalkingHead `scale_character` and `fix_bone_axes` (A pose) helpers, alpha fix (opaque for skin, teeth, tongue, brow and lash strips; alpha clip 0.3 for eyes and hair), glTF binary export without animation.
 
 ## Manual fallback in the Blender UI
 
@@ -32,6 +32,7 @@ Follow MPFB.md in the TalkingHead repo (about 30 minutes): install the packs via
 
 ## Known gaps
 
-- No clothes: the model is bare chested. Add a CC0 clothing asset from the system pack (for example under `clothes/`) with one more `add()` call in the script if wanted. Clothing was not checked for CC0 status individually.
+- Clothes: other outfits in the pack (male_casualsuit01 to 06, worksuit, elegantsuit) can be swapped in with one `add()` call. Bare feet, no shoes (shoes01 to 06 exist in the pack).
 - No Meshopt or Draco compression applied (TalkingHead main supports Meshopt; `gltf-transform optimize --compress meshopt --texture-compress webp` would shrink it further).
 - Hair is a static mesh (no hair bones), so there is no dynamic hair motion.
+

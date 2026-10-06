@@ -71,11 +71,48 @@ def add(kind, folder, name, mat=None):
                                        "Eyebrows" if kind == "eyebrows" else
                                        "Eyelashes" if kind == "eyelashes" else
                                        "Teeth" if kind == "teeth" else
-                                       "Tongue" if kind == "tongue" else "Hair"),
+                                       "Tongue" if kind == "tongue" else
+                                       "Clothes" if kind == "clothes" else "Hair"),
                                        material_type="GAMEENGINE", subdiv_levels=0,
                                        alternative_materials=alt)
     print("added", kind, folder, obj)
     return obj
+
+
+def plain_shirt_texture():
+    """Repaint the CC0 T-shirt texture as a plain solid colour (no logo, no orange trim,
+    no website watermark). Pixels are edited in memory, then packed into the GLB."""
+    import numpy as np
+    for img in bpy.data.images:
+        if "casualsuit04" in img.name and max(img.size) > 1024:
+            img.scale(1024, 1024)  # keeps the file small, 1024 is plenty for a shirt
+        if "casualsuit04_diffuse" not in img.name:
+            continue
+        w, h = img.size
+        px = np.empty(w * h * 4, dtype=np.float32)
+        img.pixels.foreach_get(px)
+        a = px.reshape(h, w, 4)  # row 0 is the bottom of the image
+        sx, sy = w / 1024.0, h / 1024.0
+        def box(x0, y0, x1, y1):  # coordinates as seen in a 1024 px top-down view
+            return (slice(int(h - y1 * sy), int(h - y0 * sy)), slice(int(x0 * sx), int(x1 * sx)))
+        shirt = a[box(60, 150, 300, 300)].reshape(-1, 4)[:, :3].mean(axis=0)
+        # logo circle on the front panel
+        cy, cx = h - 170 * sy, 570 * sx
+        yy, xx = np.ogrid[:h, :w]
+        logo = (yy - cy) ** 2 + (xx - cx) ** 2 < (78 * sx) ** 2
+        # orange trim: strong red, medium green, low blue (not jeans, which are blue)
+        r, g, b = a[..., 0], a[..., 1], a[..., 2]
+        orange = (r > 0.55) & (g > 0.25) & (g < 0.8) & (b < 0.35) & (r - b > 0.35)
+        top = np.zeros((h, w), bool)
+        top[box(0, 0, 1024, 420)] = True
+        mask = (logo | orange) & top
+        a[mask, :3] = shirt
+        a[box(850, 960, 1024, 1024)] = a[box(850, 900, 1024, 960)][-1:, :, :].mean(axis=(0, 1))
+        a[box(850, 960, 1024, 1024)][..., 3] = 1.0
+        img.pixels.foreach_set(px)
+        img.update()
+        img.pack()
+        print("shirt texture repainted", img.name, "pixels", int(mask.sum()))
 
 
 add("eyes", "low-poly", "low-poly")
@@ -84,6 +121,10 @@ add("eyelashes", "eyelashes01", "eyelashes01")
 add("teeth", "teeth_base", "teeth_base")
 add("tongue", "tongue01", "tongue01")
 add("hair", "short02", "short02")
+# CC0 MakeHuman short sleeve T-shirt plus jeans (explicitly released as CC0 in 2020)
+add("clothes", "male_casualsuit04", "male_casualsuit04")
+
+plain_shirt_texture()
 
 # 4. Export copy with ARKit and Oculus targets, interpolated to child meshes
 collection = basemesh.users_collection[0]
@@ -103,6 +144,11 @@ for o in list(bpy.data.objects):
     if o not in keep:
         bpy.data.objects.remove(o, do_unlink=True)
 arm.name = "Armature"
+for o in keep:
+    # clothes do not need face morph targets, drop them to keep the file small
+    if o.type == "MESH" and "casualsuit" in o.name and o.data.shape_keys:
+        bpy.context.view_layer.objects.active = o
+        bpy.ops.object.shape_key_remove(all=True)
 for o in keep:
     if o is not arm and o.name.endswith("_export_copy"):
         o.name = o.name[:-len("_export_copy")]
@@ -151,6 +197,8 @@ def fix_materials():
         low = mat.name.lower()
         flat = any(k in low for k in ("eyebrow", "eyelash"))
         masked = any(k in low for k in ("low-poly", "short02", "eyes"))
+        if "casualsuit" in low:
+            flat = False
         if flat:
             for l in list(bsdf.inputs["Base Color"].links):
                 nt.links.remove(l)
