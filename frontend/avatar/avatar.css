@@ -1,0 +1,53 @@
+/*
+ * Styles for the TalkingHead avatar. loader.js links this file itself, and the
+ * same rules can be pasted into style.css. Everything is scoped to
+ * #bot-avatar.has-th, a class loader.js adds only once the 3D avatar is really
+ * running, so without it the legacy canvas and flat face are untouched.
+ */
+
+/* The stage exists from the start (TalkingHead needs a laid out box to size
+   its canvas) but stays invisible until the renderer is ready. */
+.th-stage {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  border-radius: 50%;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 35%, var(--card) 0%, var(--blue-dim) 100%);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow);
+}
+
+.th-stage canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#bot-avatar.has-th {
+  width: clamp(220px, 36vh, 340px);
+  height: clamp(220px, 36vh, 340px);
+}
+
+#bot-avatar.has-th .th-stage {
+  visibility: visible;
+}
+
+#bot-avatar.has-th .bot-canvas,
+#bot-avatar.has-th .bot-face,
+#bot-avatar.has-th .bot-ring {
+  display: none;
+}
+
+/* A soft state colored edge, reusing the tokens the legacy ring uses. */
+#bot-avatar.has-th.state-listening .th-stage { border-color: var(--good); }
+#bot-avatar.has-th.state-thinking .th-stage { border-color: var(--warn); }
+#bot-avatar.has-th.state-speaking .th-stage { border-color: var(--blue); }
+#bot-avatar.has-th.state-error .th-stage { border-color: var(--bad); }
+
+@media (max-width: 600px) {
+  #bot-avatar.has-th {
+    width: clamp(180px, 46vw, 260px);
+    height: clamp(180px, 46vw, 260px);
+  }
+}

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avatar demo</title>
+<!-- The import map must come before any module loads. Paths are absolute so
+     the page works at /avatar/demo.html on the app server. -->
+<script type="importmap">
+{ "imports": {
+  "three": "/avatar/vendor/three/build/three.module.js",
+  "three/addons/": "/avatar/vendor/three/examples/jsm/"
+}}
+</script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 16px; background: #eef3fa; color: #1c2b3a; }
+  #wrap { display: flex; flex-wrap: wrap; gap: 20px; }
+  #stage { position: relative; width: 360px; height: 360px; border-radius: 50%; overflow: hidden; background: #dfe9f7; border: 1px solid #c9d8ea; }
+  #panel { flex: 1; min-width: 300px; max-width: 560px; }
+  button, input, select { font: inherit; padding: 5px 9px; margin: 3px 3px 3px 0; }
+  fieldset { margin: 0 0 10px; border: 1px solid #c9d8ea; border-radius: 8px; }
+  #log { font: 12px/1.4 ui-monospace, monospace; background: #fff; border: 1px solid #c9d8ea; padding: 8px; height: 150px; overflow: auto; white-space: pre-wrap; }
+  #hud { font-size: 13px; margin: 6px 0; }
+</style>
+</head>
+<body>
+<h1 style="font-size:20px">Avatar demo</h1>
+<div id="wrap">
+  <div><div id="stage"></div><div id="hud">fps: <b id="fps">-</b> | active: <b id="active">no</b> | gender: <b id="gender">-</b></div></div>
+  <div id="panel">
+    <fieldset><legend>Renderer</legend>
+      <button id="init">Init</button><button id="destroy">Destroy</button>
+      <button id="failgl">Re-init with WebGL disabled</button>
+    </fieldset>
+    <fieldset><legend>State</legend>
+      <span id="states"></span>
+    </fieldset>
+    <fieldset><legend>Gender</legend>
+      <button data-g="female">female</button><button data-g="male">male (asset may be missing)</button>
+    </fieldset>
+    <fieldset><legend>Lip sync</legend>
+      <button id="burst">Test tone bursts (stream)</button>
+      <button id="sample">Sample speech (stream)</button>
+      <button id="sentence">speakSentence (text based)</button>
+      <button id="stop">stop()</button><br>
+      voicekit server <input id="vk" size="22" placeholder="http://127.0.0.1:8010">
+      key <input id="key" size="8" value="test">
+      lang <select id="lang"><option>en</option><option>si</option><option>ta</option></select>
+      <button id="speak">voicekit speak + timings</button><br>
+      <button id="measure">measureSyncOffset().print()</button>
+    </fieldset>
+    <div id="log"></div>
+  </div>
+</div>
+<script src="/voicekit/voicekit.js"></script>
+<script type="module">
+  import api from "/avatar/avatar.js";
+  const $ = (id) => document.getElementById(id);
+  const log = (...a) => { $("log").textContent += a.join(" ") + "\n"; $("log").scrollTop = 1e9; console.log(...a); };
+  const realGetContext = HTMLCanvasElement.prototype.getContext;
+  let ctxMain = null;
+
+  for (const t of ["idle", "calibrating", "listening", "thinking", "speaking", "error"]) {
+    const b = document.createElement("button");
+    b.textContent = t; b.onclick = () => api.setState(t);
+    $("states").appendChild(b);
+  }
+  for (const ev of ["avatar:fallback", "avatar:gender-fallback"]) {
+    document.addEventListener(ev, (e) => log(ev, JSON.stringify(e.detail)));
+  }
+
+  async function init() {
+    log("init...");
+    const t0 = performance.now();
+    const ok = await api.init($("stage"), { gender: "female" });
+    log("ready:", ok, Math.round(performance.now() - t0) + " ms");
+  }
+  $("init").onclick = init;
+  $("destroy").onclick = () => { api.destroy(); log("destroyed"); };
+  $("failgl").onclick = async () => {
+    // Simulates a browser without WebGL for real: the check inside init() sees null contexts.
+    HTMLCanvasElement.prototype.getContext = function (type, ...r) { return /webgl/.test(type) ? null : realGetContext.call(this, type, ...r); };
+    api.destroy();
+    log("WebGL disabled, init again");
+    const ok = await api.init($("stage"));
+    log("ready:", ok);
+    HTMLCanvasElement.prototype.getContext = realGetContext;
+  };
+  document.querySelectorAll("[data-g]").forEach((b) => (b.onclick = async () => log("setGender", b.dataset.g, JSON.stringify(await api.setGender(b.dataset.g)))));
+
+  function audioCtx() { return ctxMain || (ctxMain = new AudioContext()); }
+
+  // A MediaStream with speech like bursts, standing in for the LiveKit track.
+  $("burst").onclick = async () => {
+    const ctx = audioCtx(); await ctx.resume();
+    const dest = ctx.createMediaStreamDestination();
+    const osc = ctx.createOscillator(), g = ctx.createGain();
+    osc.type = "sawtooth"; osc.frequency.value = 140; g.gain.value = 0;
+    osc.connect(g); g.connect(dest); osc.start();
+    for (let i = 0; i < 6; i++) { g.gain.setValueAtTime(0, ctx.currentTime + 0.5 + i * 1.2); g.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.52 + i * 1.2); g.gain.setValueAtTime(0.3, ctx.currentTime + 0.9 + i * 1.2); g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.95 + i * 1.2); }
+    osc.stop(ctx.currentTime + 9);
+    // Like the page's <audio>: the stream is played by something else. Here a muted element keeps Chromium feeding it.
+    const el = new Audio(); el.srcObject = dest.stream; el.muted = true; el.play().catch(() => {});
+    log("attachAudioStream:", await api.attachAudioStream(dest.stream));
+  };
+
+  $("sample").onclick = async () => {
+    const ctx = audioCtx(); await ctx.resume();
+    const res = await fetch("/avatar/assets/sample.wav");
+    if (!res.ok) return log("no assets/sample.wav (create one with SAPI, see demo.html comments)");
+    const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const dest = ctx.createMediaStreamDestination();
+    src.connect(dest);
+    src.connect(ctx.destination); // audible, as the page's <audio> would be
+    await api.attachAudioStream(dest.stream);
+    src.start();
+    log("sample speech started", buf.duration.toFixed(1) + " s");
+  };
+
+  $("sentence").onclick = () => {
+    api.setState("speaking");
+    api.speakSentence($("lang").value === "en" ? "Hello, I am your assistant. How can I help you today?" : "ආයුබෝවන්, මම ඔබේ සහායකයා වෙමි.");
+  };
+  $("stop").onclick = () => { api.stop(); log("stop()"); };
+
+  $("speak").onclick = async () => {
+    const lang = $("lang").value;
+    const text = { en: "Hello there. This is a streaming voice with word timings.", si: "ආයුබෝවන්, මම ඔබට උදව් කිරීමට සූදානම්.", ta: "வணக்கம், நான் உங்களுக்கு உதவ தயாராக இருக்கிறேன்." }[lang];
+    if (!window.kit) window.kit = new VoiceKit({ baseUrl: $("vk").value, apiKey: $("key").value });
+    const kit = window.kit; let handle = null; const pending = [];
+    kit.onTimings = (w) => (handle ? handle.addTimings(w) : pending.push(...w));
+    kit.onStart = () => log("voicekit audio started");
+    kit.onError = (e) => log("voicekit error", e.message);
+    api.setState("speaking");
+    const done = kit.speak(text, { language: lang, voice: "female_natural" });
+    handle = await api.speakAudio(kit, [], { language: lang });
+    handle.addTimings(pending.splice(0)); // timings that arrived while the audio graph was being built
+    log("voicekit speak", lang, JSON.stringify(await done));
+    api.setState("idle");
+  };
+
+  $("measure").onclick = () => { const r = api.measureSyncOffset().print(); log(JSON.stringify(r.offsets.slice(-8))); };
+
+  setInterval(() => { $("fps").textContent = api.fps(); $("active").textContent = api.isActive() ? "yes" : "no"; $("gender").textContent = api.gender || "-"; }, 500);
+  window.demo = { api, log };
+  if (!/noinit/.test(location.search)) init();
+</script>
+<!-- To make assets/sample.wav on Windows (not committed, local speech only):
+  powershell -c "Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SetOutputToWaveFile('frontend/avatar/assets/sample.wav'); $s.Speak('Hello, this is a short sample of speech for the avatar. How can I help you today?'); $s.Dispose()" -->
+</body>
+</html>
