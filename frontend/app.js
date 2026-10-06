@@ -197,10 +197,161 @@ function showVerifyError(message) {
   verifyError.classList.toggle("hidden", !message);
 }
 
+// One time code login (the alternative to the PIN; GET /auth/methods says
+// whether the server offers it). otpMode is "pin" (the original form),
+// "otp-phone" (asking for the number) or "otp-code" (a code was sent).
+const useOtpButton = document.getElementById("use-otp");
+const usePinButton = document.getElementById("use-pin");
+const otpStep = document.getElementById("otp-step");
+const otpInfo = document.getElementById("otp-info");
+const otpInput = document.getElementById("user-otp-input");
+const otpResendButton = document.getElementById("otp-resend");
+const pinLabel = document.getElementById("user-pin-label");
+let otpMode = "pin";
+let otpChallengeId = null;
+let otpOffered = false;
+let otpResendTimer = null;
+
+function setOtpMode(mode) {
+  otpMode = mode;
+  const pinVisible = mode === "pin";
+  [pinLabel, userPinInput].forEach((el) => el && el.classList.toggle("hidden", !pinVisible));
+  if (otpStep) otpStep.classList.toggle("hidden", mode !== "otp-code");
+  if (userPhoneInput) userPhoneInput.disabled = mode === "otp-code";
+  if (confirmNameButton) {
+    confirmNameButton.textContent = mode === "pin" ? "Continue" : mode === "otp-phone" ? "Send code" : "Verify";
+  }
+  if (useOtpButton) useOtpButton.classList.toggle("hidden", !(otpOffered && mode === "pin"));
+  if (usePinButton) usePinButton.classList.toggle("hidden", !(otpOffered && mode !== "pin"));
+  if (mode !== "otp-code") {
+    clearInterval(otpResendTimer);
+    otpChallengeId = null;
+    if (otpInput) otpInput.value = "";
+  }
+  showVerifyError("");
+}
+
+async function loadAuthMethods() {
+  try {
+    const response = await fetch(`${backendHttpBase()}/auth/methods`);
+    if (!response.ok) return;
+    const data = await response.json();
+    otpOffered = Array.isArray(data.methods) && data.methods.includes("otp") && data.otp_available === true;
+  } catch (err) {
+    otpOffered = false;
+  }
+  setOtpMode(otpMode);
+}
+
+function startResendCountdown(seconds) {
+  clearInterval(otpResendTimer);
+  let left = Math.max(0, seconds | 0);
+  const paint = () => {
+    if (!otpResendButton) return;
+    otpResendButton.disabled = left > 0;
+    otpResendButton.textContent = left > 0 ? `Resend code in ${left}s` : "Resend code";
+  };
+  paint();
+  otpResendTimer = setInterval(() => {
+    left -= 1;
+    paint();
+    if (left <= 0) clearInterval(otpResendTimer);
+  }, 1000);
+}
+
+// Plain words for each way the one time code steps can fail
+// (see backend/otp/routes.py).
+async function otpErrorMessage(response) {
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (err) {
+    /* no JSON body */
+  }
+  const wait = parseInt(response.headers.get("Retry-After") || data.retry_after || "0", 10);
+  if (response.status === 422) {
+    return typeof data.detail === "string" ? data.detail : "Please enter a valid Sri Lankan landline number.";
+  }
+  if (response.status === 423) return "Too many wrong codes. Please request a new code.";
+  if (response.status === 429) {
+    return wait > 0 ? `Please wait ${wait} seconds before trying again.` : "Too many attempts. Please wait a moment and try again.";
+  }
+  if (response.status === 503 || response.status === 404) {
+    return "One time codes are not available right now. Please use your PIN.";
+  }
+  return "That code is not correct or has expired.";
+}
+
+async function requestOtp() {
+  const phone = userPhoneInput.value.trim();
+  if (!phone) {
+    showVerifyError("Please enter your landline number.");
+    return;
+  }
+  confirmNameButton.disabled = true;
+  showVerifyError("");
+  try {
+    const response = await fetch(`${backendHttpBase()}/auth/otp/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone, language: selectedLanguage }),
+    });
+    if (!response.ok) {
+      showVerifyError(await otpErrorMessage(response));
+      return;
+    }
+    const data = await response.json();
+    setOtpMode("otp-code");
+    otpChallengeId = data.challenge_id;
+    if (otpInfo) {
+      otpInfo.textContent = `We sent a code to ${data.masked_destination}. It is valid for ${Math.round(data.expires_in / 60)} minutes.`;
+    }
+    startResendCountdown(data.resend_in);
+    if (otpInput) otpInput.focus();
+  } catch (err) {
+    showVerifyError("Could not reach the server. Please try again.");
+  } finally {
+    confirmNameButton.disabled = false;
+  }
+}
+
+async function verifyOtp() {
+  const code = otpInput.value.trim();
+  if (!/^[0-9]{4,8}$/.test(code)) {
+    showVerifyError("Please enter the code we sent you.");
+    return;
+  }
+  confirmNameButton.disabled = true;
+  showVerifyError("");
+  try {
+    const response = await fetch(`${backendHttpBase()}/auth/otp/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challenge_id: otpChallengeId, code }),
+    });
+    if (!response.ok) {
+      const message = await otpErrorMessage(response);
+      if (response.status === 423) setOtpMode("otp-phone");
+      showVerifyError(message);
+      return;
+    }
+    const data = await response.json();
+    sessionToken = data.token;
+    userName = data.display_name;
+    setOtpMode("pin");
+    proceedToSelectedMode();
+  } catch (err) {
+    showVerifyError("Could not reach the server. Please try again.");
+  } finally {
+    confirmNameButton.disabled = false;
+  }
+}
+
 function resetUserScreen() {
   if (userChoiceButtons) userChoiceButtons.classList.remove("hidden");
   if (existingNamePrompt) existingNamePrompt.classList.add("hidden");
   if (userPinInput) userPinInput.value = "";
+  setOtpMode("pin");
   showVerifyError("");
 }
 
@@ -228,6 +379,8 @@ async function verifyErrorMessage(response) {
 }
 
 async function verifyExistingUser() {
+  if (otpMode === "otp-phone") return requestOtp();
+  if (otpMode === "otp-code") return verifyOtp();
   const phone = userPhoneInput.value.trim();
   const pin = userPinInput.value.trim();
   if (!phone || !pin) {
@@ -279,6 +432,19 @@ if (goExistingButton) {
 if (cancelExistingButton) {
   cancelExistingButton.addEventListener("click", resetUserScreen);
 }
+
+if (useOtpButton) useOtpButton.addEventListener("click", () => setOtpMode("otp-phone"));
+if (usePinButton) usePinButton.addEventListener("click", () => setOtpMode("pin"));
+if (otpResendButton) otpResendButton.addEventListener("click", requestOtp);
+if (otpInput) {
+  otpInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      confirmNameButton.click();
+    }
+  });
+}
+loadAuthMethods();
 
 if (goNewButton) {
   goNewButton.addEventListener("click", () => {

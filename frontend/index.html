@@ -128,10 +128,23 @@
       <div id="existing-name-prompt" class="name-prompt hidden">
         <label for="user-phone-input">Your landline number</label>
         <input id="user-phone-input" type="tel" placeholder="011 234 5678" autocomplete="tel" inputmode="tel" maxlength="20">
-        <label for="user-pin-input">PIN</label>
+        <label id="user-pin-label" for="user-pin-input">PIN</label>
         <input id="user-pin-input" type="password" placeholder="4 to 6 digits" autocomplete="current-password" inputmode="numeric" maxlength="6">
+
+        <!-- One time code step (shown only when the server offers it, see
+             GET /auth/methods): the code goes to the mobile number or email
+             on record, never to the landline itself. -->
+        <div id="otp-step" class="otp-step hidden">
+          <p id="otp-info" class="otp-info"></p>
+          <label for="user-otp-input">Verification code</label>
+          <input id="user-otp-input" type="text" placeholder="6 digit code" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
+          <button id="otp-resend" class="back-link" type="button" disabled>Resend code</button>
+        </div>
+
         <p id="verify-error" class="verify-error hidden" role="alert"></p>
         <button id="confirm-name" class="choice-button choice-button-solid" type="button">Continue</button>
+        <button id="use-otp" class="back-link hidden" type="button">Send me a one time code instead</button>
+        <button id="use-pin" class="back-link hidden" type="button">Use my PIN instead</button>
         <button id="cancel-existing" class="back-link" type="button">Use a different option</button>
       </div>
 

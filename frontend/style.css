@@ -232,6 +232,21 @@ body {
   line-height: 1;
 }
 
+/* One time code step inside the existing user form: same inputs and
+   dimmed helper text as the PIN fields around it. */
+.otp-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.otp-info {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
 .voice-bottombar {
   position: fixed;
   left: 50%;
