@@ -217,6 +217,21 @@ body {
   z-index: 10;
 }
 
+/* The male/female switch sits one button further left again: 66px for the
+   logout button's own offset plus its 42px width and an 8px gap. */
+.voice-topbar-gender {
+  position: fixed;
+  top: 16px;
+  right: 116px;
+  z-index: 10;
+}
+
+.gender-letter {
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1;
+}
+
 .voice-bottombar {
   position: fixed;
   left: 50%;

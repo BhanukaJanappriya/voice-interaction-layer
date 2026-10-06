@@ -62,6 +62,33 @@ let userName = null; // null means Guest; set from the verified account for an e
 // port and that cookie is not sent.
 let sessionToken = null;
 let greetingsGiven = { voice: false, chat: false }; // avoids re-greeting on every back-and-forth navigation
+// The LiveKit room handle (see livekit-voice.js) while a conversation runs on
+// that transport; null on the original /ws/voice path.
+let livekitSession = null;
+
+// Male/female choice for the avatar AND the spoken voice, kept in the browser.
+// The backend voice styles are "female_natural" and "male" (backend/tts.py).
+function loadAvatarGender() {
+  try {
+    return localStorage.getItem("avatarGender") === "male" ? "male" : "female";
+  } catch (err) {
+    return "female";
+  }
+}
+let avatarGender = loadAvatarGender();
+
+function voiceStyle() {
+  return avatarGender === "male" ? "male" : "female_natural";
+}
+
+// The new avatar renderer (frontend/avatar), when it is the active one.
+// window.avatarBridge (avatar/loader.js) is safe to call at any time and is
+// only "active" once the renderer really runs, so the legacy avatar is
+// untouched whenever AVATAR_RENDERER is legacy or the new one fell back.
+function newAvatar() {
+  const bridge = window.avatarBridge;
+  return bridge && bridge.isActive() ? bridge : null;
+}
 
 // Where the backend is. When this page is served by the backend itself
 // (the single app, python -m backend), everything is on the page's own
@@ -422,6 +449,8 @@ function setStatus(state) {
   if (window.bot3d) {
     window.bot3d.setState(state);
   }
+  const avatar = newAvatar();
+  if (avatar) avatar.setState(state);
 }
 
 function clearHint(container) {
@@ -600,9 +629,25 @@ function handleServerMessage(event) {
       // sentence at a time, as each one actually starts playing, keeps
       // the mouth in step with the real audio.
       if (window.bot3d) window.bot3d.speakText(payload.text);
+      {
+        // Over /ws/voice the server plays the audio, so the new avatar can
+        // only follow the sentence text. Over LiveKit it follows the real
+        // audio track instead (see attachAudioStream below).
+        const avatar = newAvatar();
+        if (avatar && !livekitSession) avatar.speakSentence(payload.text);
+      }
       break;
     case "speaking_done":
       if (window.bot3d) window.bot3d.stopSpeaking();
+      break;
+    case "interrupt":
+      // Barge in over LiveKit: the agent has already stopped its audio, so
+      // only the mouth and the spoken sentence have to stop here.
+      if (window.bot3d) window.bot3d.stopSpeaking();
+      {
+        const avatar = newAvatar();
+        if (avatar) avatar.stop();
+      }
       break;
     case "user_name":
       // The user introduced themselves by voice ("my name is ...", see
@@ -701,6 +746,10 @@ async function startConversation(greet = false) {
   if (isActive || isConnecting) return;
   isConnecting = true;
 
+  // The LiveKit transport, when the server is set to it. Any failure falls
+  // through to the original WebSocket path below, which is unchanged.
+  if (await tryStartLiveKit()) return;
+
   const backendUrl = backendWsUrl();
   if (!backendUrl) {
     setCaption("No backend URL is configured.");
@@ -745,6 +794,7 @@ async function startConversation(greet = false) {
         user_name: userName,
         greet,
         session_token: sessionToken,
+        voice_style: voiceStyle(),
       })
     );
   };
@@ -766,7 +816,61 @@ async function startConversation(greet = false) {
   updateMicButtonUI();
 }
 
+// Joins a LiveKit room instead of opening /ws/voice. Returns true once the
+// conversation is running on it, false to let the caller use the WebSocket.
+async function tryStartLiveKit() {
+  const livekit = window.LiveKitVoice;
+  if (!livekit) return false;
+  try {
+    if (!(await livekit.isEnabled(backendHttpBase()))) return false;
+    setCaption("Connecting…");
+    livekitSession = await livekit.connect({
+      baseUrl: backendHttpBase(),
+      language: selectedLanguage,
+      voiceStyle: voiceStyle(),
+      userName: userName,
+      sessionToken: sessionToken,
+      onEvent: (payload) => handleServerMessage({ data: JSON.stringify(payload) }),
+      onAgentAudio: (track) => {
+        const avatar = newAvatar();
+        if (avatar) avatar.attachAudioStream(new MediaStream([track.mediaStreamTrack]));
+      },
+      onNeedsGesture: () => setCaption("Tap anywhere to turn the sound on."),
+      onDisconnected: () => {
+        if (livekitSession) stopConversation();
+      },
+    });
+  } catch (err) {
+    console.warn("LiveKit transport unavailable, using the WebSocket:", err);
+    if (livekitSession) {
+      try {
+        livekitSession.disconnect();
+      } catch (e) {
+        /* already closed */
+      }
+    }
+    livekitSession = null;
+    return false;
+  }
+  isActive = true;
+  isConnecting = false;
+  isMuted = false;
+  updateMicButtonUI();
+  return true;
+}
+
 function stopConversation() {
+  const closingRoom = livekitSession;
+  livekitSession = null;
+  if (closingRoom) {
+    try {
+      closingRoom.disconnect();
+    } catch (err) {
+      /* already closed */
+    }
+  }
+  const avatar = newAvatar();
+  if (avatar) avatar.stop();
   isActive = false;
   isConnecting = false;
   isMuted = false;
@@ -855,6 +959,7 @@ if (micToggleButton) {
     }
     isMuted = !isMuted;
     updateMicButtonUI();
+    if (livekitSession) livekitSession.setMuted(isMuted).catch(() => {});
   });
 }
 
@@ -899,6 +1004,54 @@ if (logoutButton) {
       /* localStorage unavailable; nothing to clear */
     }
     navigateTo("language");
+  });
+}
+
+// Male/female switch: changes the avatar and the voice together, takes effect
+// mid conversation from the next sentence, and is remembered in the browser.
+// Over /ws/voice the server learns it from a set_voice message, over LiveKit
+// from the same message on the control data channel.
+const genderToggleButton = document.getElementById("gender-toggle");
+const genderLetterEl = document.getElementById("gender-toggle-letter");
+
+function applyGenderUI() {
+  if (!genderToggleButton) return;
+  const isMale = avatarGender === "male";
+  genderToggleButton.setAttribute("aria-pressed", String(isMale));
+  genderToggleButton.setAttribute(
+    "aria-label",
+    isMale ? "Male voice and avatar. Switch to female" : "Female voice and avatar. Switch to male"
+  );
+  if (genderLetterEl) genderLetterEl.textContent = isMale ? "M" : "F";
+}
+
+function setAvatarGender(gender) {
+  avatarGender = gender === "male" ? "male" : "female";
+  try {
+    localStorage.setItem("avatarGender", avatarGender);
+  } catch (err) {
+    /* localStorage unavailable; the choice just will not be remembered */
+  }
+  applyGenderUI();
+  if (window.avatarBridge) window.avatarBridge.setGender(avatarGender);
+  if (livekitSession) {
+    livekitSession.setVoice(voiceStyle()).catch(() => {});
+  } else if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "set_voice", voice_style: voiceStyle() }));
+  }
+}
+
+// The new avatar has no male model file yet: it keeps the female face, so say
+// so rather than let the switch look broken. The voice still changes.
+document.addEventListener("avatar:gender-fallback", (event) => {
+  const reason = event.detail && event.detail.message;
+  setCaption(reason || "The male avatar is not installed; the voice has changed.");
+});
+
+if (genderToggleButton) {
+  applyGenderUI();
+  genderToggleButton.addEventListener("click", () => {
+    setAvatarGender(avatarGender === "male" ? "female" : "male");
   });
 }
 

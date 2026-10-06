@@ -175,6 +175,14 @@
       </button>
     </div>
 
+    <!-- Male/female switch for the avatar and the voice together (app.js,
+         setAvatarGender). Sits left of the logout button. -->
+    <div class="voice-topbar-gender">
+      <button id="gender-toggle" class="icon-button gender-toggle" type="button" aria-pressed="false" aria-label="Female voice and avatar. Switch to male">
+        <span id="gender-toggle-letter" class="gender-letter" aria-hidden="true">F</span>
+      </button>
+    </div>
+
     <header class="brand voice-logo" style="position: absolute; top: 0; left: 25%; transform: translateX(-50%);">
       <img class="brand-logo" src="assets/mobitel-logo.png" alt="SLT Mobitel">
     </header>
@@ -292,6 +300,13 @@
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="bot3d.js"></script>
+<!-- LiveKit transport (used only when the server is set to VOICE_TRANSPORT=livekit,
+     see livekit-voice.js); app.js falls back to the WebSocket if it is missing. -->
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.js"></script>
+<script src="livekit-voice.js"></script>
+<!-- New lip synced avatar (AVATAR_RENDERER=talkinghead). The loader stays
+     idle unless the server asks for it and puts bot3d.js back on any failure. -->
+<script src="avatar/loader.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
