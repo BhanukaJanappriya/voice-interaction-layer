@@ -452,3 +452,20 @@ about 45 ms) on the live LiveKit audio track: median 69 ms between audio onset
 and the first mouth movement (30 ms after subtracting the browser's output
 latency of 41 ms), 7 samples. Agent D measured 62 ms (22 ms) on a sample file
 with 4 samples. These are single numbers good to about one frame.
+
+### Which model writes the reply (2026-10-06)
+
+```
+ final transcript --> Orchestrator --> external agent (if one is active)
+                                   --> LiveKit Inference (hosted, same LiveKit key)   cloud multi agent (livekit)
+                                   --> local Ollama, alone, when that is not set up or fails   local single agent
+```
+
+The cloud step is provider neutral (agent._build_cloud_agent), so LiveKit
+Inference sits next to Gemini and GPT and shares their circuit breaker: one
+failure skips the cloud for 5 minutes. Tested for real with the gateway address
+made unreachable: the reply came from local Ollama and /health reported
+"LiveKit Inference call failed: APIConnectionError". Through the gateway, first
+token took 1.3 to 2.2 s (gpt-4o-mini fastest of four models tried), against
+about 0.3 to 0.9 s locally, so choosing it moves the first word about 1 to 1.5 s
+later; see KNOWN_LIMITATIONS.md.

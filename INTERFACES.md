@@ -421,6 +421,21 @@ frontend/voicekit/voicekit.js: window.VoiceKit({baseUrl, apiKey, transport}); sp
     {language, voice}) -> Promise, stop(), onTimings / onStart / onEnd / onError /
     onSentence, analyser, audioContext, audioStartTime, currentTime, audioTimeFor(ms)
 
+backend/livekit_inference.py (CLOUD_LLM_PROVIDER=livekit)
+    class LiveKitInferenceAgent(ChatAgent)
+        def __init__(self, model=None, system_prompt=None)   model defaults to config.LIVEKIT_LLM_MODEL
+        def respond(self, text_input) -> str
+        def respond_stream(self, text_input) -> Iterator[str]
+            Same contract as GptAgent: streams text from LiveKit Inference (an OpenAI
+            compatible gateway at config.LIVEKIT_INFERENCE_URL), authenticated with a
+            10 minute token signed by LIVEKIT_API_KEY and LIVEKIT_API_SECRET that
+            carries only the inference grant. Any failure, before or during the stream,
+            is raised as CloudUnavailableError (never a raw SDK error, never the token),
+            so the Orchestrator falls back to the local Ollama agent and skips the cloud
+            for 5 minutes. agent._build_cloud_agent() returns it for the livekit provider,
+            and config.cloud_llm_configured() is livekit_configured() for it.
+        Runnable standalone: python backend/livekit_inference.py "a question"
+
 backend/livekit_transport/
     router (prefix /api/livekit)
         POST /token {language?, voice_style?, user_name?, session_token?}

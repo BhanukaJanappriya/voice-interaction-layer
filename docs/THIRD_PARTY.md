@@ -62,6 +62,12 @@ Written 2026-10-05 by Agent A. Evidence and links for each licence are in docs/R
 
 No component adopted by default requires attribution except keeping licence notices for MIT, Apache-2.0 and LGPL code. A `licenses/` folder with the MIT, Apache-2.0 and CC0 texts and an about box line such as "3D avatar: MPFB and MakeHuman assets (CC0), TalkingHead (MIT), three.js (MIT)" is recommended. If a CC BY Piper voice is ever used, the dataset credit must be added there.
 
+## Hosted service
+
+| Service | Used for | Source | Terms | Notes |
+| --- | --- | --- | --- | --- |
+| LiveKit Inference (LiveKit Cloud model gateway, `agent-gateway.livekit.cloud`) | Writing the assistant's replies when `CLOUD_LLM_PROVIDER=livekit`; forwards to model vendors such as OpenAI | https://docs.livekit.io/agents/models/ | Part of the LiveKit Cloud service, billed to the project (credits or plan); the models' own vendor terms apply | Called with the project's own API key and secret. Not open source. Local Ollama answers when it is unavailable |
+
 ## Composition of `male.glb`
 
 | Component | Source | Licence | In the model |

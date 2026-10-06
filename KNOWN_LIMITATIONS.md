@@ -562,6 +562,25 @@ A `backend/.env` copied from an older template keeps `VOICE_TRANSPORT=websocket`
 and `AVATAR_RENDERER=legacy`, which override the new defaults: the page then
 shows the old bot and the male and female switch changes only the voice.
 
+## LiveKit Inference writes the replies, and it is slower than the local model
+
+With `CLOUD_LLM_PROVIDER=livekit` every reply is first requested from LiveKit
+Cloud's hosted gateway. Measured from the development machine with a one
+sentence question, first token took 1.33 to 2.01 s for `openai/gpt-4o-mini`
+(3 warm calls), 1.43 s for `openai/gpt-4.1-nano` (1), and 1.95 to 2.15 s for
+`google/gemini-2.5-flash-lite` (2), against roughly 0.3 to 0.9 s for the local
+Ollama model, so the first word comes about 1 to 1.5 s later than with the local
+model alone. That is the price of using the hosted model, and
+`CLOUD_LLM_PROVIDER=gemini` or an empty value (local only) brings it back.
+Only the reply text comes from LiveKit: speech to text is still the local Whisper
+and speech out is still Google or edge-tts. The gateway is billed to the LiveKit
+Cloud project (credits or plan), so running out of credit shows up as a failed
+call, then local answers for 5 minutes; the breaker is per server, not per
+conversation. Not measured: a long conversation, other models, or the gateway
+from another network. `openai/gpt-4.1-mini` was tried once and failed in my
+probe because of a bug in the probe (a final chunk with no text), which the
+real code handles; it was not retried.
+
 ## The first word over LiveKit is slower without a cloud voice
 
 voicekit's edge-tts provider returns audio only once a whole sentence is
