@@ -130,9 +130,11 @@ from voicekit.settings import VoicekitSettings
 # machine that cannot load it (see KNOWN_LIMITATIONS.md) keeps /ws/voice.
 try:
     from livekit_transport import router as livekit_router
+    from livekit_transport import set_agent_status_provider as set_livekit_agent_status
     from livekit_transport import start_worker as start_livekit_worker
 except Exception as _livekit_import_error:  # pragma: no cover, depends on the machine
     livekit_router = None
+    set_livekit_agent_status = None
     start_livekit_worker = None
     print(f"LiveKit transport unavailable ({type(_livekit_import_error).__name__}); /ws/voice still works.")
 
@@ -248,6 +250,9 @@ async def _lifespan(_app: FastAPI):
         # Never raises: an unreachable LiveKit server is retried in the
         # background and shown on /health, it does not stop the app.
         livekit_state["worker"] = start_livekit_worker(sys.modules[__name__])
+        # The page asks GET /api/livekit/config whether the agent is running and
+        # uses /ws/voice and the local pipeline when it is not.
+        set_livekit_agent_status(lambda: livekit_state["worker"].status())
     try:
         async with mcp_handle.lifespan():
             yield

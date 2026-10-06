@@ -38,9 +38,16 @@
     return cachedConfig || { transport: "websocket", livekit_configured: false, avatar_renderer: "legacy" };
   }
 
+  // LiveKit is used first. It is skipped (the page then uses /ws/voice and the
+  // local pipeline) when the server is not set to it, has no keys, or says its
+  // voice agent is not running right now. Asked fresh each time, so an agent
+  // that came up after the page loaded is picked up on the next conversation.
   async function isEnabled(baseUrl) {
+    cachedConfig = null;
     const config = await fetchConfig(baseUrl);
-    return Boolean(client() && config.transport === "livekit" && config.livekit_configured);
+    return Boolean(
+      client() && config.transport === "livekit" && config.livekit_configured && config.agent_ready !== false
+    );
   }
 
   // Joins the room and starts publishing the microphone. Options:
@@ -49,6 +56,7 @@
   //   onAgentAudio(track, el) the agent's audio track and the element playing it
   //   onDisconnected()        the room closed (the agent ended it, or the network dropped)
   //   onNeedsGesture()        the browser blocked audio until the user taps the page
+  //   agentTimeoutMs          how long to wait for the agent to answer (default 20000)
   // Resolves to a handle {send, setMuted, disconnect, room}; rejects when the
   // token or the connection fails, so the caller can fall back.
   async function connect(options) {
@@ -110,8 +118,35 @@
       if (options.onDisconnected) options.onDisconnected();
     });
 
+    // Resolves when the agent first speaks up (its first event or its audio
+    // track), so a room that connects but never gets an agent is detected.
+    let agentSeen;
+    const agentArrived = new Promise((resolve) => {
+      agentSeen = resolve;
+    });
+    room.on(lk.RoomEvent.TrackSubscribed, (track) => {
+      if (track.kind === "audio") agentSeen();
+    });
+    room.on(lk.RoomEvent.DataReceived, (payload, participant, kind, topic) => {
+      if (topic === EVENT_TOPIC) agentSeen();
+    });
+
     await room.connect(url, token);
     await room.localParticipant.setMicrophoneEnabled(true);
+
+    const waitMs = options.agentTimeoutMs || 20000;
+    let timer;
+    const arrived = await Promise.race([
+      agentArrived.then(() => true),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), waitMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (!arrived) {
+      room.disconnect();
+      throw new Error("the LiveKit voice agent did not join in time");
+    }
 
     function send(message) {
       return room.localParticipant.publishData(encoder.encode(JSON.stringify(message)), {

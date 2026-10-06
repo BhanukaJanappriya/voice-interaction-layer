@@ -38,6 +38,31 @@ from auth.dependencies import verified_user_from_request
 
 router = APIRouter(prefix="/api/livekit", tags=["livekit"])
 
+# Set by the app (server.py) to a callable returning the worker's status dict,
+# or None when this process runs no worker. Without it the agent is assumed to
+# run elsewhere (for example the standalone worker command) and is not checked.
+_agent_status_provider = None
+
+
+def set_agent_status_provider(provider) -> None:
+    global _agent_status_provider
+    _agent_status_provider = provider
+
+
+def agent_ready() -> bool:
+    """True when the agent is running, or when this process does not run it
+    (so there is nothing here to check). Never raises."""
+    provider = _agent_status_provider
+    if provider is None:
+        return True
+    try:
+        status = provider()
+    except Exception:
+        return False
+    if status is None:
+        return True
+    return status.get("state") == "running"
+
 VOICE_STYLES = ("female_natural", "male")
 DEFAULT_VOICE_STYLE = "female_natural"
 LANGUAGES = ("en", "si", "ta")
@@ -66,6 +91,10 @@ class TransportConfig(BaseModel):
     transport: str
     livekit_configured: bool
     avatar_renderer: str
+    # False while the voice agent is not running (still starting, retrying
+    # because LiveKit is unreachable, or stopped). The page then uses
+    # /ws/voice and the local pipeline instead of joining an empty room.
+    agent_ready: bool = True
 
 
 def normalise_voice_style(value: Optional[str]) -> str:
@@ -135,6 +164,7 @@ def livekit_config() -> TransportConfig:
         transport=config.VOICE_TRANSPORT,
         livekit_configured=config.livekit_configured(),
         avatar_renderer=config.AVATAR_RENDERER,
+        agent_ready=agent_ready(),
     )
 
 
@@ -147,6 +177,11 @@ def create_token(body: TokenRequest, request: Request) -> TokenResponse:
             status_code=503,
             detail="LiveKit is not configured on this server (set LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET).",
         )
+
+    if not agent_ready():
+        # A room with no agent in it would be silent. Refusing here lets the
+        # page fall back to /ws/voice and the local pipeline straight away.
+        raise HTTPException(status_code=503, detail="The LiveKit voice agent is not running right now.")
 
     verified = verified_user_from_request(request, body.session_token)
     if verified is not None:

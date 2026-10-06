@@ -11,7 +11,7 @@ and runs the existing VAD, STT, Orchestrator and voicekit pipeline over it.
 
 from .errors import LiveKitNotConfigured, LiveKitUnavailable, SessionError, TransportError
 from .session import Bindings, LiveKitVoiceSession, SessionSettings
-from .tokens import router
+from .tokens import router, set_agent_status_provider
 from .worker import WorkerHandle, build_worker_options, configure, run_in_thread
 
 
@@ -36,5 +36,6 @@ __all__ = [
     "configure",
     "router",
     "run_in_thread",
+    "set_agent_status_provider",
     "start_worker",
 ]
