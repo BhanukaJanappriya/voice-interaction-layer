@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VoiceKit embed</title>
+</head>
+<body>
+<!-- Example 3: the smallest browser embed. Copy frontend/voicekit/voicekit.js
+     next to this page (or point src at wherever the server serves it), set
+     baseUrl and apiKey, open the page and click the button. Never ship a real
+     key in a public page: put a proxy in front, or give each site its own
+     key with a low rate limit. -->
+<button id="go">Say hello</button>
+<p id="line"></p>
+<script src="../../frontend/voicekit/voicekit.js"></script>
+<script>
+  var kit = new VoiceKit({ baseUrl: "http://127.0.0.1:8000", apiKey: "your-key" });
+  kit.onTimings = function (words) {
+    words.forEach(function (w) {
+      // w.startTime is on kit.audioContext's clock: schedule a mouth shape,
+      // a highlight, or compare against kit.audioContext.currentTime.
+      console.log(w.text, w.start_ms, w.startTime);
+    });
+  };
+  kit.onEnd = function (e) { document.getElementById("line").textContent = "finished (" + e.reason + ")"; };
+  document.getElementById("go").onclick = function () {
+    kit.speak("Hello from the browser.", { language: "en", voice: "female_natural" });
+  };
+</script>
+</body>
+</html>

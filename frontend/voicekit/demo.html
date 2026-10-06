@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VoiceKit demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; }
+  label { display: block; margin-top: 10px; font-size: 14px; }
+  input, select, textarea, button { font: inherit; padding: 6px; width: 100%; box-sizing: border-box; }
+  button { width: auto; margin: 12px 8px 0 0; cursor: pointer; }
+  #words { margin-top: 16px; font-size: 22px; line-height: 1.6; min-height: 60px; }
+  #words span { padding: 0 2px; border-radius: 4px; }
+  #words span.now { background: #ffd54a; }
+  #meter { height: 10px; background: #4a90d9; width: 0; transition: width 0.05s; margin-top: 8px; }
+  #status { color: #555; font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>VoiceKit demo</h1>
+<label>Server URL (empty for the same origin)<input id="base" placeholder="http://127.0.0.1:8000"></label>
+<label>API key<input id="key" type="password" autocomplete="off"></label>
+<label>Text<textarea id="text" rows="3">Hello there. This is a streaming voice with word timings.</textarea></label>
+<label>Language
+  <select id="lang"><option value="en">English</option><option value="si">Sinhala</option><option value="ta">Tamil</option></select>
+</label>
+<label>Voice
+  <select id="voice"><option value="female_natural">Female</option><option value="male">Male</option></select>
+</label>
+<label>Transport
+  <select id="transport"><option value="http">HTTP stream</option><option value="ws">WebSocket</option></select>
+</label>
+<button id="speak">Speak</button><button id="stop">Stop</button>
+<div id="meter"></div>
+<div id="words"></div>
+<div id="status"></div>
+<script src="voicekit.js"></script>
+<script>
+  var $ = function (id) { return document.getElementById(id); };
+  var kit = null, words = [], spans = [], raf = 0;
+
+  function loop() {
+    // Highlight the word being heard, using the audio clock, and drive a
+    // simple level meter from the analyser.
+    var t = kit.currentTime;
+    spans.forEach(function (s, i) {
+      var w = words[i];
+      s.className = t >= w.start_ms && t < w.start_ms + w.duration_ms ? "now" : "";
+    });
+    var data = new Uint8Array(kit.analyser.fftSize);
+    kit.analyser.getByteTimeDomainData(data);
+    var peak = 0;
+    for (var i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i] - 128));
+    $("meter").style.width = Math.min(100, peak * 1.5) + "%";
+    raf = requestAnimationFrame(loop);
+  }
+
+  $("speak").onclick = function () {
+    kit = new VoiceKit({ baseUrl: $("base").value, apiKey: $("key").value, transport: $("transport").value });
+    words = []; spans = []; $("words").textContent = "";
+    kit.onTimings = function (batch) {
+      batch.forEach(function (w) {
+        words.push(w);
+        var span = document.createElement("span");
+        span.textContent = w.text + " ";
+        $("words").appendChild(span);
+        spans.push(span);
+      });
+    };
+    kit.onStart = function () { $("status").textContent = "speaking"; raf = requestAnimationFrame(loop); };
+    kit.onEnd = function (e) { $("status").textContent = "ended (" + e.reason + ")"; cancelAnimationFrame(raf); $("meter").style.width = "0"; };
+    kit.onError = function (err) { $("status").textContent = "error: " + err.message; };
+    kit.speak($("text").value, { language: $("lang").value, voice: $("voice").value });
+  };
+  $("stop").onclick = function () { if (kit) kit.stop(); };
+</script>
+</body>
+</html>
