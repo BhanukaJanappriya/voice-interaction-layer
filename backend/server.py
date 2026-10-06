@@ -119,6 +119,8 @@ from tts import SentenceChunker, speak_stream, speak_text
 from tts import precache as precache_speech
 from tts import warm_up as warm_up_tts
 from vad import SAMPLE_RATE, VoiceActivityDetector
+from voicekit.api import create_router as create_voicekit_router
+from voicekit.settings import VoicekitSettings
 
 FRONTEND_DIR = config.PROJECT_ROOT / "frontend"
 
@@ -242,6 +244,24 @@ app.add_middleware(
 # route, so they never shadow one.
 app.include_router(auth_router)
 app.include_router(admin_router)
+
+# voicekit, the reusable text to speech API (/api/tts/stream, /ws/tts), which
+# refuses every request until VOICEKIT_API_KEYS lists at least one key.
+if config.VOICEKIT_ENABLED:
+    app.include_router(
+        create_voicekit_router(
+            VoicekitSettings(
+                google_credentials_path=config.GOOGLE_APPLICATION_CREDENTIALS,
+                azure_key=config.AZURE_SPEECH_KEY,
+                azure_region=config.AZURE_SPEECH_REGION,
+                cloud_provider=config.CLOUD_SPEECH_PROVIDER,
+                local_voice_dir=str(config.VOICEKIT_LOCAL_VOICE_DIR),
+                max_text_chars=config.VOICEKIT_MAX_TEXT_CHARS,
+            ),
+            lambda: config.VOICEKIT_API_KEYS,
+            config.VOICEKIT_RATE_LIMIT_PER_MINUTE,
+        )
+    )
 
 
 def _mcp_search(query: str, top_k: int) -> list[dict]:
@@ -889,6 +909,7 @@ async def health():
         "knowledge": retriever.status(),
         "external_agent": admin_service.active_agent_summary(),
         "mcp": mcp_handle.status(),
+        "voicekit": {"enabled": config.VOICEKIT_ENABLED, "api_keys_configured": bool(config.VOICEKIT_API_KEYS)},
     }
 
 
