@@ -491,6 +491,57 @@ alembic upgrade head            (or: venv\Scripts\python.exe -m backend.db.migra
 alembic revision --autogenerate -m "what changed"    after changing backend/db/models.py; review it, then alembic check
 ```
 
+## Browser audio, a new avatar, a reusable voice and hub login
+
+Added on top of everything above; the original `/ws/voice` path, its server
+side playback and the old avatar still work and can be selected in `.env`.
+
+**Real time audio in the browser (LiveKit).** With `VOICE_TRANSPORT=livekit`
+(the default) the page joins a LiveKit room, publishes the microphone with the
+browser's echo cancellation and noise suppression, and plays the assistant's
+voice in the page. The same VAD, speech to text and Orchestrator run behind it,
+and the assistant stops talking when you start to speak. Set `LIVEKIT_URL`,
+`LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in `.env` (LiveKit Cloud, or a local
+server: download `livekit-server` from the LiveKit releases page and run
+`livekit-server --dev`, keys `devkey` and `secret`). Without them the page uses
+`/ws/voice` as before. Set `VOICE_TRANSPORT=websocket` to force the old path.
+
+**New avatar.** With `AVATAR_RENDERER=talkinghead` (the default) the voice
+screen shows a TalkingHead avatar (MIT) whose mouth follows the audio that
+reaches the browser, with blinking, gaze, mood and gestures tied to what the
+assistant is doing. Download its model once:
+
+    python frontend/avatar/fetch_assets.py
+
+A male and female switch in the top bar changes the avatar and the voice
+together and is remembered. The male model is built, not downloaded
+(`frontend/avatar/tools/MALE_AVATAR.md`); without it only the voice changes.
+If WebGL or a model file is missing, the page shows the old avatar instead.
+`AVATAR_RENDERER=legacy` keeps the old one always.
+
+**voicekit.** `backend/voicekit` lets any text generating agent speak: a Python
+adapter, `POST /api/tts/stream` and `WS /ws/tts` (API keys in
+`VOICEKIT_API_KEYS`), and a small browser client with word timings for lip
+sync. Quickstart and three examples are in docs/VOICEKIT.md.
+
+**MCP hub.** The assistant is an MCP client of https://mcphub.sltdigitallab.lk
+(`MCP_HUB_*` in `.env`; the key stays there). `/health` shows `mcp_hub`. Its
+slow knowledge search is off the spoken reply path by default, and tools that
+buy or change things are never exposed to the model.
+
+**One time code login.** Existing users can sign in with a code instead of a
+PIN: `AUTH_METHODS=pin,otp`. The hub sends the code when it is reachable
+(`OTP_BACKEND=auto`), otherwise a local code goes to the mobile number or email
+stored for the customer (`OTP_SENDER=console|email|sms`). Codes are six digits,
+valid 5 minutes, three attempts, with a resend cooldown and rate limits per
+number and per address. The PIN login is unchanged and Guests are unaffected.
+
+Documents: docs/IMPLEMENTATION_PLAN.md (Part 2, with the decisions),
+docs/RESEARCH.md and docs/THIRD_PARTY.md (every asset, licence and source),
+docs/VOICEKIT.md, and the "not live tested" list in KNOWN_LIMITATIONS.md.
+Measure the first word yourself with
+`python scripts/measure_first_audio.py --runs 8` while the app runs.
+
 ## Current limitations
 
 See KNOWN_LIMITATIONS.md for the full, honest list. In short: Sinhala and

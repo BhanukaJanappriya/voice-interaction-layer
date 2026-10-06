@@ -347,3 +347,108 @@ method, synchronous, stateless. This keeps every agent (Echo, local Llama,
 Gemini, GPT, and the Orchestrator itself, which is also a `ChatAgent`)
 trivially swappable and testable in isolation, at the cost of no built in
 conversation memory across turns. See README.md's suggested next steps.
+
+
+## Real time browser audio, reusable voice, new avatar, hub login (2026-10-05)
+
+Four additions sit next to the original pipeline. Nothing was removed:
+`/ws/voice`, server side playback and `bot3d.js` still work and are chosen by
+`VOICE_TRANSPORT` and `AVATAR_RENDERER`.
+
+### Two transports, one pipeline
+
+```
+ WebSocket transport (original, VOICE_TRANSPORT=websocket)
+ browser mic --float32 16 kHz chunks--> /ws/voice --> VAD --> STT --> Orchestrator --> tts.py --> server speakers
+                                          ^ status, transcripts, replies as JSON events back to the page
+
+ LiveKit transport (VOICE_TRANSPORT=livekit)
+ browser mic --WebRTC (echo cancel, noise suppress)--> LiveKit room
+        --> LiveKitVoiceSession (backend/livekit_transport, one per conversation, run by a livekit-agents job)
+              resample 16 kHz --> the same VAD --> the same STT --> the same Orchestrator
+              reply text --> voicekit.synthesize_stream --> 24 kHz audio track "agent-voice" --> back to the browser <audio>
+              events (/ws/voice JSON shapes + interrupt) on data topic va-events --> the page's existing handler
+        <-- page controls on data topic va-control (set_voice, mute)
+ POST /api/livekit/token (short lived room token for a verified user or a Guest) starts it
+```
+
+The page asks `GET /api/livekit/config` once. If the server is set to LiveKit
+and configured, the page joins a room; on any failure (no keys, token refused,
+connection fails) it opens `/ws/voice` exactly as before. The worker runs its
+jobs as threads of the app process, so Whisper and the knowledge index are
+loaded once, not twice.
+
+Barge in: while the assistant speaks, the session keeps running the voice
+activity detector on the user's microphone. After about 200 ms of speech it
+cancels synthesis, clears the audio source queue, sends `{"type":"interrupt"}`
+and starts listening, seeding the next utterance with the last 400 ms so the
+first word is not lost. The page stops the mouth on `interrupt`.
+
+### voicekit
+
+`backend/voicekit` is the text to speech chain (cloud, edge-tts, local model,
+SAPI5) as a package that imports nothing from the rest of the project. It
+yields 16 bit PCM chunks and word timings, can play to the speaker, an HTTP
+chunked response, a WebSocket or a LiveKit audio source, and has an API
+(`POST /api/tts/stream`, `WS /ws/tts`, API keys, rate limits) so another agent
+can speak. See docs/VOICEKIT.md. `tts.py` is untouched and still speaks for
+`/ws/voice`; the voice map is kept equal by a test.
+
+### Avatar
+
+```
+ AVATAR_RENDERER=talkinghead  --> frontend/avatar/loader.js --> avatar.js (TalkingHead, MIT, three.js 0.180 via import map)
+      real audio (LiveKit track or voicekit)  --> HeadAudio visemes (language independent) + jaw energy floor
+      voicekit word timings (English)         --> visemes placed on the audio clock
+      WebSocket transport (audio is on the server) --> text driven mouth, NOT audio lip sync
+      any failure (no WebGL, model missing, 20 s timeout) --> event avatar:fallback --> bot3d.js, then the flat face
+```
+
+A male/female switch in the voice screen's top bar changes the avatar and the
+voice together (`female_natural` or `male`), is remembered in the browser,
+and is sent as `voice_style` on `start_session` (or `set_voice` mid session).
+
+### MCP hub and login
+
+The hub (https://mcphub.sltdigitallab.lk) speaks MCP over SSE, behind an API key
+in a header; streamable HTTP did not work against it. `backend/mcp_client` detects the
+transport, caches it, and has a timeout, retries and a circuit breaker. It
+exposes 24 customer, package and knowledge tools; only `search_knowledgebase_tool`
+may reach the Orchestrator, and tools that buy, add, subscribe, log faults or
+refresh tokens are refused in code even if listed. One time code login
+(`backend/otp`) uses the hub's own `validate_customer_and_send_otp` and
+`verify_otp_and_authenticate` when the hub is reachable, and a local hashed
+design (6 digits, 5 minutes, 3 attempts, cooldown, per number and per address
+limits, masked destination) otherwise. The PIN login is unchanged.
+
+### Latency, before and after (2026-10-06, same machine)
+
+Measured with `scripts/measure_first_audio.py` (a spoken question streamed to
+`/ws/voice`, clock from the final transcript to the "speaking" status, local
+Llama because the Gemini credit is used up). Warm runs; the first run after a
+start pays for loading models and is listed apart.
+
+| Path | Provider | Runs | First audio after the final transcript |
+| --- | --- | --- | --- |
+| `/ws/voice` before any change | Google streaming TTS | 5 warm (1 cold: 18.9 s) | median 0.87 s (0.73 to 0.90) |
+| `/ws/voice` after | Google streaming TTS | 8 | median 0.94 s (0.81 to 1.63) |
+| `/ws/voice` after | edge-tts (Google credentials blank in `.env`) | 8 | median 1.06 s (0.69 to 3.53) |
+| LiveKit, real browser, synthetic microphone | edge-tts through voicekit | 4 | 2.3 to 3.0 s |
+| LiveKit | Google through voicekit | 2 (server log) | 0.81 and 1.29 s |
+
+What this shows: the original path is unchanged within noise (0.87 against
+0.94 s). Over LiveKit the first word costs about the same as `/ws/voice` when
+the same cloud voice is used, but about 1.5 s more when only edge-tts is
+available, because voicekit's edge provider waits for a whole sentence before
+its first audio (about 2 to 3 s here, 0.6 s when measured alone). The number
+of LiveKit runs with Google is two; it is not a distribution. A reply from the
+hub's knowledge search takes 3 to 7 s, so it is kept out of spoken replies by
+default (`MCP_HUB_IN_REPLIES=false`).
+
+### Audio to mouth offset
+
+Measured in Chrome (Intel integrated graphics, about 22 fps, so one frame is
+about 45 ms) on the live LiveKit audio track: median 69 ms between audio onset
+and the first mouth movement (30 ms after subtracting the browser's output
+latency of 41 ms), 7 samples. Agent D measured 62 ms (22 ms) on a sample file
+with 4 samples. These are single numbers good to about one frame.

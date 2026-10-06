@@ -505,3 +505,114 @@ pydantic-core, numpy) have no such fallback; they imported fine on the
 owner's machine in earlier runs, but a stricter policy would stop the app
 at startup with the same kind of error, and the fix would be a different
 version or build of that package.
+
+
+## What was not live tested in the LiveKit, voicekit, avatar, hub and code login work (2026-10-05)
+
+Everything below was built and covered by tests (the suite has 465 tests), but
+these parts were not run for real. Read this list before relying on a claim.
+
+- **A real microphone and speakers.** The one full browser run (Chrome, one
+  machine, LiveKit Cloud) used a synthetic microphone: a pre recorded spoken
+  question fed into the page's real WebRTC publish path. It heard the greeting,
+  transcribed the question exactly, answered through the real Orchestrator,
+  played the reply track and moved the avatar. Nobody spoke into it, so room
+  echo, a quiet or noisy microphone and self interruption were not tested.
+- **Barge in with real speech.** It was tested with a fake room and by one live
+  harness that sent synthesized speech, not by a person interrupting. While the
+  assistant speaks the microphone stays open, so this relies on the browser's
+  echo cancellation; loud speakers near a microphone may interrupt the
+  assistant by itself.
+- **One time codes against the real hub.** The hub's tools were only listed.
+  `validate_customer_and_send_otp` was never called (it would send a real SMS),
+  so the shape of its answer, the session id field and the telephone number
+  format (national, like 0112345678) are assumptions, parsed defensively and
+  covered by a mock hub only. An answer that is not clearly a success or a
+  failure gives a typed error and a 503, never a guess.
+- **SMS gateway and email senders.** Tested against local fakes only; no gateway
+  or mail server is configured. The gateway body is a template that will need
+  adapting to the real provider.
+- **The one time code form in a browser.** The page step was written and its
+  endpoints are tested, but it was not clicked through in a browser.
+- **Switching the male or female avatar in a real session.** The male avatar
+  loads and renders in the standalone demo page; whether its mouth moves under
+  audio was not confirmed, and a mid session swap on the voice screen was not
+  watched.
+- **Sinhala and Tamil mouth movement.** There is no viseme model for either.
+  HeadAudio plus a jaw energy floor moves the mouth, and a Sinhala sentence did
+  move it, but whether it looks right needs a Sinhala or Tamil speaker. Tamil
+  was not exercised in the browser.
+- **Other browsers and devices.** Only Chrome on a Windows laptop with
+  integrated graphics (about 22 frames per second for the new avatar). Firefox,
+  Safari and phones were not tried. HeadAudio needs a secure context (localhost
+  or https).
+- **Azure and local model voices.** The Azure provider was written from the SDK
+  documentation without the SDK or a key. The local Piper provider never
+  produced audio here (no model files, no espeak-ng). Kokoro is not implemented.
+
+## The first word over LiveKit is slower without a cloud voice
+
+voicekit's edge-tts provider returns audio only once a whole sentence is
+synthesized, so over LiveKit the first word took 2.3 to 3.0 s after the final
+transcript with edge-tts alone, against 0.81 and 1.29 s with Google, and
+`/ws/voice` with Google took a median 0.94 s. voicekit passes the configured
+cloud credentials only when the caller gives them, which the app does
+(`config.py` to `VoicekitSettings`). If `GOOGLE_APPLICATION_CREDENTIALS` is
+empty in `.env` (it was, during part of this testing), both transports fall to
+edge-tts. A streaming edge-tts decoder would remove most of the gap and was not
+written.
+
+## The hub's knowledge search is too slow for a spoken reply
+
+Against the real hub (SSE only, 24 tools), `search_knowledgebase_tool` took 3.2
+to 7.0 s per call, and it overlaps the local knowledge base. It is therefore off
+the reply path by default (`MCP_HUB_IN_REPLIES=false`); the hub is still used
+for one time codes. Turning it on adds up to `MCP_HUB_CONTEXT_BUDGET_SECONDS`
+(1 s) to a turn, and a timeout there opens the circuit breaker that the hub's
+code tools share, so one time codes would fall back to the local backend for
+`MCP_HUB_BREAKER_SECONDS`. The local backend only works for customers that have
+a mobile number or email stored on their account (`otp.service.set_contact`).
+
+## The new avatar's male model is generated, not committed
+
+`male.glb` (18 MB) is produced by `frontend/avatar/tools/make_male_avatar.py`
+in headless Blender from CC0 MakeHuman assets and TalkingHead's rig, and is git
+ignored like `mpfb.glb` (downloaded by `fetch_assets.py`). Without it the
+toggle changes only the voice and shows a short notice. Two of its inputs
+(Visemes 02 and Faceunits 01) are described as CC0 on the MakeHuman pages but
+the licence file inside each zip was not read; confirm before shipping
+(docs/THIRD_PARTY.md). The model is bare chested with a static hair mesh and is
+not compressed.
+
+## Licence and policy decisions that are not mine to make
+
+- **GPL in the local voice route.** piper-tts and espeak-ng are GPL-3.0, and
+  Kokoro needs espeak-ng too. The local model provider is off unless model
+  files are present and nothing is installed by default; shipping it needs a
+  decision.
+- **edge-tts** calls an unofficial Microsoft endpoint. It is the existing
+  default for Sinhala and Tamil and the only free neural voice for them; whether
+  it is acceptable in a company product is a policy question.
+- **livekit-agents** declares `openai<3`, while this project pins openai 3.17.0
+  for its own use. The LiveKit packages are installed without dependencies, so
+  pip prints a warning and nothing breaks; the pin is documented in
+  requirements.txt.
+
+## Smaller things
+
+- Over LiveKit the agent greets every time a room is joined, so a dropped and
+  rejoined conversation is greeted again (the `greet` flag of `/ws/voice` is not
+  sent). Dispatch and job start took about 5 s before the greeting began in the
+  one live test.
+- `/ws/voice` has no browser audio, so the new avatar can only follow the
+  sentence text there (marked in the code); real audio lip sync needs LiveKit.
+- The local code backend sends on a worker thread so response time does not
+  reveal whether a number exists; the price is that a delivery failure is logged
+  but not reported to the person asking.
+- `tests/test_knowledge.py::test_live_roaming_retrieval` failed once while the
+  machine was busy with the app, a browser and Whisper, and passed alone.
+- The Alembic revision 0002 (contact columns and the code table) was applied to
+  the development database `data/app.db` during testing.
+- The livekit native library loaded on this machine; a stricter Application
+  Control policy could refuse it like the packages in the section above, and the
+  app would then keep `/ws/voice` (the import is guarded).

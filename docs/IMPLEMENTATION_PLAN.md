@@ -479,3 +479,253 @@ project; a failing cloud call is skipped for 5 minutes.
 `gemini-flash-lite-latest` alias, which always points at a current model.
 The configured key itself is valid; every model currently answers 402
 because the project has no credit left, which is a billing matter.
+
+
+# Part 2: LiveKit transport, voicekit, new avatar, MCP hub client, OTP login
+
+Written 2026-10-05, before any code. Everything below is additive: the
+`/ws/voice` pipeline, server side playback, `bot3d.js`, the flat 2D face,
+phone plus PIN login and every existing signature stay as they are, and each
+new part sits behind a flag in `config.py`.
+
+## P2.1 The system today (what this builds on)
+
+One FastAPI process (`python -m backend`) serves the static frontend, `/ws/voice`,
+`/chat`, `/auth`, the admin portal, the MCP server and `/health`. A voice turn is:
+browser microphone, 16 kHz float32 chunks over a WebSocket, `vad.py` plus
+`stt.py` (faster-whisper) on a thread, `Orchestrator.respond_stream` (external
+agent, then Gemini, then local Llama, with `tool_callback` for retrieval), the
+reply cut into sentences and spoken by `tts.speak_stream` on the SERVER's
+speakers (Google, then edge-tts, then SAPI5). The browser only shows status
+events, transcripts and an avatar (`bot3d.js`, Three.js r128 from a CDN) whose
+mouth is animated from the sentence text, not from audio. The voice style is
+hardcoded to `female_natural` on the server and the browser never sends one.
+Existing users sign in with a landline and PIN (`backend/auth`), stored in
+SQLite through SQLAlchemy and Alembic (revision 0001). Baseline first audio
+after the final transcript: median 1.11 s (ARCHITECTURE.md, 2026-10-02).
+
+Environment found on 2026-10-05: no `.env` file, no MCP hub key, no LiveKit
+server or keys, Docker daemon not running. The hub answers 401 without a key,
+so its tools could not be listed yet.
+
+## P2.2 Design per requirement
+
+**R1 LiveKit.** `backend/livekit_transport/`: `tokens.py` (router
+`POST /api/livekit/token`, `GET /api/livekit/config`), `session.py`
+(`LiveKitVoiceSession`: one conversation, built on rtc primitives and fully
+testable with a fake room), `worker.py` (livekit-agents `Worker` that accepts
+jobs and runs a session). The session subscribes to the user's microphone,
+resamples to 16 kHz float32 and feeds the SAME `vad.py`, `stt.transcribe_stream`
+and `Orchestrator` the WebSocket path uses (the same thread and queue bridge
+idea, not a copy of their logic), then publishes voicekit audio as a track.
+Status, transcript and reply events travel on a LiveKit data channel with the
+exact JSON shapes of `/ws/voice`, so the page's existing handlers run unchanged.
+Barge in: speech detected while speaking cancels synthesis, clears the audio
+source queue and sends `{"type":"interrupt"}`. `VOICE_TRANSPORT` selects what
+the frontend does; `/ws/voice` is never removed.
+
+**R2 voicekit.** `backend/voicekit/` imports nothing from the rest of the
+project (see ADR 2.2). Providers, sinks, adapter, API router factory, JS
+client in `frontend/voicekit/voicekit.js`, docs in `docs/VOICEKIT.md`.
+
+**R3 Avatar.** `frontend/avatar/` holds a renderer built on
+met4citizen/TalkingHead (MIT) behind `AVATAR_RENDERER=talkinghead|legacy`.
+Lip sync is driven by the audio that reaches the browser: provider word timings
+when voicekit sends them, audio analysis visemes otherwise. The page falls back
+to `bot3d.js` and then the flat face if WebGL or assets fail. A male/female
+toggle in the existing top bar style changes avatar and `voice_style`
+(`female_natural` / `male`) together and is stored in `localStorage`.
+
+**R4 MCP hub.** `backend/mcp_client/`: official SDK, transport detection
+(streamable HTTP first, SSE second), timeout, retry, breaker, typed errors,
+a `context_for(text)` callback and a `compose_tool_callbacks()` helper so the hub
+adds to retrieval instead of replacing it. Status appears under `mcp_hub` in
+`/health`. Tool choice cannot be hard coded because the tool list is not known
+yet: `MCP_HUB_TOOLS` names them, otherwise every tool with one required text
+argument is eligible.
+
+**R5 OTP.** `backend/otp/`: service, `OtpSender` interface with console, email
+(SMTP) and SMS gateway senders, routes under `/auth/otp/*`, a new Alembic
+revision for the contact fields and the challenge table. `AUTH_METHODS=pin,otp`
+chooses what the UI offers; `GET /auth/methods` tells it. Customer lookup uses
+`MCP_HUB_CUSTOMER_LOOKUP_TOOL` when set and reachable, else the local `users`
+table.
+
+**R6 Voices.** Research picks them; voicekit ships edge-tts and Google (existing
+chain), SAPI5 and a local open model provider (Piper or Kokoro, whichever the
+license check allows) loaded only if its files are present.
+
+## P2.3 Flags and new environment variables
+
+All defined in `config.py` and `.env.example` already: `VOICE_TRANSPORT`,
+`LIVEKIT_URL/API_KEY/API_SECRET/TOKEN_TTL_SECONDS/AGENT_NAME`, `AVATAR_RENDERER`,
+`VOICEKIT_ENABLED/API_KEYS/MAX_TEXT_CHARS/RATE_LIMIT_PER_MINUTE/LOCAL_VOICE_DIR`,
+`MCP_HUB_ENABLED/URL/AUTH_HEADER/API_KEY/TIMEOUT_SECONDS/RETRIES/BREAKER_SECONDS/TOOLS/CUSTOMER_LOOKUP_TOOL`,
+`AUTH_METHODS`, `OTP_*`, `SMTP_*`, `SMS_*`. Defaults keep today's behavior
+(`websocket`, `legacy`, `pin`). They flip to `livekit` and `talkinghead` only
+after the end to end run in Phase 2.
+
+## P2.4 Contracts between subagents
+
+**voicekit (Agent C), consumed by LiveKit (B), the API (C) and the avatar client (D)**
+
+```
+voicekit.types
+  @dataclass AudioChunk: pcm: bytes (16 bit little endian mono), sample_rate: int, sentence_index: int
+  @dataclass WordTiming: text: str, start_ms: float, duration_ms: float, sentence_index: int
+  @dataclass SentenceStart: text: str, sentence_index: int
+  @dataclass SynthesisDone: provider: str, first_audio_ms: float, total_ms: float
+  SynthEvent = AudioChunk | WordTiming | SentenceStart | SynthesisDone
+  class VoicekitError(Exception); ProviderUnavailable(VoicekitError); InvalidRequest(VoicekitError)
+voicekit.settings
+  @dataclass VoicekitSettings: google_credentials_path: str = "", azure_key: str = "", azure_region: str = "",
+      cloud_provider: str = "google", local_voice_dir: str = "", max_text_chars: int = 2000,
+      provider_order: tuple = ("cloud", "edge", "local_model", "sapi")
+voicekit.core
+  def synthesize_stream(text_or_iterable, language="en", voice="female_natural",
+        settings=None) -> Iterator[SynthEvent]
+      text_or_iterable: str or iterable of str (chunks of a streaming reply, cut into
+      sentences with the same rules as tts.SentenceChunker, reimplemented). voice is
+      "female_natural" or "male". Events arrive as soon as the provider yields them.
+      Never raises for provider failure: falls through the provider order, finally
+      yields a SynthesisDone with provider "none" (typed error only for InvalidRequest).
+      Prints "voicekit first audio (<provider>, <lang>): N ms" itself.
+  def list_voices() -> list[dict]   {language, voice, provider, name, license, gender}
+voicekit.sinks (all take SynthEvent iterators)
+  class Sink(ABC): def play(self, events) -> None; def cancel(self) -> None
+  SpeakerSink (sounddevice), CallbackSink(fn), HttpChunkSink (generator of bytes),
+  WebSocketSink(send_bytes, send_json), LiveKitSink(audio_source)  # duck typed: capture_frame, clear_queue
+voicekit.adapter
+  def speak_agent(agent_or_callable, sink=None, language="en", voice="female_natural") -> Callable[[str], str]
+      Wraps any ChatAgent (respond_stream or respond) or a callable returning str / iterable.
+voicekit.api
+  def create_router(settings, api_keys: Callable[[], list[str]], rate_limit_per_minute) -> APIRouter
+      POST /api/tts/stream {text, language, voice, format: "pcm"|"wav"|"ndjson"}  -> chunked body
+        header X-Sample-Rate; ndjson lines {"type": "audio"|"timing"|"done", ...} (audio base64)
+      WS /ws/tts   client {"type":"speak","text","language","voice"} / {"type":"cancel"}
+        server {"type":"audio_start","sample_rate"}, binary PCM frames,
+        {"type":"timings","words":[{text,start_ms,duration_ms}]}, {"type":"done"}
+      Auth: header X-API-Key (WS also ?api_key=). 401 missing or wrong, 429 over the limit,
+      422 bad body or text too long. Keys compared in constant time, never logged.
+```
+
+**LiveKit (B)** consumes the existing `vad.VoiceActivityDetector`,
+`stt.transcribe_stream`, `agent.Orchestrator.respond_stream(text, user_name, language)`,
+`config.*`, `auth.dependencies.verified_user_from_request`. Token request body
+`{language, voice_style, user_name, session_token}`, all optional. Response
+`{url, token, room, identity, expires_at}`. Data channel topic `va-events`:
+JSON identical to the `/ws/voice` server events plus `{"type":"interrupt"}`.
+Client to agent topic `va-control`: `{"type":"set_voice","voice_style"}`,
+`{"type":"mute","muted":bool}`. Audio track name `agent-voice`, 24000 Hz mono.
+
+**MCP client (E)**
+```
+mcp_client.errors: HubError(Exception); HubUnavailable; HubAuthError; HubToolError; HubBreakerOpen
+mcp_client.client
+  class HubClient: __init__(url, auth_header, api_key, timeout, retries, breaker_seconds)
+      async list_tools() -> list[HubTool]; async call_tool(name, arguments) -> str
+      def status() -> dict {configured, enabled, transport, reachable, breaker_open, tools, last_error}
+      Never prints or returns the key. last_error is a short sanitized string.
+  def get_hub() -> HubClient   process wide, built from config
+mcp_client.tools
+  def hub_context_for(text: str) -> Optional[str]    sync, never raises, None when off or breaker open
+  def compose_tool_callbacks(*callbacks) -> Callable[[str], Optional[str]]   joins non-empty outputs
+```
+
+**OTP (E)**
+```
+otp.sender: class OtpSender(ABC): channel: str; def send(self, destination: str, code: str, language: str) -> None
+     ConsoleOtpSender, EmailOtpSender, SmsGatewayOtpSender; def get_sender() -> OtpSender
+otp.service
+  def request_otp(phone, client_ip, language=None) -> OtpChallengeInfo
+      {challenge_id, masked_destination, channel, expires_in, resend_in}
+  def verify_otp(challenge_id, code, client_ip) -> VerifiedUser   (auth.users.VerifiedUser)
+  class OtpError(Exception): reason in {"invalid","expired","locked","rate_limited","cooldown","unavailable"}, retry_after
+otp.routes: router prefix /auth
+  GET /auth/methods -> {"methods": ["pin","otp"]}
+  POST /auth/otp/request {phone, language?} -> 200 OtpChallengeInfo (same shape for unknown numbers)
+  POST /auth/otp/verify {challenge_id, code} -> {display_name, token, expires_at} + user_session cookie (as /auth/verify)
+  errors: 401 invalid or expired (same text), 423 locked, 429 rate limited or cooldown (Retry-After), 422 bad input
+```
+DB additions (revision 0002, shared files patched by the lead): `users.mobile_e164`,
+`users.email` (nullable), table `otp_challenges(id, user_id, code_hash, destination_hash,
+channel, attempts, expires_at, consumed_at, created_at, client_ip_hash)`.
+
+**Avatar (D)** consumes the WebSocket events, the LiveKit `va-events` and
+voicekit's `/ws/tts` timings. It exposes
+`window.avatarRenderer = {init(container, opts), setGender("female"|"male"), setState(state),
+speakAudio(audioElementOrStream, timings?), stop(), destroy()}`, a `ready` promise and a
+`fallback` event.
+
+## P2.5 File ownership
+
+| Owner | May create or edit |
+| --- | --- |
+| Lead | config.py, server.py, requirements.txt, .env.example, INTERFACES.md, README.md, ARCHITECTURE.md, KNOWN_LIMITATIONS.md, index.html, app.js, style.css, db models and migrations, scripts, final commits |
+| A Research | docs/RESEARCH.md, docs/THIRD_PARTY.md |
+| B LiveKit | backend/livekit_transport/** |
+| C Voicekit | backend/voicekit/**, frontend/voicekit/**, docs/VOICEKIT.md, examples/voicekit/** |
+| D Avatar | frontend/avatar/** (including assets) |
+| E MCP and OTP | backend/mcp_client/**, backend/otp/** |
+| F QA | tests/test_voicekit_*.py, test_livekit_*.py, test_otp_*.py, test_mcp_hub_*.py, test_avatar_*.py |
+
+Subagents return proposed patches for shared files as text in their final
+report; only the lead edits them.
+
+## P2.6 Risks
+
+1. No hub key: hub tool names, transport and customer lookup are unknown. Mitigation: configuration driven tool choice, a mock hub in tests, "not live tested" in KNOWN_LIMITATIONS.
+2. No LiveKit server: end to end audio is untested until one runs. Mitigation: fake room tests and a documented `livekit-server --dev` command.
+3. Free GLBs with ARKit plus Oculus visemes and a commercial license may not exist, and Ready Player Me is gone. Mitigation: Agent A decides before D builds; if none qualifies, the best licensed pair ships and the gap is reported.
+4. Sinhala and Tamil have no audio viseme model: they use provider word timings (edge-tts) or audio analysis.
+5. A second Whisper copy in a worker process would double memory: the worker runs jobs as threads of the app process.
+6. Added latency in the LiveKit path (WebRTC buffering, resampling). Measured and recorded, not hidden.
+7. `three@0.128` is a global in the page and TalkingHead needs a modern Three as an ES module: loaded through an import map, kept separate.
+
+## P2.7 Test plan
+
+Unit: voicekit providers with fakes, fallback order, key auth and rate limit,
+sinks; LiveKit token claims and TTL, session with a fake room (frames in,
+transcripts and audio out, barge in); MCP client against a local mock hub
+(both transports, 401, timeout, breaker, composed callback); OTP expiry, three
+attempts, cooldown, per number and per IP limits, hashing, masking, no code in
+logs; avatar fallback by a Node test of the renderer loader. The existing
+suite must stay green after every wiring step. Manual: speak in a real browser,
+hear the reply, watch the mouth, switch gender mid session, OTP login.
+
+## P2.8 ADRs
+
+**ADR 2.1 Both transports, WebSocket stays the default until proven.** The brief
+makes LiveKit the target default but demands `/ws/voice` keep working, and a
+new transport cannot be trusted before a real browser run. Flags flip last.
+
+**ADR 2.2 voicekit reimplements the provider calls instead of importing `tts.py`.**
+The brief asks both to wrap the existing chain "without changing tts.py" and
+for "no imports from unrelated project modules". Importing `tts.py` would pull in
+`config`. voicekit therefore carries its own small provider code (same voices,
+same order, same Google Chirp3 and edge-tts mapping) and takes credentials as a
+settings object. `tts.py` stays untouched and keeps serving server side playback.
+Cost: two copies of the voice map; a test checks the two lists agree.
+
+**ADR 2.3 Worker built on livekit-agents with our own session class.** The
+framework's `AgentSession` wants its own STT, LLM and TTS plugins, which would
+replace the modules we must reuse. We use its `Worker`, job dispatch and
+lifecycle, and run our existing pipeline inside the job through
+`LiveKitVoiceSession`, which only uses `livekit.rtc`.
+
+**ADR 2.4 Events over a data channel in the old JSON shape.** The page keeps one
+message handler for both transports, and nothing in the UI has to change.
+
+**ADR 2.5 Avatar: TalkingHead (MIT).** It already provides Oculus visemes, ARKit
+blend shapes, blinking, gaze, moods and gestures, and can be driven by word
+timings or audio. The final asset choice is in docs/RESEARCH.md.
+
+**ADR 2.6 MCP hub tool use is configuration driven.** Tool names are unknown
+until a key is available; guessing them would be an unverifiable stub.
+
+**ADR 2.7 OTP anti enumeration.** Unknown numbers get the same response shape
+and timing class as known ones, and no message is sent.
+
+**ADR 2.8 Provider fallback order unchanged** (cloud, edge-tts, SAPI5). A local
+open model is inserted before SAPI5 only, because it is offline and better
+sounding than SAPI5, and never ahead of the first two.

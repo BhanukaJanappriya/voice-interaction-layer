@@ -361,3 +361,124 @@ Shared conventions
     repository root.
     Only config.py reads the environment; every new setting is listed in
     .env.example.
+
+
+Additions for the LiveKit transport, voicekit, the avatar, the MCP hub client
+and one time code login (2026-10-05). All are new modules, optional
+parameters or new endpoints; no signature above changed.
+
+backend/server.py (additions)
+    /ws/voice start_session accepts voice_style ("female_natural" | "male",
+    anything else means "female_natural") and, during a session, a
+    {"type": "set_voice", "voice_style": ...} text frame changes it from the
+    next sentence. _run_one_utterance, _speak, _speak_canned_reply and
+    _speak_streamed_reply gained an optional voice style parameter whose
+    default is the old behaviour.
+    GET /health also reports mcp_hub, livekit {transport, configured,
+    available, worker}, avatar_renderer and voicekit {enabled,
+    api_keys_configured}.
+    The Orchestrators are built with compose_tool_callbacks(retriever.context_for,
+    hub_context_for), retrieval first.
+
+backend/config.py (additions, all in .env.example)
+    VOICE_TRANSPORT (livekit | websocket), LIVEKIT_URL / API_KEY / API_SECRET /
+    TOKEN_TTL_SECONDS / AGENT_NAME, AVATAR_RENDERER (talkinghead | legacy),
+    VOICEKIT_*, MCP_HUB_*, MCP_HUB_IN_REPLIES, MCP_HUB_CONTEXT_BUDGET_SECONDS,
+    AUTH_METHODS, OTP_*, OTP_BACKEND, SMTP_*, SMS_*.
+    def livekit_configured() -> bool       URL, key and secret all present
+    def mcp_hub_configured() -> bool       enabled and an API key present
+    Neither makes a network call.
+
+backend/voicekit (standalone: imports only stdlib, numpy and third party libs; see docs/VOICEKIT.md)
+    types: AudioChunk(pcm, sample_rate, sentence_index), WordTiming(text, start_ms,
+        duration_ms, sentence_index), SentenceStart(text, sentence_index),
+        SynthesisDone(provider, first_audio_ms, total_ms), SynthEvent = union of
+        those; VoicekitError, ProviderUnavailable, InvalidRequest
+    settings: VoicekitSettings(google_credentials_path, azure_key, azure_region,
+        cloud_provider="google", local_voice_dir, max_text_chars=2000,
+        provider_order=("cloud", "edge", "local_model", "sapi"))
+    core: synthesize_stream(text_or_iterable, language="en", voice="female_natural",
+          settings=None) -> SynthStream, an Iterator[SynthEvent] with a thread safe
+          cancel(). Raises only InvalidRequest. A failing provider falls through; if
+          all fail the last event is SynthesisDone(provider="none"). Audio is 16 bit
+          mono PCM. WordTiming.start_ms is relative to its sentence.
+          list_voices(settings=None) -> [{language, voice, provider, name, license, gender}]
+    sinks: Sink.play(events) / Sink.cancel(); SpeakerSink, CallbackSink(fn),
+          HttpChunkSink(format).stream(events), WebSocketSink(send_bytes, send_json),
+          LiveKitSink(audio_source, sample_rate=24000, loop=None)
+    adapter: speak_agent(agent_or_callable, sink=None, language="en",
+          voice="female_natural", settings=None) -> Callable[[str], str]
+    api: create_router(settings, api_keys: Callable[[], list[str]], rate_limit_per_minute)
+          POST /api/tts/stream {text, language, voice, format: pcm|wav|ndjson}; header
+            X-Sample-Rate; ndjson lines: sentence | timing | audio (base64) | done;
+            word start_ms there is from the start of the utterance
+          WS /ws/tts: client speak / cancel; server audio_start, binary PCM, timings,
+            done, cancelled, error
+          Auth X-API-Key (WS also ?api_key=), constant time compare; 401, 429 (rate
+          limit, and 20 failed auths per minute per address), 422, 503. Refuses every
+          request while no key is configured.
+frontend/voicekit/voicekit.js: window.VoiceKit({baseUrl, apiKey, transport}); speak(text,
+    {language, voice}) -> Promise, stop(), onTimings / onStart / onEnd / onError /
+    onSentence, analyser, audioContext, audioStartTime, currentTime, audioTimeFor(ms)
+
+backend/livekit_transport/
+    router (prefix /api/livekit)
+        POST /token {language?, voice_style?, user_name?, session_token?}
+            -> {url, token, room, identity, expires_at}; 503 when LiveKit is not configured.
+            A verified user (session_token, bearer or cookie) gets identity user-<id> and
+            the name from the account; anyone else gets guest-<random>.
+        GET /config -> {transport, livekit_configured, avatar_renderer}
+    class LiveKitVoiceSession(room, settings: SessionSettings, bindings: Bindings, **injectables)
+        async run() -> None   one conversation on a connected rtc room; returns when it ends
+        async aclose()
+    class Bindings: orchestrator, greeting, looks_like_hallucination, sounds_like_closing_signal,
+        sounds_negative, closing_question, closing_goodbye, extract_user_name;
+        classmethod from_server(server_module)
+    def start_worker(server_module=None) -> WorkerHandle   never raises; handle.stop(), handle.status()
+    def build_worker_options() -> livekit.agents.WorkerOptions   raises LiveKitNotConfigured
+    errors: TransportError > LiveKitNotConfigured, LiveKitUnavailable, SessionError
+    Data topic "va-events" (agent to page): the /ws/voice JSON events plus {"type": "interrupt"}.
+    Data topic "va-control" (page to agent): {"type":"set_voice","voice_style"}, {"type":"mute","muted":bool}.
+    Audio: the published track "agent-voice", 24000 Hz mono.
+
+frontend/avatar (loaded by avatar/loader.js when GET /api/livekit/config says talkinghead)
+    window.avatarBridge: safe at any time (before load, after a fallback, on legacy);
+        isActive(), setState(state), setGender("female"|"male"), attachAudioStream(MediaStream),
+        speakAudio(source, timings, opts), speakSentence(text), stop()
+    window.avatarRenderer: init(container, opts), ready, isActive(), fps(), gender, setState,
+        setGender -> Promise<{gender, fallback}>, attachAudioStream, speakAudio -> {addTimings, stop},
+        speakSentence (text driven, not audio lip sync), stop, measureSyncOffset(), destroy
+    document events: avatar:fallback {reason}, avatar:gender-fallback {requested, shown, reason, message}
+frontend/livekit-voice.js: window.LiveKitVoice {isEnabled(baseUrl), fetchConfig(baseUrl), connect(options)}
+
+backend/mcp_client (the MCP hub as a client; the MCP SERVER above is separate)
+    errors: HubError > HubUnavailable, HubAuthError, HubToolError, HubBreakerOpen
+    client.HubClient: async list_tools(refresh, budget), async call_tool(name, arguments, budget),
+        status() -> {configured, enabled, transport, reachable, breaker_open, breaker_seconds_left,
+        tools, last_error, tool_selection, customer_lookup_tool}. SSE is tried first and the
+        transport is cached; a 401 is never retried; the key is never printed or returned.
+    get_hub() -> HubClient (process wide, from config)
+    tools.hub_context_for(text) -> Optional[str]      sync, never raises; None unless
+        MCP_HUB_IN_REPLIES is true. Only search_knowledgebase_tool by default (MCP_HUB_TOOLS
+        replaces that list). Tools starting purchase_, add_, subscribe_, log_ or refresh_, the
+        OTP tools and authenticate_with_token are refused even when listed.
+    tools.compose_tool_callbacks(*callbacks)         runs them side by side, joins non empty
+        outputs in order (retrieval first); a failing callback is left out
+    tools.warm_up(), tools.status()                   startup and /health
+
+backend/otp (router prefix /auth)
+    GET /auth/methods -> {"methods": ["pin","otp"], "otp_available": bool}
+    POST /auth/otp/request {phone, language?} -> {challenge_id, masked_destination, channel,
+        expires_in, resend_in}. Unknown numbers get the same shape and nothing is sent.
+        422 (reason phone_format), 429 (cooldown or rate_limited, Retry-After), 503, 404 disabled
+    POST /auth/otp/verify {challenge_id, code} -> {display_name, token, expires_at} + user_session
+        cookie, exactly like /auth/verify. 401 wrong, expired or used (one text), 423 locked
+        after 3 attempts, 429, 503
+    otp.service: request_otp(phone, client_ip, language=None), verify_otp(challenge_id, code,
+        client_ip) -> auth.users.VerifiedUser, OtpError(reason, retry_after), set_contact(phone, mobile, email)
+    otp.sender: OtpSender.send(destination, code, language); ConsoleOtpSender (the only place a
+        code is printed, development only), EmailOtpSender (SMTP), SmsGatewayOtpSender
+    OTP_BACKEND hub | local | auto: hub uses validate_customer_and_send_otp and
+        verify_otp_and_authenticate on the MCP hub; local keeps codes hashed here (HMAC, never
+        stored or logged in clear)
+    db: users.mobile_e164, users.email, table otp_challenges (Alembic revision 0002)
