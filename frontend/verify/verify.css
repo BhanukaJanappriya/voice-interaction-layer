@@ -1,0 +1,313 @@
+/* Verification wizard. Uses only the variables and fonts from style.css, so
+   the dark theme (media query and [data-theme]) works with no extra rules.
+   Nothing here has a fixed width: long Sinhala and Tamil text wraps. */
+
+.slt-verify-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px 12px;
+  overflow-y: auto;
+  background: rgba(15, 28, 38, 0.55);
+  font-family: inherit;
+  color: var(--text);
+}
+
+.slt-verify-card {
+  width: 100%;
+  max-width: 440px;
+  margin: auto;
+  padding: 24px 20px;
+  gap: 16px;
+  text-align: left;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+
+.slt-v-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.slt-v-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.slt-v-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.slt-v-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.slt-v-field > label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.slt-v-input {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 1rem;
+}
+
+.slt-v-field-check {
+  flex-direction: row;
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  gap: 12px;
+}
+
+.slt-v-check {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: 2px 0 0;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+
+.slt-v-terms {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.slt-v-ext {
+  color: var(--blue);
+  text-decoration: underline;
+}
+
+.slt-v-sub {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.slt-v-error {
+  margin: 0;
+  color: var(--bad);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.slt-v-hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.slt-v-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-width: 0;
+}
+
+.slt-v-btn {
+  width: 100%;
+  min-height: 48px;
+  box-sizing: border-box;
+  flex-wrap: wrap;
+  text-align: center;
+  font-family: inherit;
+}
+
+.slt-v-btn:disabled,
+.slt-v-btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.slt-v-btn.slt-v-busy {
+  cursor: progress;
+}
+
+.slt-v-link {
+  min-height: 44px;
+  justify-content: center;
+  padding: 0 8px;
+  align-self: center;
+  text-align: center;
+  margin-top: 0;
+  font-size: 0.9rem;
+}
+
+.slt-v-icon {
+  flex: 0 0 auto;
+}
+
+/* Delivery choice rows */
+.slt-v-methods {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.slt-v-method {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-height: 56px;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border: 1.5px solid var(--card-border);
+  border-radius: 14px;
+  background: var(--card);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.slt-v-method:hover {
+  border-color: var(--blue);
+}
+
+.slt-v-method:has(input:checked) {
+  border-color: var(--blue);
+  background: var(--blue-dim);
+}
+
+.slt-v-method:has(input:focus-visible) {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.slt-v-radio {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+
+.slt-v-method-icon {
+  display: inline-flex;
+  color: var(--blue);
+}
+
+.slt-v-method-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 8rem;
+  min-width: 0;
+  gap: 2px;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.slt-v-masked {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+/* Code entry */
+.slt-v-digits {
+  display: flex;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: clamp(4px, 2vw, 10px);
+}
+
+.slt-v-digit {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 52px;
+  min-height: 52px;
+  box-sizing: border-box;
+  padding: 0;
+  text-align: center;
+  font: inherit;
+  font-size: 1.4rem;
+  font-weight: 600;
+  background: var(--card);
+  color: var(--text);
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+}
+
+.slt-v-digit:disabled {
+  opacity: 0.5;
+}
+
+.slt-v-timer {
+  margin: 0;
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.slt-v-timer-done {
+  color: var(--bad);
+}
+
+/* Visually hidden, still read by screen readers. */
+.slt-v-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Visible keyboard focus everywhere inside the wizard. */
+.slt-verify-card :is(button, a, input):focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.slt-v-input:focus,
+.slt-v-digit:focus {
+  border-color: var(--blue);
+}
+
+@media (min-width: 480px) {
+  .slt-verify-overlay {
+    padding: 32px 20px;
+  }
+  .slt-verify-card {
+    padding: 28px;
+  }
+}
+
+@media (max-width: 360px) {
+  .slt-verify-card {
+    padding: 20px 14px;
+  }
+}
