@@ -180,7 +180,13 @@ async def _gather(hub: HubClient, text: str, budget: float) -> Optional[str]:
     async def one(tool: HubTool, argument: str) -> tuple[str, str]:
         remaining = max(0.3, budget - (time.monotonic() - started))
         try:
-            return tool.name, await hub.call_tool(tool.name, {argument: text}, budget=remaining)
+            # An operator chosen search tool gets the user's words and no phone
+            # number, so it is trusted, unless it is one of the policy's named
+            # customer tools: those go through the access gate as a guest.
+            from access.policy import get_policy
+
+            trusted = tool.name not in get_policy().customer_tools
+            return tool.name, await hub.call_tool(tool.name, {argument: text}, budget=remaining, trusted=trusted)
         except HubError as exc:
             print(f"MCP hub tool {tool.name} gave nothing: {type(exc).__name__}")
             return tool.name, ""
@@ -287,7 +293,7 @@ def call_tool_sync(name: str, arguments: dict, budget: Optional[float] = None):
     lists above: callers are code in this repository, not the model."""
     budget = _budget() if budget is None else budget
     hub = get_hub()
-    return _runner.run(hub.call_tool_output(name, arguments, budget=budget), timeout=budget + 1.0)
+    return _runner.run(hub.call_tool_output(name, arguments, budget=budget, trusted=True), timeout=budget + 1.0)
 
 
 # Customer lookup
@@ -382,7 +388,7 @@ async def _lookup(hub: HubClient, tool_name: str, phone_e164: str, budget: float
     if argument is None:
         print(f"MCP hub customer lookup tool {tool_name!r} has no string argument to put the number in.")
         return None
-    output = await hub.call_tool_output(tool_name, {argument: phone_e164}, budget=budget)
+    output = await hub.call_tool_output(tool_name, {argument: phone_e164}, budget=budget, trusted=True)
     return parse_customer(output.structured, output.text)
 
 

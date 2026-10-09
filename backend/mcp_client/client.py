@@ -423,11 +423,36 @@ class HubClient:
             self._tools_at = self._clock()
         return list(tools)
 
+    @staticmethod
+    def _gate(name: str, arguments: dict, access) -> dict:
+        """The server side access check for customer tools (backend/access).
+        Runs before any network call and whatever the model asked for: a
+        customer tool needs a verified session, and its telephone_no is
+        replaced by the verified number, written the way the hub documents it
+        (0112150026). A caller that passes no context is a guest. Raises
+        access.AccessDenied. Public tools pass untouched."""
+        from access import GUEST, authorize_tool, bind_arguments
+
+        context = access or GUEST
+        authorize_tool(name, arguments, context)
+        bound = bind_arguments(name, arguments, context)
+        number = bound.get("telephone_no")
+        if isinstance(number, str) and number.startswith("+94"):
+            bound["telephone_no"] = "0" + number[3:]
+        return bound
+
     async def call_tool_output(
-        self, name: str, arguments: dict, budget: Optional[float] = None
+        self, name: str, arguments: dict, budget: Optional[float] = None, access=None, trusted: bool = False
     ) -> ToolOutput:
         """The tool's result with its structured content kept. Raises
-        HubToolError when the hub reports the call as failed."""
+        HubToolError when the hub reports the call as failed.
+
+        access is the caller's access.AccessContext. trusted=True skips the
+        gate and is only for this repository's own login flow (OTP_BACKEND=hub
+        and the customer lookup), never for anything driven by a user or a
+        model."""
+        if not trusted and config.ACCESS_CONTROL_ENABLED:
+            arguments = self._gate(name, arguments, access)
 
         async def op(session: ClientSession) -> ToolOutput:
             try:
@@ -445,8 +470,10 @@ class HubClient:
 
         return await self._call(op, budget)
 
-    async def call_tool(self, name: str, arguments: dict, budget: Optional[float] = None) -> str:
-        output = await self.call_tool_output(name, arguments, budget)
+    async def call_tool(
+        self, name: str, arguments: dict, budget: Optional[float] = None, access=None, trusted: bool = False
+    ) -> str:
+        output = await self.call_tool_output(name, arguments, budget, access, trusted)
         if output.text:
             return output.text
         structured = output.structured
