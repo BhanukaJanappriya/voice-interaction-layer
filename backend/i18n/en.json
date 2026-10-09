@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "language": "en",
+    "reviewed": true
+  },
+  "verify.errors.generic": "Something went wrong. Please try again.",
+  "verify.errors.invalid_details": "We could not verify those details. Please check your name and number and try again.",
+  "verify.errors.phone_format": "Please enter a valid Sri Lankan telephone number.",
+  "verify.errors.rate_limited": "Too many attempts. Please try again in {seconds} seconds.",
+  "verify.errors.invalid": "That code is not correct.",
+  "verify.errors.expired": "This code has expired. Please ask for a new one.",
+  "verify.errors.locked": "Too many wrong codes. Please try again later.",
+  "verify.errors.attempts_left": "{count} attempts left.",
+  "verify.errors.cooldown": "Please wait {seconds} seconds before asking for a new code.",
+  "verify.errors.unavailable": "Verification is not available right now. Please try again later.",
+  "verify.errors.network": "Network problem. Please check your connection and try again.",
+  "verify.success.greeting": "Welcome back, {name}! You are now verified, so you can ask me about your account.",
+  "access.customer_service_blocked": "Help with accounts, bills, connections, faults, packages and usage is only available through SLT's dialing services. Please call {hotline} (toll free from SLT lines), send an SMS to {sms}, or for prepaid dial {prepaid}. You can also verify as an existing user to get full access.",
+  "llm.safety_blocked": "I am sorry, I cannot help with that request. Please ask me something else about SLT-MOBITEL.",
+  "otp.sms_body": "SLT-MOBITEL: Your verification code is {code}. It is valid for {minutes} minutes. Do not share it with anyone.",
+  "otp.email_subject": "Your SLT-MOBITEL verification code",
+  "otp.email_body": "Hello,\n\nYour SLT-MOBITEL verification code is {code}. It is valid for {minutes} minutes.\n\nDo not share this code with anyone. SLT-MOBITEL will never ask you for it.\n\nIf you did not ask for this code, you can ignore this email."
+}
