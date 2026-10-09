@@ -649,3 +649,59 @@ the trousers and arms in full body framing were not looked at.
 - The livekit native library loaded on this machine; a stricter Application
   Control policy could refuse it like the packages in the section above, and the
   app would then keep `/ws/voice` (the import is guarded).
+
+## Fallback chain, guest access and verification wizard (2026-10-09)
+
+What was checked live: the app was run on a throwaway database. A guest asking
+for a bill was blocked in English, Sinhala (script and Latin letters) and
+Tamil. The wizard was walked over HTTP in English (wrong name and unknown number
+returned the identical answer, cooldown, a correct code after 125 seconds of
+real time was rejected as expired, a new code verified once and could not be
+reused, the cookie unlocked the same question). In Chrome the wizard was
+completed in Sinhala including a wrong code with its localized message and the
+greeting by name, and step 1 was rendered in English and Tamil at 360 px with no
+horizontal scroll. With a bad Gemini key and a bad LiveKit secret the chain fell
+to local Llama and `/health` showed each tier's reason. The full suite passes
+(809 tests) with fakes for every provider.
+
+Not live tested:
+- **Gemini**: no working key here. The tier is tested with fakes; a real safety
+  block from the Gemini SDK and a real 402 or 429 were never seen. A bad key
+  gave HTTP 400, which the chain treats as unavailable with reason "other".
+- **LiveKit Inference quota**: the free plan's models and the exact quota
+  error were not found in the documentation read; 402 and 429 are mapped by
+  status code only.
+- **Real delivery**: SMS gateway and SMTP senders, and their Sinhala and Tamil
+  message bodies on a phone, were never sent. The console sender was used.
+- **The MCP hub**: it has no customer lookup or send tool, so none was called.
+  The tool gate is tested against the local mock hub. The hub may want the
+  number as 0112150026 (as its tool help shows) and the gate sends that form; a
+  real call was not made.
+- **The customer directory holds fake rows.** A real source of names, mobile
+  numbers and emails must be supplied before this is useful. Until then every
+  real customer is refused.
+- **Verified users get the same model as guests.** The model has no customer
+  data tools wired yet, so a verified user asking for a bill is not shown one;
+  in the live run the model said it could not see the account (and invented a
+  hotline number). Verification unlocks the path and the server gate, not
+  customer answers yet.
+- **The system prompt access clause reaches the cloud tiers only.** The local
+  Llama agent builds its own prompt; the guard is what protects it.
+- **PIN logins count as guests** for customer data, by design, since only the
+  one time code sets `amr: ["otp"]`.
+- **Keyword rules are blunt.** Words such as "activate", "paid", "ticket" or
+  "not working" block guests even in general questions. The classifier's
+  threshold (0.53) and weights are untuned. Sinhala and Tamil rules use plain
+  substring matching and were written without native review.
+- **Sinhala and Tamil wording** (wizard, blocked message, OTP texts) is machine
+  written and needs a native speaker. The terms and privacy links go to the
+  English pages, because /si/ and /ta/ versions return 404.
+- **The browser run covers Sinhala fully.** English and Tamil were checked only
+  to step 1; the step list for a full run is tests/browser/wizard_e2e.md.
+- **Voice**: the guard and the chain were tested over `/ws/voice` with fakes and
+  over the LiveKit session with fakes. A spoken question through a real
+  microphone was not tried.
+- **Several server workers**: the verification lookup brake is locked per
+  process; the database counted limits still hold.
+- `test_live_roaming_retrieval` needs a working local model and times out on
+  this machine at times.

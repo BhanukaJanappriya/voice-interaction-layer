@@ -469,3 +469,33 @@ made unreachable: the reply came from local Ollama and /health reported
 token took 1.3 to 2.2 s (gpt-4o-mini fastest of four models tried), against
 about 0.3 to 0.9 s locally, so choosing it moves the first word about 1 to 1.5 s
 later; see KNOWN_LIMITATIONS.md.
+
+## Fallback chain, access guard and verification (2026-10-09)
+
+```
+turn -> policy guard (backend/access) (guest and customer topic) -> canned translated reply, no model
+          | allowed
+          v
+     Orchestrator -> external agent (if active) -> LlmChain (backend/llm_chain)
+                                                    gemini, on failure livekit, on failure local Llama
+                                                    each tier: own breaker, startup probe
+                                                    safety block: ends the turn, no fallback
+```
+
+The guard runs before everything else, on `/chat`, `/ws/voice` and the LiveKit
+session, and decides from the session token, never from a field the browser
+sends. The token endpoint for LiveKit signs the access level into the
+participant attributes. Hub tools pass `HubClient._gate` first: a customer tool
+needs a session whose token carries `amr: ["otp"]`, and `telephone_no` is forced
+to the verified number.
+
+Verification flow: lookup (name and number checked against `customer_directory`,
+one generic failure for every wrong detail) returns a signed ticket and only
+masked contacts; send creates a challenge in `otp_challenges` (HMAC of the code,
+120 s, single use, 3 attempts); verify sets the same `user_session` cookie as
+the older login with the extra claim `amr: ["otp"]`.
+
+Measured: the guard adds about 0.04 ms per request (mean 0.043 ms, p95 0.097
+ms over 6600 calls, rules and classifier on a sample set). The chain adds no network call of its own and was not separately timed;
+the time to the first word is the tier's own, for
+LiveKit Inference 1.3 to 2.2 s warm as measured earlier.

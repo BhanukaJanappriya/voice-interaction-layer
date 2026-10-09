@@ -597,3 +597,50 @@ tested locally but not against real third party clients or servers.
   to an AudioWorklet.
 - Add conversation history so the chat agent has multi turn context; both
   the prototype and this pass are stateless per turn.
+
+## Reply fallback chain, guest access and the verification wizard
+
+Added 2026-10-09. Design and decisions: docs/IMPLEMENTATION_PLAN.md Part 3.
+
+**Reply models.** Each turn tries Gemini, then LiveKit Inference, then the local
+Llama model, in the order of `LLM_CHAIN` (default `gemini,livekit,local`). A tier
+counts as unavailable for a missing key, a refused key (401 or 403), used up
+credit or quota (402 or 429), an unknown model (404), a provider outage (5xx), a
+timeout or a network failure. Each tier has its own 5 minute breaker and is
+probed once at startup. A tier that fails restarts the whole turn on the next
+one. A safety block or refusal from a provider is a valid answer and is not
+retried elsewhere; the user hears a short translated notice instead. `/health`
+shows `llm_chain` with every tier's state and last error reason, and the mode
+badge shows the tier that answered, for example `cloud (gemini)`,
+`livekit inference (openai/gpt-4o-mini)` or `local single agent (Llama via
+Ollama)`. Setting `LLM_CHAIN=` (empty) goes back to the single provider chosen
+by `CLOUD_LLM_PROVIDER`. The text `/chat` path uses every tier too, because
+LiveKit Inference is called from plain server code here.
+
+**Guests and verified users.** A guest (chose New user, or did not finish the
+one time code) can chat and get public information. A request that needs
+customer data (account, bills, payments, connection status, faults, package
+changes, personal usage) is not sent to any model. The reply is a fixed,
+pre translated message giving 1212, SMS 0113121212 and 1222 for prepaid, and
+saying they can verify as an existing user. The topics, keywords and numbers
+are in `backend/access/policy.json`, which the supervisor can edit without
+code changes (it reloads when the file changes). Hub tools that need a customer
+are refused on the server unless the session finished the one time code, and a
+verified user can only use their own number. Turn it off with
+`ACCESS_CONTROL_ENABLED=false`.
+
+**Verification wizard.** Existing user opens three modal steps (details,
+where to send the code, enter the code), in English, Sinhala or Tamil. The
+server checks everything: `POST /verify/lookup`, `/verify/otp/send`,
+`/verify/otp/verify`, `GET /verify/session`, `POST /verify/logout`. Codes are 6
+digits, kept only as an HMAC, valid 120 seconds, single use, 3 attempts, 30
+second resend cooldown, with limits per address and per number. Customers come
+from the `customer_directory` table, because the MCP hub has no lookup tool
+and cannot send a message on its own. Put fake test rows in with
+`cd backend; python -m verification.seed_demo`. In development
+`OTP_SENDER=console` prints the code in the server window; real delivery needs
+`SMTP_*` or `SMS_GATEWAY_*` in `.env`.
+
+**Languages.** Wizard text lives in `frontend/i18n/{en,si,ta}.json`, server
+messages in `backend/i18n/{en,si,ta}.json`. The Sinhala and Tamil wording is
+machine written and needs review by a native speaker.

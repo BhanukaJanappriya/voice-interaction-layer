@@ -729,3 +729,248 @@ and timing class as known ones, and no message is sent.
 **ADR 2.8 Provider fallback order unchanged** (cloud, edge-tts, SAPI5). A local
 open model is inserted before SAPI5 only, because it is offline and better
 sounding than SAPI5, and never ahead of the first two.
+
+---
+
+# Part 3: LLM fallback chain, access control, verification wizard, localization
+
+Written 2026-10-09. Rule for this part: additive only. Existing signatures,
+endpoints, events and screens keep working. Everything new sits in new
+packages (backend/llm_chain, backend/access, backend/verification,
+backend/i18n, frontend/verify, frontend/i18n) behind config flags.
+
+## 3.1 Discovery results
+
+MCP hub (https://mcphub.sltdigitallab.lk), read with the app's own client.
+Claude Code's HTTP registration of the hub fails ("MCP endpoint not found")
+because the hub speaks SSE only. 24 tools were listed.
+
+Customer tools: validate_customer_and_send_otp(telephone_no, otp_media),
+verify_otp_and_authenticate(telephone_no, session_id, otp_value),
+refresh_customer_token, authenticate_with_token, show_gb_balance,
+show_bill_history, show_last_payment, show_service_detail, show_fault_list,
+log_fault, show_daily_usage, show_lte_subscriber_status, show_lte_wallet_detail,
+show_lte_purchased_packages, show_reload_history, and the packages and
+mutating tools show_extra_gb_packages, show_vas_data_bundle_packages,
+show_lte_prepaid_package_list, purchase_extra_gb, add_vas_data_bundle,
+subscribe_lte_prepaid_package. Non customer tools: search_knowledgebase_tool,
+compare_package, get_function_latencies.
+
+Answers to the questions in the brief:
+- Lookup by telephone number, name, registered mobile or email: there is NO
+  such hub tool. The only customer entry point validates a number and sends the
+  hub's own OTP in the same call. It returns no name or contacts first.
+- Can the hub send SMS: NOT on its own. Only inside
+  validate_customer_and_send_otp.
+- Consequence: R3 cannot run on the hub (no name check, no masked contacts,
+  the hub controls TTL and attempts). The owner chose a local customer
+  directory plus a local OTP (ADR 3.1). The hub stays the data source for
+  customer tools after verification.
+- No customer tool was called during discovery (real SMS, mutating tools).
+
+LiveKit Inference: the docs show the LLM usable as a standalone component
+outside an AgentSession. The repo already calls the gateway from plain
+server code (backend/livekit_inference.py, OpenAI compatible client, short
+lived token), so the text /chat path CAN use this tier. The docs fetched did
+not list the free Build plan models or the quota error shape. Earlier
+measurements: openai/gpt-4o-mini, openai/gpt-4.1-nano and
+google/gemini-2.5-flash-lite answered. Quota is mapped from HTTP 402 and 429.
+
+SLT contact page (https://www.slt.lk/en/contact-us/call-center-services):
+hotline 1212 (toll free from SLT lines, chargeable from other networks;
+faults, technical support, billing); SMS 0113121212 for balance and fault
+reporting; 1222 CDMA prepaid; 1292, 1293, 1294 time services in Sinhala,
+Tamil, English; 1250 dial up. No numbered IVR menu is published there.
+https://www.slt.lk/si/terms-conditions and /ta/ return 404, so the wizard
+links the English terms and privacy pages in every language.
+
+Baseline: 119 tests pass in the first 27 s. tests/test_knowledge.py::
+test_live_roaming_retrieval fails here because Ollama times out. It needs a
+live model and is not caused by this work.
+
+## 3.2 Architecture being built on
+
+Orchestrator (agent.py) already runs external agent, then one cloud
+provider chosen by CLOUD_LLM_PROVIDER, then Ollama, with a 5 minute breaker
+and CloudUnavailableError. /ws/voice, /chat and the LiveKit session all call
+Orchestrator.respond_stream(text, user_name, language). Sessions are the
+user_session httpOnly cookie (JWT audience voice-assistant:user), resolved by
+auth.dependencies.verified_user_from_request. backend/otp has HMAC hashing,
+masking, OtpSender (console, SMTP, SMS gateway), rate limits and the
+otp_challenges table. db/migrations has two Alembic revisions.
+
+## 3.3 Design and contracts
+
+New packages are imported as top level packages like the rest of backend/.
+Each runs a standalone self check with `python -m <package>` and logs
+per call latency.
+
+### R1 backend/llm_chain (Agent A)
+- errors.py: `TierUnavailable(reason, message)`, a subclass of
+  agent.CloudUnavailableError. Reasons: missing_key, auth (401/403), quota
+  (402/429), not_found (404), outage (5xx), timeout, network, other.
+  `reason_from_exception(exc)` reads `.status_code` or `.code` and walks the
+  `__cause__` chain. `SafetyBlocked`: provider refused for safety, never a
+  reason to fall back.
+- breaker.py: `Breaker(seconds)` with trip(reason), open(), seconds_left(),
+  reset().
+- tiers.py: `Tier` ABC {name, label(), configured(), stream(turn),
+  probe()}. `GeminiTier`, `LiveKitTier`, `LocalTier` wrap GeminiAgent,
+  LiveKitInferenceAgent, LlamaOllamaAgent (lazy imports). `Turn(text,
+  system_prompt, user_name, language, tool_context)`. Mode strings exactly:
+  "cloud (gemini)", "livekit inference (<model>)",
+  "local single agent (Llama via Ollama)".
+- chain.py: `LlmChain(order, tiers)`. `stream(turn)` is all or nothing: a
+  tier failing before its first chunk trips its breaker and the next tier
+  gets the whole turn. A failure after text started yields the existing short
+  apology. A safety block ends the turn with the localized notice (i18n key
+  llm.safety_blocked). `last_mode`, `status()`, `probe_all()`. The local tier
+  ignores its breaker (last resort).
+- Lead wiring: Orchestrator uses the chain when config.LLM_CHAIN is set,
+  default "gemini,livekit,local". /health gets `llm_chain`; old keys stay.
+
+### R2 backend/access (Agent B)
+- context.py: `AccessContext(level, user_id, display_name, phone_e164,
+  language)` and `GUEST`. Verified requires the session token claim `amr` to
+  contain "otp".
+- policy.py: JSON at config.ACCESS_POLICY_PATH (default
+  backend/access/policy.json): topics[] {id, keywords{en,si,ta}, regex[]},
+  public_overrides[], dial {hotline, sms, prepaid}, classifier {threshold},
+  public_tools[]. Reloaded when the file's mtime changes. A bad file keeps
+  the last good policy and raises a typed PolicyError at load.
+- guard.py: `evaluate(text, language, ctx) -> Decision{allowed, topic,
+  source, message_key, elapsed_ms}`. Verified: allowed. Guest: keyword rules
+  first (Sinhala and Tamil aware), then classifier.py (weighted heuristic for
+  personal data cues, no model call) only when no rule matched. Classifier
+  errors fail closed for guests.
+- messages.py: `blocked_reply(language)` from i18n key
+  access.customer_service_blocked with numbers from the policy.
+- tool_gate.py: `authorize_tool(name, arguments, ctx)` raises AccessDenied
+  unless the tool is in public_tools, or ctx is verified AND
+  arguments["telephone_no"] equals ctx.phone_e164. `bind_arguments` forces
+  telephone_no from ctx.
+- prompt.py: `level_clause(ctx, language)` for the system prompt.
+- Lead wiring: Orchestrator.respond_stream gets an optional keyword
+  `access` (None means guest). The guard runs before any tier. HubClient.
+  call_tool gets optional `access` and runs authorize_tool before any
+  network call. server.py and the LiveKit session build the context from the
+  cookie.
+
+### R3 backend/verification (Agent C)
+- Tables: `customer_directory` {id, phone_e164 unique, name_normalized,
+  display_name, mobile_e164 null, email null, preferred_language, active}
+  and `verification_audit` {id, at, event, phone_hash, ip_hash, outcome,
+  channel}. No codes, no full contacts. `otp_challenges` is reused with new
+  nullable columns `purpose` and `wizard_ref`. The migration file is
+  written by the agent as a proposed file; the lead places it in
+  db/migrations/versions (revision 20261009_0003).
+- `CustomerLookup` protocol {find(phone_e164) -> CustomerRecord|None},
+  implemented by `CustomerDirectory` (database). `HubCustomerLookup` is a
+  documented stub returning None (hub has no lookup tool). `python -m
+  verification.seed_demo` inserts clearly fake rows only.
+- Router prefix /verify, JSON, Cache-Control no-store, server authoritative:
+  1. POST /verify/lookup {name, phone, language} -> 200 {ticket, methods:
+     [{id:"sms", masked:"07X XXX X123"}, {id:"email", masked:
+     "XXXXXXXXX@gmail.com"}]} | 422 {code:"invalid_details"} (one generic
+     code for wrong name, unknown number) | 422 {code:"phone_format"} only
+     for impossible syntax | 429 {code:"rate_limited", retry_after}. The
+     ticket is an opaque signed token (VERIFY_TICKET_MINUTES) binding the
+     customer. Unmasked contacts never leave the server.
+  2. POST /verify/otp/send {ticket, method, language} -> 200 {challenge_id,
+     expires_in:120, resend_in:30, masked} | 409 {code:"no_contact"} | 429
+     {code:"cooldown"|"rate_limited", retry_after}. A new send invalidates
+     the previous challenge.
+  3. POST /verify/otp/verify {challenge_id, code} -> 200 {display_name,
+     language} and sets the user_session cookie (claim amr ["otp"]) | 401
+     {code:"invalid", attempts_left} | 410 {code:"expired"} | 423
+     {code:"locked"}. Single use, 3 attempts, exactly 120 s.
+  4. GET /verify/session -> {verified, display_name?}. POST /verify/logout.
+- Rules: secrets.randbelow six digits, HMAC SHA256 with the server secret
+  (otp.hashing), hmac.compare_digest, VERIFY_OTP_TTL_SECONDS=120,
+  VERIFY_OTP_RESEND_COOLDOWN_SECONDS=30, VERIFY_OTP_MAX_ATTEMPTS=3, per IP and
+  per number hourly limits, NAME_MATCH_REQUIRED. Name match: NFC, casefold,
+  collapsed whitespace, punctuation stripped. Phone: reuse auth.phone and
+  normalize to +94.
+- Senders: reuse otp.sender (console dev only, SMTP, SMS gateway). No hub
+  sender, the hub has no send tool. Message text comes from i18n keys
+  otp.sms_body, otp.email_subject, otp.email_body.
+- Identity: on success find or create the `users` row by phone (as
+  otp.service does), issue the AUDIENCE_USER token with
+  extra={"amr":["otp"]}, set USER_COOKIE exactly like /auth/otp/verify.
+
+### R3/R4 frontend (Agents D and E)
+- frontend/verify/verify.js, verify.css, icons.js expose
+  `window.SltVerify.open({language, onVerified(user), onCancel()})`. Three
+  modal steps using the existing CSS variables, .card, .choice-button, fonts
+  and dark theme. The rocket is inline SVG in the stroke style of the
+  existing icons. Accessibility: role dialog, aria-modal, focus trap, Escape
+  is Back, aria-live for errors and countdown, autocomplete one-time-code,
+  inputmode numeric, paste across six boxes, Backspace moves back.
+- Strings only through `SltI18n.t(key, vars)` (frontend/i18n/i18n.js loads
+  en.json, si.json, ta.json, sets <html lang>, falls back to en).
+- Backend strings: backend/i18n/{en,si,ta}.json and backend/i18n/__init__.py
+  `t(key, lang, **vars)` (falls back to en, then the key).
+- Lead wires index.html (assets, Noto Sans Sinhala and Tamil) and app.js
+  (Existing user opens the wizard; the old PIN form stays as the fallback if
+  the wizard script fails to load).
+- Key contract (identical in frontend and backend files): verify.step1.{title,
+  name_label,name_placeholder,phone_label,phone_placeholder,terms_prefix,
+  terms_link,and,privacy_link,back,next}; verify.step2.{title,sms_option,
+  email_option,send_otp,change_number,no_contact}; verify.step3.{title,
+  subtitle,digit_aria,countdown,verify,resend,expired}; verify.errors.
+  {generic,phone_format,rate_limited,invalid,expired,locked,attempts_left,
+  cooldown,unavailable,network}; verify.success.greeting; common.close;
+  access.customer_service_blocked; llm.safety_blocked; otp.sms_body;
+  otp.email_subject; otp.email_body. Variables are {name} placeholders.
+- Sinhala and Tamil text is machine written and needs native speaker review
+  (flag in each file's `_meta` and in KNOWN_LIMITATIONS.md).
+
+## 3.4 Config flags (config.py, lead)
+LLM_CHAIN, LLM_BREAKER_SECONDS (300), ACCESS_CONTROL_ENABLED (true),
+ACCESS_POLICY_PATH, VERIFY_ENABLED (true), VERIFY_OTP_TTL_SECONDS (120),
+VERIFY_OTP_RESEND_COOLDOWN_SECONDS (30), VERIFY_OTP_MAX_ATTEMPTS (3),
+VERIFY_RATE_LIMIT_PER_IP_PER_HOUR, VERIFY_RATE_LIMIT_PER_PHONE_PER_HOUR,
+VERIFY_TICKET_MINUTES (10), NAME_MATCH_REQUIRED (true), VERIFY_OTP_SENDER
+(defaults to OTP_SENDER). Secrets stay in .env.
+
+## 3.5 File ownership
+A: backend/llm_chain/**, tests/test_llm_chain*.py. B: backend/access/**,
+tests/test_access*.py. C: backend/verification/**, tests/test_verification*.py.
+D: frontend/verify/**. E: frontend/i18n/**, backend/i18n/**. F:
+tests/test_e2e_*.py and tests/browser/**. Lead only: config.py, server.py,
+agent.py, livekit_inference.py, mcp_client/*, livekit_transport/*,
+requirements.txt, .env.example, INTERFACES.md, README.md, ARCHITECTURE.md,
+KNOWN_LIMITATIONS.md, index.html, app.js, style.css, db/migrations. Agents
+return exact proposed patches for shared files.
+
+## 3.6 ADRs
+- 3.1 Local customer directory plus local OTP, because the hub has no lookup
+  or send tool (owner approved). Hub OTP tools stay for OTP_BACKEND=hub.
+- 3.2 One generic failure for wrong name or unknown number, so the wizard
+  cannot be used to learn which numbers exist. Both paths do the same work.
+- 3.3 Policy guard before the model with a canned translated reply: correct
+  Sinhala and Tamil, no tokens spent, the model never sees the request.
+- 3.4 Verified means OTP completed (claim amr has "otp"). Old PIN logins
+  stay valid for the greeting but are guests for customer data.
+- 3.5 The tool gate binds a verified user to their own number.
+- 3.6 A safety block ends the turn with a localized notice and no fallback,
+  so a refusal is never retried on another provider.
+- 3.7 The local tier ignores its breaker, so some answer always exists.
+- 3.8 The classifier is a deterministic heuristic: no latency or cost. An LLM
+  classifier is a documented option, not built.
+- 3.9 Reuse otp_challenges, hashing and senders instead of a second OTP stack.
+- 3.10 Terms links use the English pages because /si/ and /ta/ return 404.
+
+## 3.7 Risks
+The customer directory holds fake rows until a real source is supplied.
+Sinhala and Tamil wording is unreviewed. Keyword rules can miss paraphrases
+(classifier backstop, fails closed for guests). The Gemini key is blank here,
+so that tier is tested with fakes only. Real SMS and SMTP delivery is not
+live tested.
+
+## 3.8 Test plan
+Unit and API tests per package use fakes and no network. Agent F adds the
+tier failure matrix, safety no fallback, guest blocked in en, si and ta over
+/chat and /ws/voice, tool gate refusals, wizard rules (120 s expiry with a
+fake clock, single use, 3 attempts, resend invalidation, rate limits,
+masking) and a Chrome run of the wizard in en, si and ta.

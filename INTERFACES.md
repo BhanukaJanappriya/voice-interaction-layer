@@ -502,3 +502,60 @@ backend/otp (router prefix /auth)
         verify_otp_and_authenticate on the MCP hub; local keeps codes hashed here (HMAC, never
         stored or logged in clear)
     db: users.mobile_e164, users.email, table otp_challenges (Alembic revision 0002)
+
+
+Additions for the fallback chain, access control, verification wizard and localization
+(2026-10-09). Nothing above changed; new parameters are optional.
+
+    agent.Orchestrator.respond(text, user_name=None, language=None, access=None)
+    agent.Orchestrator.respond_stream(text, user_name=None, language=None, access=None)
+        access: access.AccessContext, None means guest. last_mode may also be
+        "access policy (canned reply)". Orchestrator.chain is the LlmChain.
+    GET /health also reports llm_chain {order, last_mode, tiers{name: {label, configured,
+        state ready|tripped|not_configured, last_error, retry_in}}}, access_control, verification
+    POST /chat is unchanged; the access level comes from the user_session cookie or bearer token
+
+backend/llm_chain
+    errors: TierUnavailable(reason, message) subclass of agent.CloudUnavailableError, reasons
+        missing_key auth quota not_found outage timeout network other; SafetyBlocked
+    breaker.Breaker(seconds): trip(reason), open(), seconds_left(), reset()
+    tiers: Turn(text, system_prompt, user_name, language, tool_context); Tier ABC; GeminiTier,
+        LiveKitTier, LocalTier
+    chain.LlmChain(order, tiers): stream(turn), respond(turn), last_mode, status(), probe_all()
+    config: LLM_CHAIN (gemini,livekit,local), LLM_BREAKER_SECONDS
+
+backend/access
+    context: AccessContext(level, user_id, display_name, phone_e164, language), GUEST,
+        from_claims(amr, ...) verified only when amr has "otp"
+    guard.evaluate(text, language, ctx) -> Decision{allowed, topic, source, message_key, elapsed_ms}
+    messages.blocked_reply(language), prompt.level_clause(ctx, language)
+    tool_gate: authorize_tool(name, arguments, ctx), bind_arguments(...), AccessDenied
+    policy: backend/access/policy.json (topics, public_overrides, dial, classifier, public_tools,
+        customer_tools), ACCESS_POLICY_PATH, ACCESS_CONTROL_ENABLED
+    auth.access_context.access_from_request(conn, explicit_token=None, language=None) -> AccessContext
+    mcp_client.HubClient.call_tool(name, arguments, budget=None, access=None, trusted=False): the
+        gate runs before any network call; trusted is only for this repository's own login flow
+
+backend/verification (router prefix /verify, JSON, Cache-Control no-store)
+    POST /verify/lookup {name, phone, language} -> 200 {ticket, methods[{id sms|email, masked}]}
+        | 422 {code invalid_details | phone_format} | 429 {code rate_limited, retry_after}
+    POST /verify/otp/send {ticket, method, language} -> 200 {challenge_id, expires_in 120,
+        resend_in 30, masked} | 401 ticket_invalid | 409 no_contact | 429 cooldown|rate_limited
+        | 503 unavailable
+    POST /verify/otp/verify {challenge_id, code} -> 200 {display_name, language} and the
+        user_session cookie with amr ["otp"] | 401 {invalid, attempts_left} | 410 expired
+        | 423 locked | 429 rate_limited. The third wrong code answers 423.
+    GET /verify/session -> {verified, display_name?}; POST /verify/logout
+    tables customer_directory, verification_audit (Alembic revision 0003), otp_challenges gains
+        purpose and wizard_ref
+    lookup.CustomerLookup protocol {find(phone_e164), get(id)}; CustomerDirectory; HubCustomerLookup
+        (stub, the hub has no lookup tool)
+    config: VERIFY_ENABLED, VERIFY_OTP_TTL_SECONDS, VERIFY_OTP_RESEND_COOLDOWN_SECONDS,
+        VERIFY_OTP_MAX_ATTEMPTS, VERIFY_RATE_LIMIT_PER_IP_PER_HOUR,
+        VERIFY_RATE_LIMIT_PER_PHONE_PER_HOUR, VERIFY_TICKET_MINUTES, NAME_MATCH_REQUIRED,
+        VERIFY_OTP_SENDER
+
+backend/i18n: t(key, lang=None, **vars) falls back to en, then the key. frontend/i18n/i18n.js:
+    window.SltI18n {setLanguage, t, language, apply}. frontend/verify: window.SltVerify
+    {open({language, prefill, backendBase, onVerified, onCancel}), close}.
+LiveKit: the token carries the signed attribute access=verified|guest; SessionSettings.access_verified.
