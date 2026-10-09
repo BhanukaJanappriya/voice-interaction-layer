@@ -994,8 +994,21 @@ async def health():
 # Static files last, so every route above wins. The admin portal first,
 # since "/" would otherwise also match /admin/...; html=True serves
 # index.html for a directory and redirects /admin to /admin/.
-app.mount("/admin", StaticFiles(directory=FRONTEND_DIR / "admin", html=True), name="admin")
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+class RevalidatingStaticFiles(StaticFiles):
+    """Static files that browsers must revalidate on every load. They already
+    carry an ETag, so an unchanged file costs a 304, but a changed app.js or
+    index.html is picked up at once. Without this a browser can keep running
+    an old app.js for a long time, which here meant the old PIN form instead of
+    the verification wizard."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/admin", RevalidatingStaticFiles(directory=FRONTEND_DIR / "admin", html=True), name="admin")
+app.mount("/", RevalidatingStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 
 
 if __name__ == "__main__":
