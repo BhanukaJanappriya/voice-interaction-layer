@@ -292,6 +292,28 @@ SMS_GATEWAY_AUTH_HEADER = os.environ.get("SMS_GATEWAY_AUTH_HEADER", "Authorizati
 SMS_SENDER_ID = os.environ.get("SMS_SENDER_ID", "SLTMobitel").strip()
 
 
+# --- LLM fallback chain, access control, verification wizard ----------------
+# Order of the reply providers per turn. Names: gemini, livekit, local. An
+# empty value keeps the older single provider behaviour (CLOUD_LLM_PROVIDER).
+LLM_CHAIN = [t.strip().lower() for t in os.environ.get("LLM_CHAIN", "gemini,livekit,local").split(",") if t.strip()]
+LLM_BREAKER_SECONDS = _env_int("LLM_BREAKER_SECONDS", 300)
+
+# Guests may not receive customer service answers (see backend/access).
+ACCESS_CONTROL_ENABLED = _env_bool("ACCESS_CONTROL_ENABLED", True)
+ACCESS_POLICY_PATH = os.environ.get("ACCESS_POLICY_PATH", "").strip()  # empty means backend/access/policy.json
+
+# Existing user verification wizard (backend/verification).
+VERIFY_ENABLED = _env_bool("VERIFY_ENABLED", True)
+VERIFY_OTP_TTL_SECONDS = _env_int("VERIFY_OTP_TTL_SECONDS", 120)
+VERIFY_OTP_RESEND_COOLDOWN_SECONDS = _env_int("VERIFY_OTP_RESEND_COOLDOWN_SECONDS", 30)
+VERIFY_OTP_MAX_ATTEMPTS = _env_int("VERIFY_OTP_MAX_ATTEMPTS", 3)
+VERIFY_RATE_LIMIT_PER_IP_PER_HOUR = _env_int("VERIFY_RATE_LIMIT_PER_IP_PER_HOUR", 20)
+VERIFY_RATE_LIMIT_PER_PHONE_PER_HOUR = _env_int("VERIFY_RATE_LIMIT_PER_PHONE_PER_HOUR", 6)
+VERIFY_TICKET_MINUTES = _env_int("VERIFY_TICKET_MINUTES", 10)
+NAME_MATCH_REQUIRED = _env_bool("NAME_MATCH_REQUIRED", True)
+VERIFY_OTP_SENDER = os.environ.get("VERIFY_OTP_SENDER", "").strip().lower() or OTP_SENDER
+
+
 def livekit_configured() -> bool:
     """True when a LiveKit URL, key and secret are all present (no network call)."""
     return bool(LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET)
