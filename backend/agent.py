@@ -341,6 +341,27 @@ _GEMINI_ERROR_REASONS = {
 }
 
 
+# Gemini finish reasons that mean the model declined the question, not that
+# the call failed.
+_GEMINI_SAFETY_FINISH_REASONS = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII"}
+
+
+def _raise_if_gemini_blocked(chunk) -> None:
+    """A blocked prompt or reply is a valid answer, not an outage: raising
+    SafetyBlocked lets the LLM chain end the turn instead of asking another
+    model the same question. Imported here because llm_chain imports this
+    module."""
+    blocked = bool(getattr(getattr(chunk, "prompt_feedback", None), "block_reason", None))
+    for candidate in getattr(chunk, "candidates", None) or []:
+        reason = getattr(candidate, "finish_reason", None)
+        if reason is not None and str(getattr(reason, "name", reason)).split(".")[-1].upper() in _GEMINI_SAFETY_FINISH_REASONS:
+            blocked = True
+    if blocked:
+        from llm_chain.errors import SafetyBlocked
+
+        raise SafetyBlocked()
+
+
 def _explain_gemini_error(exc: Exception) -> str:
     code = getattr(exc, "code", None)
     reason = _GEMINI_ERROR_REASONS.get(code)
@@ -400,6 +421,7 @@ class GeminiAgent(ChatAgent):
                 ),
             )
             for chunk in stream:
+                _raise_if_gemini_blocked(chunk)
                 # chunk.text is None for a chunk with no text part (e.g. only
                 # safety metadata).
                 if chunk.text:
@@ -408,6 +430,8 @@ class GeminiAgent(ChatAgent):
         except CloudUnavailableError:
             raise
         except Exception as exc:
+            if type(exc).__name__ == "SafetyBlocked":
+                raise
             print(f"Agent latency (Gemini): {time.perf_counter() - start:.2f}s")
             raise CloudUnavailableError(f"Gemini call failed: {_explain_gemini_error(exc)}") from exc
 
@@ -540,6 +564,7 @@ class Orchestrator(ChatAgent):
         # _explain_gemini_error), or None once it has worked. Shown by
         # GET /health so the reason is visible without reading logs.
         self.last_cloud_error: Optional[str] = None
+        self._chain = None
 
     def warm_up(self) -> None:
         """Called once at server startup so the first question does not pay
@@ -550,7 +575,11 @@ class Orchestrator(ChatAgent):
         usable (bad model name, no credit left), in which case the circuit
         breaker is tripped now instead of on the user's first question."""
         self.local_agent.warm_up()
-        if config.cloud_llm_configured():
+        if config.LLM_CHAIN:
+            # Every tier is probed once now, so a dead key is found at startup
+            # and its breaker is already open for the first question.
+            self.chain.probe_all()
+        elif config.cloud_llm_configured():
             start = time.perf_counter()
             try:
                 _build_cloud_agent(role_prompt="Reply with one word.").respond("Hi")
@@ -561,11 +590,13 @@ class Orchestrator(ChatAgent):
                 self._cloud_retry_at = time.monotonic() + _CLOUD_RETRY_AFTER_SECONDS
                 print(f"Agent warm up: cloud unavailable ({exc}); using the local agent for now.")
 
-    def respond(self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None) -> str:
-        return "".join(self.respond_stream(text_input, user_name, language)).strip()
+    def respond(
+        self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None, access=None
+    ) -> str:
+        return "".join(self.respond_stream(text_input, user_name, language, access)).strip()
 
     def respond_stream(
-        self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None
+        self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None, access=None
     ) -> Iterator[str]:
         """Yields the reply in pieces as it is generated, on both the cloud
         and the local path, so the voice pipeline can start speaking the
@@ -580,7 +611,18 @@ class Orchestrator(ChatAgent):
 
         An active external agent (registered in the admin portal) answers
         first, and the same rule applies to it: a failure before any text
-        falls back to the normal cloud/local path below."""
+        falls back to the normal cloud/local path below.
+
+        access is an access.AccessContext (None means guest). When access
+        control is on, a guest asking for customer service gets the canned
+        translated dial message and no model is called at all."""
+        blocked = self._blocked_reply(text_input, language, access)
+        if blocked is not None:
+            self.last_mode = "access policy (canned reply)"
+            print(f"Orchestrator mode: {self.last_mode}")
+            yield blocked
+            return
+
         external_agent = self._active_external_agent()
         if external_agent is not None:
             external_stream = external_agent.respond_stream(text_input, user_name, language)
@@ -603,6 +645,10 @@ class Orchestrator(ChatAgent):
                     print(f"Orchestrator: external agent stream dropped mid reply ({exc}).")
                     yield " Sorry, I lost my connection there. Could you ask that again?"
                 return
+
+        if config.LLM_CHAIN:
+            yield from self._stream_chain(text_input, user_name, language, access)
+            return
 
         cloud_paused_for = self._cloud_retry_at - time.monotonic()
         if config.cloud_llm_configured() and cloud_paused_for > 0:
@@ -632,6 +678,69 @@ class Orchestrator(ChatAgent):
         self.last_mode = "local single agent (Llama via Ollama)"
         print(f"Orchestrator mode: {self.last_mode}")
         yield from self.local_agent.respond_stream(text_input, user_name, language)
+
+    @staticmethod
+    def _blocked_reply(text_input: str, language: Optional[str], access) -> Optional[str]:
+        """The canned dial message when the policy guard refuses this request,
+        else None. A broken access module must not take the assistant down,
+        but it also must not let a guest through: an error here blocks."""
+        if not config.ACCESS_CONTROL_ENABLED:
+            return None
+        from access import GUEST, blocked_reply, evaluate
+
+        try:
+            decision = evaluate(text_input, language, access or GUEST)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Orchestrator: access guard failed ({type(exc).__name__}), treating the request as blocked.")
+            return blocked_reply(language)
+        return None if decision.allowed else blocked_reply(language)
+
+    @property
+    def chain(self):
+        """The LLM fallback chain (backend/llm_chain), built on first use
+        because that package imports this module."""
+        if self._chain is None:
+            from llm_chain import LlmChain
+
+            self._chain = LlmChain()
+        return self._chain
+
+    def _stream_chain(
+        self, text_input: str, user_name: Optional[str], language: Optional[str], access
+    ) -> Iterator[str]:
+        """One turn through Gemini, LiveKit Inference and local Llama in the
+        order of LLM_CHAIN, each with its own breaker (llm_chain/chain.py)."""
+        from access import GUEST, level_clause
+        from llm_chain import Turn
+
+        tool_context = None
+        if self.tool_callback is not None:
+            try:
+                tool_context = self.tool_callback(text_input)
+            except Exception:
+                tool_context = None
+        system_prompt = (
+            f"{_personalize(_COMPOSER_ROLE_PROMPT, user_name, language)}\n\n{rules_for(tool_context)}"
+        )
+        if config.ACCESS_CONTROL_ENABLED:
+            system_prompt += f"\n\n{level_clause(access or GUEST, language)}"
+        turn = Turn(
+            text=f"User said: {text_input}"
+            + (f"\n\nKnowledge base excerpts (from the tool/retrieval stage):\n{tool_context}" if tool_context else ""),
+            system_prompt=system_prompt,
+            user_name=user_name,
+            language=language,
+            tool_context=tool_context,
+        )
+        chain = self.chain
+        first = True
+        for piece in chain.stream(turn):
+            if first:
+                first = False
+                self.last_mode = chain.last_mode
+                print(f"Orchestrator mode: {self.last_mode}")
+            yield piece
+        self.last_mode = chain.last_mode
 
     def _active_external_agent(self) -> Optional[ChatAgent]:
         """The external agent to try first, or None. A failing lookup (for

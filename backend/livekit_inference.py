@@ -115,6 +115,13 @@ class LiveKitInferenceAgent(ChatAgent):
                     if first_token_at is None:
                         first_token_at = time.perf_counter() - start
                     yield piece
+                # The gateway ends a refused answer with finish_reason
+                # content_filter. That is a valid answer, not an outage, so it
+                # must not trigger a fallback (see llm_chain).
+                if getattr(event.choices[0], "finish_reason", None) == "content_filter":
+                    from llm_chain.errors import SafetyBlocked
+
+                    raise SafetyBlocked()
             print(
                 f"Agent latency (LiveKit Inference {self.model_name}, streaming): first token "
                 f"{(first_token_at if first_token_at is not None else time.perf_counter() - start):.2f}s, "
@@ -123,6 +130,8 @@ class LiveKitInferenceAgent(ChatAgent):
         except CloudUnavailableError:
             raise
         except Exception as exc:  # noqa: BLE001
+            if type(exc).__name__ == "SafetyBlocked":
+                raise
             print(f"Agent latency (LiveKit Inference): {time.perf_counter() - start:.2f}s")
             # A rejected token (expired clock skew, revoked key) is not fixed by
             # reusing the same client.

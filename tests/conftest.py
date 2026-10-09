@@ -53,6 +53,9 @@ TEST_ENV = {
     # Settings from a developer's real .env must never reach the suite: a test
     # that built a default OTP service could otherwise ask the real MCP hub to
     # send a real SMS. Blanked or pinned here, tests that need one set it.
+    # Empty keeps the older single provider path that the existing orchestrator
+    # tests describe; tests of the fallback chain set LLM_CHAIN themselves.
+    "LLM_CHAIN": "",
     "MCP_HUB_API_KEY": "",
     "MCP_HUB_CONTEXT_BUDGET_SECONDS": "5",
     "MCP_HUB_IN_REPLIES": "true",
