@@ -161,6 +161,8 @@ function navigateTo(screenName) {
 document.querySelectorAll(".choice-button[data-language]").forEach((button) => {
   button.addEventListener("click", () => {
     selectedLanguage = button.getAttribute("data-language");
+    // Sets <html lang> and loads the wizard's strings for this language.
+    if (window.SltI18n) window.SltI18n.setLanguage(selectedLanguage);
     navigateTo("select");
   });
 });
@@ -422,6 +424,21 @@ if (goVoiceButton) goVoiceButton.addEventListener("click", () => goToUserScreen(
 
 if (goExistingButton) {
   goExistingButton.addEventListener("click", () => {
+    // The three step verification wizard (frontend/verify). It sets the
+    // user_session cookie itself; the server decides what that unlocks. If
+    // the script did not load, the older PIN form below is used instead.
+    if (window.SltVerify) {
+      window.SltVerify.open({
+        language: selectedLanguage,
+        backendBase: backendHttpBase(),
+        onVerified: (user) => {
+          userName = user.display_name;
+          proceedToSelectedMode();
+        },
+        onCancel: () => {},
+      });
+      return;
+    }
     userChoiceButtons.classList.add("hidden");
     existingNamePrompt.classList.remove("hidden");
     showVerifyError("");

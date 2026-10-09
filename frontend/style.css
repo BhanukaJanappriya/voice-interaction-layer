@@ -76,7 +76,7 @@ html {
 
 body {
   margin: 0;
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: "Segoe UI", system-ui, -apple-system, "Noto Sans Sinhala", "Noto Sans Tamil", sans-serif;
   /* Fixed to the viewport (not the document) so the same "brand color at
      the top, fading to --bg-end" shading is what is visible at the top of
      whatever is currently scrolled into view, rather than only ever
