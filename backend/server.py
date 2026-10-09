@@ -87,6 +87,7 @@ real time performance has evidence behind it, not just a claim.
 """
 
 import asyncio
+import functools
 import ctypes
 import json
 import queue
@@ -108,6 +109,7 @@ from admin import service as admin_service
 from admin.routes import router as admin_router
 from agent import Orchestrator
 from auth.admins import seed_first_admin_from_env
+from auth.access_context import access_from_request
 from auth.dependencies import verified_user_from_request
 from auth.routes import router as auth_router
 from db.migrate import database_status, upgrade_to_head
@@ -283,6 +285,10 @@ app.add_middleware(
 # route, so they never shadow one.
 app.include_router(auth_router)
 app.include_router(otp_router)
+if config.VERIFY_ENABLED:
+    from verification.routes import router as verification_router
+
+    app.include_router(verification_router)
 app.include_router(admin_router)
 
 # Additive routers: the LiveKit token endpoint (/api/livekit) and voicekit,
@@ -591,7 +597,9 @@ async def _run_one_utterance(
     return final_text, final_language, session_ended
 
 
-async def _stream_agent_reply(text_input: str, user_name: Optional[str], language: Optional[str]):
+async def _stream_agent_reply(
+    text_input: str, user_name: Optional[str], language: Optional[str], access=None
+):
     """Runs orchestrator.respond_stream() (agent.py) on a background
     thread and yields each text chunk as it arrives, bridged into the
     event loop via an asyncio.Queue the same way _run_one_utterance above
@@ -606,7 +614,7 @@ async def _stream_agent_reply(text_input: str, user_name: Optional[str], languag
 
     def _worker():
         try:
-            for chunk in orchestrator.respond_stream(text_input, user_name, language):
+            for chunk in orchestrator.respond_stream(text_input, user_name, language, access=access):
                 loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
         except Exception as exc:
             loop.call_soon_threadsafe(chunk_queue.put_nowait, exc)
@@ -701,6 +709,7 @@ async def _speak_streamed_reply(
     user_name: Optional[str],
     language: Optional[str],
     voice_style: str = DEFAULT_VOICE_STYLE,
+    access=None,
 ) -> tuple[str, float, Optional[float]]:
     """Generates the agent's reply and speaks it at the same time. Each
     sentence goes to TTS the moment the agent finishes writing it, so the
@@ -722,7 +731,7 @@ async def _speak_streamed_reply(
     agent_start = time.time()
     reply_text = ""
     try:
-        async for chunk in _stream_agent_reply(text_input, user_name, language):
+        async for chunk in _stream_agent_reply(text_input, user_name, language, access):
             reply_text += chunk
             await _send_json(websocket, {"type": "agent_response_chunk", "text": reply_text})
             for sentence in chunker.feed(chunk):
@@ -779,6 +788,11 @@ async def voice_ws(websocket: WebSocket):
     verified_user = await asyncio.to_thread(verified_user_from_request, websocket, session_token)
     if verified_user is not None:
         user_name = verified_user.display_name
+    # What this caller may be told (guest or OTP verified), decided here from
+    # the session token once when the voice session starts (the wizard runs
+    # before it, so a verified cookie is already present). /chat reads it on
+    # every request.
+    access_context = await asyncio.to_thread(access_from_request, websocket, session_token, language_hint)
 
     # Text to speech is on by default: the assistant introduces itself out
     # loud, in the selected language, by name if one was given, before
@@ -880,7 +894,7 @@ async def voice_ws(websocket: WebSocket):
 
             await _send_json(websocket, {"type": "status", "state": "thinking"})
             reply_text, agent_time, first_audio_at = await _speak_streamed_reply(
-                websocket, final_text, user_name, reply_language, voice_holder["voice_style"]
+                websocket, final_text, user_name, reply_language, voice_holder["voice_style"], access_context
             )
             if not reply_text:
                 continue
@@ -924,7 +938,11 @@ async def chat(request: ChatRequest, http_request: Request):
     loop = asyncio.get_running_loop()
     verified_user = await asyncio.to_thread(verified_user_from_request, http_request)
     user_name = verified_user.display_name if verified_user else request.user_name
-    reply = await loop.run_in_executor(None, orchestrator.respond, request.text, user_name, request.language)
+    access_context = await asyncio.to_thread(access_from_request, http_request, None, request.language)
+    reply = await loop.run_in_executor(
+        None,
+        functools.partial(orchestrator.respond, request.text, user_name, request.language, access=access_context),
+    )
     return ChatResponse(reply=reply, mode=orchestrator.last_mode)
 
 
@@ -944,6 +962,12 @@ async def health():
         # Why the cloud LLM is currently not answering (None if it is, or
         # if it has not been tried yet), so a quick check tells the story.
         "cloud_llm_last_error": orchestrator.last_cloud_error,
+        # Per tier status of the fallback chain (Gemini, LiveKit Inference,
+        # local Llama): order, the mode of the last answer, and each tier's
+        # state and last error reason. None when LLM_CHAIN is empty.
+        "llm_chain": orchestrator.chain.status() if config.LLM_CHAIN else None,
+        "access_control": {"enabled": config.ACCESS_CONTROL_ENABLED},
+        "verification": {"enabled": config.VERIFY_ENABLED},
         "cloud_speech_configured": config.cloud_speech_configured(),
         "cloud_speech_provider": config.CLOUD_SPEECH_PROVIDER,
         "supported_languages": config.SUPPORTED_LANGUAGES,

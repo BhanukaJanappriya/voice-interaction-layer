@@ -208,7 +208,7 @@ class FakeOrchestrator:
         self.yielded = 0
         self.closed = False
 
-    def respond_stream(self, text, user_name=None, language=None):
+    def respond_stream(self, text, user_name=None, language=None, **kwargs):
         self.questions.append((text, user_name, language))
         try:
             if self.slow:
@@ -701,7 +701,7 @@ def test_no_microphone_audio_ends_with_an_error_event_and_session_error(lk):
 
 def test_agent_exception_is_reported_and_the_session_survives(lk):
     class Boom(FakeOrchestrator):
-        def respond_stream(self, text, user_name=None, language=None):
+        def respond_stream(self, text, user_name=None, language=None, **kwargs):
             raise RuntimeError("agent exploded")
             yield ""
 

@@ -191,7 +191,7 @@ class FakeOrchestrator:
     def __init__(self):
         self.questions: list = []
 
-    def respond_stream(self, text, user_name=None, language=None):
+    def respond_stream(self, text, user_name=None, language=None, **kwargs):
         self.questions.append((text, user_name, language))
         if "long story" in text:
             for i in range(12):

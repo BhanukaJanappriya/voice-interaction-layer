@@ -110,6 +110,8 @@ class SessionSettings:
     voice_style: str = "female_natural"
     user_name: str = ""
     verified: bool = False
+    # OTP verified (customer service allowed), set by the token endpoint.
+    access_verified: bool = False
     greet: bool = True
     participant_identity: Optional[str] = None
 
@@ -505,6 +507,16 @@ class LiveKitVoiceSession:
             source.close()
         return final_text, final_language
 
+    def _access(self):
+        """Guest unless the signed token said this caller finished OTP.
+        The phone number is not carried, so the hub tool gate would still
+        refuse customer tools here (this session calls none)."""
+        from access import GUEST, AccessContext
+
+        if self.settings.access_verified:
+            return AccessContext.verified(None, self.settings.user_name or None, None, self.settings.language or None)
+        return GUEST
+
     async def _stream_agent_reply(self, text: str, user_name: Optional[str], language: Optional[str], cancel):
         """Orchestrator.respond_stream on a thread, chunks bridged into the
         loop (server.py's _stream_agent_reply, plus a cancel flag so barge in
@@ -515,7 +527,7 @@ class LiveKitVoiceSession:
         def _worker():
             generator = None
             try:
-                generator = self._b.orchestrator.respond_stream(text, user_name, language)
+                generator = self._b.orchestrator.respond_stream(text, user_name, language, access=self._access())
                 for chunk in generator:
                     if cancel.is_set():
                         break

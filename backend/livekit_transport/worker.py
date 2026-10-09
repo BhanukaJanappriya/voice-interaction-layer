@@ -89,6 +89,7 @@ def _settings_from_participant(participant, job_metadata: str = "") -> SessionSe
         voice_style=normalise_voice_style(attributes.get("voice_style")),
         user_name=clean_name(attributes.get("user_name")),
         verified=attributes.get("verified") == "true",
+        access_verified=attributes.get("access") == "verified",
         greet=attributes.get("greet") != "false",
         participant_identity=participant.identity,
     )

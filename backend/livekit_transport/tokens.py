@@ -34,6 +34,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 import config
+from auth.access_context import access_from_request
 from auth.dependencies import verified_user_from_request
 
 router = APIRouter(prefix="/api/livekit", tags=["livekit"])
@@ -192,12 +193,16 @@ def create_token(body: TokenRequest, request: Request) -> TokenResponse:
         display_name = clean_name(body.user_name)
 
     room = f"va-{secrets.token_urlsafe(12)}"
+    # Decided here from the session token (OTP verified or not) and signed into
+    # the token, so the agent trusts it and the browser cannot raise it.
+    access_level = "verified" if access_from_request(request, body.session_token).is_verified else "guest"
     attributes = {
         "language": normalise_language(body.language),
         "voice_style": normalise_voice_style(body.voice_style),
         "user_name": display_name,
         # The agent skips "my name is" renaming for a verified account.
         "verified": "true" if verified is not None else "false",
+        "access": access_level,
     }
     jwt_token = build_token(identity=identity, room=room, attributes=attributes, display_name=display_name)
     expires_at = int(time.time()) + int(config.LIVEKIT_TOKEN_TTL_SECONDS)
