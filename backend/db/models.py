@@ -137,3 +137,10 @@ class OtpChallenge(Base):
     client_ip_hash: Mapped[str] = mapped_column(String(64), index=True)
     # Hub OTP backend only: Fernet sealed {phone, hub session id}.
     hub_ref: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Verification wizard (revision 0003): "verify" for wizard codes, NULL for /auth/otp.
+    purpose: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    wizard_ref: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+# Registers the verification tables on Base.metadata for Alembic and create_all.
+import verification.models  # noqa: E402,F401
