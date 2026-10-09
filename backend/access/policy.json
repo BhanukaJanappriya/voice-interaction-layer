@@ -1,0 +1,132 @@
+{
+  "_meta": {
+    "about": "Supervisor editable access policy. Guests may chat and get public information; anything that needs customer data is blocked for guests. Edit this file and save: it is reloaded automatically when its modified time changes. A broken file is ignored and the last good policy stays in force.",
+    "keyword_rules": "Keywords are matched against text normalized with NFC, casefold, collapsed whitespace and with zero width joiners removed. A keyword that starts with a Latin letter or digit only matches at a word start, and only to a word end unless it ends with an asterisk (bill* matches bills and billing). Sinhala and Tamil script keywords are matched as plain substrings because those languages attach endings to words. Latin letter Sinhala (Singlish) is listed under si and Latin letter Tamil (Tanglish) under ta.",
+    "overrides": "public_overrides are regular expressions for general information questions. The matched part is removed from the text before the topic rules run, so 'how do I pay online' stays allowed but 'how do I pay online and what is my balance' is still blocked.",
+    "language_note": "The Sinhala and Tamil keywords (script and Latin letters) and the Sinhala and Tamil built in replies are machine written. They need a review by a native speaker before production use."
+  },
+  "dial": {
+    "hotline": "1212",
+    "sms": "0113121212",
+    "prepaid": "1222"
+  },
+  "classifier": {
+    "threshold": 0.53
+  },
+  "public_tools": [
+    "search_knowledgebase_tool",
+    "compare_package",
+    "get_function_latencies"
+  ],
+  "customer_tools": [
+    "validate_customer_and_send_otp",
+    "verify_otp_and_authenticate",
+    "refresh_customer_token",
+    "authenticate_with_token",
+    "show_gb_balance",
+    "show_bill_history",
+    "show_last_payment",
+    "show_service_detail",
+    "show_fault_list",
+    "log_fault",
+    "show_daily_usage",
+    "show_lte_subscriber_status",
+    "show_lte_wallet_detail",
+    "show_lte_purchased_packages",
+    "show_reload_history",
+    "show_extra_gb_packages",
+    "show_vas_data_bundle_packages",
+    "show_lte_prepaid_package_list",
+    "purchase_extra_gb",
+    "add_vas_data_bundle",
+    "subscribe_lte_prepaid_package"
+  ],
+  "public_overrides": [
+    "how (do|can|to|should)( i| we| one)?( to)? (pay|recharge|reload|top ?up)\\b[^?.!,;]{0,50}\\b(online|on ?line|app|website|portal|web)\\b",
+    "(where|how) (can|do|to)( i| we)?( to)? (pay|make a payment)\\b[^?.!,;]{0,30}\\b(online|app|website|portal|counter|branch|bank)\\b",
+    "\\b(online|app|website) (payment|pay) (options?|methods?|channels?)\\b",
+    "\\b(contact|call|phone|email|sms) (details|number|numbers|address|us)\\b",
+    "\\b(hotline|call cent(er|re)|customer care|customer service) (number|numbers|hours|contact)\\b",
+    "\\b(what|which) (is|are) (the |your )?(hotline|call cent(er|re) number|contact number)\\b",
+    "\\b(package|packages|plan|plans|tariff|tariffs) (prices?|rates?|list|details|options)\\b",
+    "\\b(what|which) (packages|plans)\\b[^?.!]{0,30}\\b(do you|are|have|offer|available)\\b",
+    "\\b(coverage|signal coverage|network coverage|fibre availability|fiber availability)\\b",
+    "(බිල්පත|බිල)[^?.!]{0,20}ඔන්ලයින්[^?.!]{0,25}(ගෙවන්නේ|ගෙවීම|ගෙවිය)[^?.!]{0,12}(කොහොමද|කෙසේද|හැක)",
+    "ඔන්ලයින්[^?.!]{0,30}(ගෙවන්නේ|ගෙවීම|ගෙවිය)[^?.!]{0,12}(කොහොමද|කෙසේද|හැක)",
+    "(සම්බන්ධ කරගත|අමතන)[^?.!]{0,15}(අංකය|අංක)",
+    "online[^?.!]{0,20}\\b(gewanne|gewanna|gevanne|gewiya hakiya)\\b[^?.!]{0,12}\\b(kohomada|kohomda|kohoma|mokakda)\\b",
+    "\\b(contact|call) (number|eka|ankaya) (kiyada|mokakda)\\b",
+    "ஆன்லைனில்[^?.!]{0,30}(செலுத்துவது|செலுத்த|கட்டுவது|கட்ட)",
+    "(எப்படி|எவ்வாறு)[^?.!]{0,20}ஆன்லைன்[^?.!]{0,20}(செலுத்த|கட்ட)",
+    "(தொடர்பு|தொடர்புக்கு)[^?.!]{0,10}(எண்|எண்கள்)",
+    "\\bonline\\b[^?.!]{0,15}\\b(epadi|eppadi)\\b[^?.!]{0,15}\\b(pay|katta|kattalam|seluthu|seluthalam)\\b"
+  ],
+  "topics": [
+    {
+      "id": "account",
+      "keywords": {
+        "en": ["my account", "account details", "account number", "account info*", "account status", "my profile", "my details", "my address", "my package", "my plan", "my subscription", "current package", "current plan", "which package am i", "my connection details", "my registered", "my service"],
+        "si": ["මගේ ගිණුම", "ගිණුම් විස්තර", "ගිණුමේ විස්තර", "මගේ විස්තර", "මගේ පැකේජ", "මගේ සේවාව", "mage account", "account eka", "account details", "mage package", "mage details", "mage plan"],
+        "ta": ["என் கணக்கு", "எனது கணக்கு", "கணக்கு விவரங்கள்", "எனது பேக்கேஜ்", "என் பேக்கேஜ்", "எனது திட்டம்", "என் திட்டம்", "en account", "ennoda account", "enathu account", "en package", "ennoda package", "en details"]
+      },
+      "regex": []
+    },
+    {
+      "id": "bills_payments",
+      "keywords": {
+        "en": ["bill", "bills", "billing", "bill amount", "bill history", "outstanding", "amount due", "due amount", "due date", "how much do i owe", "i owe", "last payment", "payment history", "my payment", "payment status", "paid", "unpaid", "overdue", "statement", "invoice", "receipt", "reload history", "arrears"],
+        "si": ["බිල", "බිල්පත", "ගෙවීම් ඉතිහාස", "අවසාන ගෙවීම", "හිඟ මුදල", "ගෙවිය යුතු මුදල", "හිඟ", "ගෙවූ", "bill", "bills", "billing", "bila", "bil eka", "geweema", "gevvama", "payment eka", "payment history", "kiyada gewanna", "gewiya yuthu", "hinga", "mama gewwa", "gewwa"],
+        "ta": ["பில்", "கட்டண வரலாறு", "நிலுவை", "செலுத்த வேண்டிய", "கடைசி கட்டணம்", "பணம் செலுத்திய", "ரசீது", "bill", "bills", "billing", "en bill", "bill evvalavu", "nilavai", "kattanam", "payment panninen", "payment panniten", "kadaisi payment", "seluthina"]
+      },
+      "regex": [
+        "\\b(why|how come)\\b.{0,30}\\b(charged|deducted|billed|debited)\\b",
+        "\\b(refund|refunds)\\b"
+      ]
+    },
+    {
+      "id": "balance",
+      "keywords": {
+        "en": ["balance", "data balance", "remaining data", "data left", "data remaining", "how much data", "gb left", "remaining gb", "credit balance", "remaining credit", "talk time", "talktime", "airtime", "wallet", "my credit", "expire date", "expiry date"],
+        "si": ["ශේෂය", "ශේෂ", "ඉතිරි දත්ත", "ඉතිරි ජීබී", "ඉතිරි මුදල", "බැලන්ස්", "ඉතිරිය", "වැලට්", "balance*", "ithuru", "itiri", "data ithuru", "gb ithuru", "kiyak thiyenawada", "kiyak ithuru", "wallet eka"],
+        "ta": ["இருப்பு", "மீதமுள்ள டேட்டா", "மீதி டேட்டா", "மீதமுள்ள", "மீதம்", "பேலன்ஸ்", "வாலட்", "balance*", "meethi", "meethamulla", "data meethi", "evvalavu irukku", "evlo irukku", "evalavu irukku", "wallet la"]
+      },
+      "regex": []
+    },
+    {
+      "id": "connection_status",
+      "keywords": {
+        "en": ["my connection", "connection status", "line status", "my line", "line is down", "line down", "no internet", "internet not working", "internet is not working", "internet down", "internet is down", "broadband not working", "no dial tone", "dial tone", "my router", "router not", "slow internet", "my internet", "disconnected", "reconnect", "lte status", "no signal", "outage in my", "not working", "no connection", "cannot connect", "can't connect", "cant connect"],
+        "si": ["සම්බන්ධතා තත්ව", "සම්බන්ධතාවය", "සම්බන්ධතාව", "අන්තර්ජාලය වැඩ නැ", "අන්තර්ජාලය වැඩ කරන්නේ නැ", "ඉන්ටර්නෙට් වැඩ නැ", "ඉන්ටර්නෙට් වැඩ කරන්නේ නැ", "ඉන්ටර්නෙට් එක වැඩ", "රවුටරය", "ලයින් එක", "රේඛාව", "කැපී", "වැඩ කරන්නේ නැ", "ඩයල් ටෝන්", "net eka wada", "internet eka wada", "line eka", "connection eka", "wada naha", "wada na", "wada karanne naha", "wada karanne na", "kapila", "dial tone", "router eka", "net eka slow", "signal naha", "signal na"],
+        "ta": ["இணைப்பு நிலை", "இணைப்பு வேலை", "இணையம் வேலை செய்யவில்லை", "இணையம் வேலை செய்யல", "இன்டர்நெட் வேலை செய்யவில்லை", "இன்டர்நெட் வேலை", "இணைப்பு இல்லை", "நெட் வேலை", "ரவுட்டர்", "லைன் வேலை", "டயல் டோன்", "வேலை செய்யவில்லை", "வேலை செய்யலை", "net velai", "internet velai", "velai seiyala", "velai seyyala", "velai seiyavillai", "work aagala", "aagala", "line problem", "connection illa", "net illa", "router problem", "signal illa"]
+      },
+      "regex": []
+    },
+    {
+      "id": "faults",
+      "keywords": {
+        "en": ["fault", "faults", "complaint", "complaints", "complain*", "report a problem", "report a fault", "log a fault", "raise a ticket", "ticket", "repair", "technician", "out of order", "breakdown", "broken line", "fault status"],
+        "si": ["දෝෂ", "දෝශ", "පැමිණිලි", "පැමිණිල්ල", "කැඩී", "අලුත්වැඩියා", "තාක්ෂණික නිලධාරී", "ටිකට්", "fault*", "complain*", "komplen", "pamunilla", "pamini", "aluth wadiya", "repair karanna", "technician*", "ticket eka", "doshaya", "dosha"],
+        "ta": ["பழுது", "புகார்", "குறைபாடு", "கோளாறு", "தொழில்நுட்ப வல்லுநர்", "டிக்கெட்", "fault*", "complain*", "pugar", "puhar", "paluthu", "koolaru", "kolaru", "repair pannunga", "technician*", "ticket poduga", "ticket podunga"]
+      },
+      "regex": []
+    },
+    {
+      "id": "package_change",
+      "keywords": {
+        "en": ["change my package", "change my plan", "change package", "change plan", "package change", "plan change", "upgrade my", "upgrade the package", "upgrade package", "upgrade plan", "downgrade", "switch package", "switch my plan", "migrate", "activate", "deactivate", "subscribe me", "unsubscribe", "purchase", "buy extra", "extra gb", "add data", "data bundle", "vas bundle", "top up my", "top-up my", "reload my", "recharge my", "disconnect my", "cancel my", "terminate my", "add a package", "remove the package"],
+        "si": ["පැකේජය වෙනස්", "පැකේජ වෙනස්", "පැකේජය මාරු", "පැකේජ මාරු", "අප්ග්‍රේඩ්", "සක්‍රීය කරන්න", "අක්‍රීය කරන්න", "අමතර ජීබී", "ඩේටා බන්ඩල්", "මිලදී ගන්න", "රීලෝඩ් කරන්න", "රීචාජ් කරන්න", "ටොප් අප්", "package eka wenas", "package eka maru", "package eka maaru", "package eka change", "package change", "upgrade karanna", "activate karanna", "deactivate karanna", "extra gb", "data ekak ganna", "data bundle", "reload karanna", "recharge karanna", "ganna one", "wenas karanna"],
+        "ta": ["பேக்கேஜை மாற்ற", "பேக்கேஜ் மாற்ற", "திட்டத்தை மாற்ற", "திட்டம் மாற்ற", "மேம்படுத்த", "செயல்படுத்த", "செயலிழக்க", "கூடுதல் ஜிபி", "டேட்டா பண்டில்", "வாங்க வேண்டும்", "ரீலோட் செய்ய", "ரீசார்ஜ் செய்ய", "டாப் அப்", "package maatra", "package matra", "package mathanum", "package change", "upgrade pannu", "activate pannu", "deactivate pannu", "extra gb", "data bundle", "reload pannu", "recharge pannu", "vaanga venum", "maatrunga", "maatranum"]
+      },
+      "regex": []
+    },
+    {
+      "id": "usage",
+      "keywords": {
+        "en": ["usage", "my usage", "data usage", "daily usage", "how much data have i used", "how much have i used", "used so far", "consumption", "call history", "call details", "call records", "itemized", "itemised"],
+        "si": ["භාවිතය", "භාවිත කළ", "භාවිතා කළ", "පරිභෝජන", "ඇමතුම් විස්තර", "usage*", "use karapu", "bawitha", "bhawitha", "kiyak use", "kiyada use", "call details", "paribhojana"],
+        "ta": ["பயன்பாடு", "பயன்படுத்திய", "பயன்படுத்தினேன்", "அழைப்பு விவரங்கள்", "usage*", "payanpaadu", "payanpadu", "payanpaattu", "evvalavu use", "evlo use", "use pannen", "use panninen", "call details"]
+      },
+      "regex": []
+    }
+  ]
+}
