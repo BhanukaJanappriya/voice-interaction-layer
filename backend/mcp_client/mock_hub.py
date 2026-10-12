@@ -57,6 +57,10 @@ class _Gate:
         with hub._lock:
             hub.requests += 1
             hub.request_log.append((scope["method"], scope["path"]))
+            hub.request_key_ok.append(
+                not hub.api_key
+                or dict(scope["headers"]).get(hub.auth_header.lower().encode(), b"") == hub.api_key.encode()
+            )
             failing = hub.fail_next > 0
             if failing:
                 hub.fail_next -= 1
@@ -134,6 +138,7 @@ class MockHub:
         self.requests = 0
         self.auth_failures = 0
         self.request_log: list[tuple[str, str]] = []
+        self.request_key_ok: list[bool] = []  # per request: did it carry the right key header
         self.tool_calls: list[tuple[str, dict]] = []
         self._lock = threading.Lock()
         self._server: Optional[uvicorn.Server] = None
@@ -304,6 +309,7 @@ class MockHub:
             self.requests = 0
             self.auth_failures = 0
             self.request_log.clear()
+            self.request_key_ok.clear()
             self.tool_calls.clear()
 
 

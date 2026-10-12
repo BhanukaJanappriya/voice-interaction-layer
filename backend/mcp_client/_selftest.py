@@ -95,7 +95,7 @@ def main() -> int:
     check("streamable at /mcp found from the bare URL", "search_hub" in names, names)
     check("detected transport is cached as streamable-http", client.status()["transport"] == "streamable-http")
     hub.reset_counters()
-    text = run(client.call_tool("search_hub", {"query": "mobitel 1598"}))
+    text = run(client.call_tool("search_hub", {"query": "mobitel 1598"}, trusted=True))
     check("call_tool returns the text", "1598" in text, text)
     check(
         "cached transport: no probing of the bare URL again",
@@ -129,7 +129,7 @@ def main() -> int:
     client = make_client(hub)
     check("SSE hub found (SSE is tried first)", "search_hub" in {t.name for t in run(client.list_tools())})
     check("SSE transport status", client.status()["transport"] == "sse", client.status())
-    check("SSE call_tool", "1598" in run(client.call_tool("search_hub", {"query": "x"})))
+    check("SSE call_tool", "1598" in run(client.call_tool("search_hub", {"query": "x"}, trusted=True)))
     hub.stop()
 
     hub = MockHub("sse")
@@ -174,7 +174,7 @@ def main() -> int:
     hub.slow_seconds = 4.0
     client = make_client(hub, timeout=0.8, retries=0)
     started = time.monotonic()
-    error = expect(HubUnavailable, client.call_tool("slow_search", {"query": "x"}))
+    error = expect(HubUnavailable, client.call_tool("slow_search", {"query": "x"}, trusted=True))
     elapsed = time.monotonic() - started
     check("slow tool: timeout raises HubUnavailable", isinstance(error, HubUnavailable), error)
     check("timeout is honoured, not the tool's 4 s", elapsed < 3.0, f"{elapsed:.1f}s")
@@ -188,7 +188,7 @@ def main() -> int:
     hub.fail_next = 2
     client.attempts = 0
     started = time.monotonic()
-    text = run(client.call_tool("search_hub", {"query": "x"}))
+    text = run(client.call_tool("search_hub", {"query": "x"}, trusted=True))
     check("two 503s then success: retried and succeeded", "1598" in text and client.attempts == 3, client.attempts)
     check("retry backoff is short", time.monotonic() - started < 5)
     check("success leaves the breaker closed and reachable", client.status()["reachable"] and not client.status()["breaker_open"])
@@ -196,7 +196,7 @@ def main() -> int:
     hub.fail_next = 50
     client2 = make_client(hub, retries=1)
     client2._transport = client._transport
-    error = expect(HubUnavailable, client2.call_tool("search_hub", {"query": "x"}))
+    error = expect(HubUnavailable, client2.call_tool("search_hub", {"query": "x"}, trusted=True))
     check("persistent 503: gives up after bounded retries", isinstance(error, HubUnavailable) and client2.attempts == 2, client2.attempts)
     check("and opens the breaker", client2.status()["breaker_open"])
     hub.fail_next = 0
@@ -228,10 +228,10 @@ def main() -> int:
     hub = MockHub("streamable", "/mcp")
     hub.start()
     client = make_client(hub)
-    error = expect(HubToolError, client.call_tool("failing_tool", {"query": "x"}))
+    error = expect(HubToolError, client.call_tool("failing_tool", {"query": "x"}, trusted=True))
     check("isError result raises HubToolError", isinstance(error, HubToolError), error)
     check("a tool error does not open the breaker", not client.status()["breaker_open"] and client.status()["reachable"] is True)
-    error = expect(HubToolError, client.call_tool("no_such_tool", {"query": "x"}))
+    error = expect(HubToolError, client.call_tool("no_such_tool", {"query": "x"}, trusted=True))
     check("unknown tool raises HubToolError", isinstance(error, HubToolError), error)
     hub.stop()
 

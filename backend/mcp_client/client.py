@@ -40,9 +40,13 @@ sync and thread safe, for /health.
 
 import asyncio
 import json
+import random
 import re
+import socket
+import ssl
 import threading
 import time
+from datetime import datetime, timezone
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional, TypeVar
@@ -64,6 +68,9 @@ TOOLS_CACHE_SECONDS = 300.0
 _CLOSE_SECONDS = 3.0
 _BACKOFF_BASE_SECONDS = 0.25
 _BACKOFF_MAX_SECONDS = 2.0
+# Retry waits use "equal jitter": half the backoff plus a random share of the
+# other half, so many callers that failed together do not retry together.
+_JITTER = random.random
 # Statuses that mean "this URL does not speak MCP the way we tried": try
 # the next transport candidate.
 _WRONG_TRANSPORT_STATUSES = {400, 404, 405, 406, 410, 415, 501}
@@ -120,6 +127,24 @@ class _WrongTransport(Exception):
     """Internal: this candidate does not speak MCP, try the next."""
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _network_reason(leaf: BaseException) -> str:
+    """dns, tls or connect, from the cause chain of a transport error."""
+    seen = 0
+    cursor: Optional[BaseException] = leaf
+    while cursor is not None and seen < 8:
+        if isinstance(cursor, socket.gaierror):
+            return "dns"
+        if isinstance(cursor, ssl.SSLError):
+            return "tls"
+        cursor = cursor.__cause__ or cursor.__context__
+        seen += 1
+    return "connect"
+
+
 def _leaves(exc: BaseException) -> list[BaseException]:
     """The real exceptions inside nested ExceptionGroups. The SDK runs its
     transports in anyio task groups, which wrap whatever went wrong."""
@@ -160,6 +185,9 @@ class HubClient:
         self._breaker_until = 0.0
         self._reachable: Optional[bool] = None
         self._last_error: Optional[str] = None
+        self._last_reason: Optional[str] = None
+        self._auth = "unknown"  # "accepted" | "rejected" | "unknown"
+        self._checked_at: Optional[str] = None  # ISO UTC time of the last outcome
         self._tools: Optional[list[HubTool]] = None
         self._tools_at = 0.0
         self.attempts = 0  # network attempts made, for tests and diagnostics
@@ -191,6 +219,9 @@ class HubClient:
                 "breaker_seconds_left": int(left) if left > 0 else 0,
                 "tools": None if self._tools is None else len(self._tools),
                 "last_error": self._last_error,
+                "last_error_reason": self._last_reason,
+                "auth": self._auth,
+                "checked_at": self._checked_at,
             }
 
     def reset_breaker(self) -> None:
@@ -208,6 +239,10 @@ class HubClient:
         with self._lock:
             self._reachable = False
             self._last_error = f"{type(error).__name__}: {self._scrub(str(error))}"
+            self._last_reason = getattr(error, "reason", None)
+            self._checked_at = _now_iso()
+            if isinstance(error, HubAuthError):
+                self._auth = "rejected"
             if self.breaker_seconds > 0 and not isinstance(error, HubToolError):
                 self._breaker_until = self._clock() + self.breaker_seconds
 
@@ -215,6 +250,9 @@ class HubClient:
         with self._lock:
             self._reachable = True
             self._last_error = None
+            self._last_reason = None
+            self._auth = "accepted"
+            self._checked_at = _now_iso()
             self._breaker_until = 0.0
 
     def _header_value(self) -> str:
@@ -322,16 +360,20 @@ class HubClient:
             if isinstance(leaf, httpx2.HTTPStatusError):
                 statuses = statuses + [leaf.response.status_code]
         if any(code in (401, 403) for code in statuses):
-            return HubAuthError(f"the hub refused the credentials (HTTP {[c for c in statuses if c in (401, 403)][0]})")
+            code = [c for c in statuses if c in (401, 403)][0]
+            return HubAuthError(f"the hub refused the credentials (HTTP {code})", status=code)
         for leaf in leaves:
             if isinstance(leaf, (httpx2.TimeoutException, TimeoutError, asyncio.TimeoutError)):
-                return HubUnavailable("timed out talking to the hub")
+                return HubUnavailable("timed out talking to the hub", reason="timeout")
             if isinstance(leaf, httpx2.TransportError):
-                return HubUnavailable(f"could not connect to the hub ({type(leaf).__name__})")
+                return HubUnavailable(
+                    f"could not connect to the hub ({type(leaf).__name__})", reason=_network_reason(leaf)
+                )
         if any(code in _UNAVAILABLE_STATUSES for code in statuses):
-            return HubUnavailable(f"the hub answered HTTP {[c for c in statuses if c in _UNAVAILABLE_STATUSES][0]}")
+            code = [c for c in statuses if c in _UNAVAILABLE_STATUSES][0]
+            return HubUnavailable(f"the hub answered HTTP {code}", reason="http_status", status=code)
         if statuses and not any(code in _WRONG_TRANSPORT_STATUSES for code in statuses):
-            return HubUnavailable(f"the hub answered HTTP {statuses[0]}")
+            return HubUnavailable(f"the hub answered HTTP {statuses[0]}", reason="http_status", status=statuses[0])
         # A 404/405 style refusal, an MCP level error, a body that is not
         # MCP: this candidate is the wrong transport or path.
         reason = f"HTTP {statuses[0]}" if statuses else type(leaves[0]).__name__
@@ -351,19 +393,24 @@ class HubClient:
                     # The hub changed under us: forget it and detect again next time.
                     with self._lock:
                         self._transport = None
-                    raise HubUnavailable("the cached transport stopped working; detecting again") from None
+                    raise HubUnavailable(
+                        "the cached transport stopped working; detecting again", reason="no_transport"
+                    ) from None
                 continue
             if cached is None:
                 with self._lock:
                     self._transport = candidate
             return result
-        raise HubUnavailable("no MCP transport answered: " + "; ".join(tried))
+        raise HubUnavailable("no MCP transport answered: " + "; ".join(tried), reason="no_transport")
 
     # Public API
 
     async def _call(self, op: Callable[[ClientSession], Awaitable[T]], budget: Optional[float] = None) -> T:
         if not self.configured:
-            raise HubUnavailable("the hub is not configured (needs MCP_HUB_ENABLED, MCP_HUB_URL and MCP_HUB_API_KEY)")
+            raise HubUnavailable(
+                "the hub is not configured (needs MCP_HUB_ENABLED, MCP_HUB_URL and MCP_HUB_API_KEY)",
+                reason="not_configured",
+            )
         left = self.breaker_seconds_left()
         if left > 0:
             raise HubBreakerOpen(left)
@@ -372,13 +419,13 @@ class HubClient:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0.05:
-                error = HubUnavailable("the time budget for the hub call ran out")
+                error = HubUnavailable("the time budget for the hub call ran out", reason="budget")
                 self._note_failure(error)
                 raise error
             try:
                 result = await asyncio.wait_for(self._with_session(op), timeout=min(self.timeout, remaining))
             except asyncio.TimeoutError:
-                failure: HubError = HubUnavailable("timed out talking to the hub")
+                failure: HubError = HubUnavailable("timed out talking to the hub", reason="timeout")
             except HubAuthError as error:
                 self._note_failure(error)  # never retried
                 raise
@@ -395,7 +442,7 @@ class HubClient:
             if retry > self.retries or deadline - time.monotonic() <= backoff + 0.2:
                 self._note_failure(failure)
                 raise failure
-            await asyncio.sleep(backoff)
+            await asyncio.sleep(backoff / 2 + (backoff / 2) * _JITTER())
 
     async def list_tools(self, refresh: bool = False, budget: Optional[float] = None) -> list[HubTool]:
         with self._lock:
