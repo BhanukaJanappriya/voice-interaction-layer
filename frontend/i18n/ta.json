@@ -1,10 +1,4 @@
 {
-  "_meta": {
-    "language": "ta",
-    "machine_written": true,
-    "needs_native_review": true,
-    "note": "Machine written, needs native speaker review before production use."
-  },
   "verify.step1.title": "தற்போதைய வாடிக்கையாளராகச் சரிபார்க்கவும்",
   "verify.step1.name_label": "உங்கள் பெயர்",
   "verify.step1.name_placeholder": "உங்கள் SLT-MOBITEL கணக்கில் உள்ள பெயர்",
@@ -46,5 +40,31 @@
   "llm.safety_blocked": "மன்னிக்கவும், அந்தக் கோரிக்கைக்கு என்னால் உதவ முடியாது. SLT-MOBITEL பற்றி வேறு ஏதாவது கேளுங்கள்.",
   "otp.sms_body": "SLT-MOBITEL: உங்கள் சரிபார்ப்புக் குறியீடு {code}. இது {minutes} நிமிடங்களுக்குச் செல்லுபடியாகும். யாரிடமும் பகிர வேண்டாம்.",
   "otp.email_subject": "உங்கள் SLT-MOBITEL சரிபார்ப்புக் குறியீடு",
-  "otp.email_body": "வணக்கம்,\n\nஉங்கள் SLT-MOBITEL சரிபார்ப்புக் குறியீடு {code}. இது {minutes} நிமிடங்களுக்குச் செல்லுபடியாகும்.\n\nஇந்தக் குறியீட்டை யாரிடமும் பகிர வேண்டாம். SLT-MOBITEL ஒருபோதும் இதை உங்களிடம் கேட்காது.\n\nநீங்கள் இந்தக் குறியீட்டைக் கேட்கவில்லை என்றால், இந்த மின்னஞ்சலைப் புறக்கணிக்கலாம்."
+  "otp.email_body": "வணக்கம்,\n\nஉங்கள் SLT-MOBITEL சரிபார்ப்புக் குறியீடு {code}. இது {minutes} நிமிடங்களுக்குச் செல்லுபடியாகும்.\n\nஇந்தக் குறியீட்டை யாரிடமும் பகிர வேண்டாம். SLT-MOBITEL ஒருபோதும் இதை உங்களிடம் கேட்காது.\n\nநீங்கள் இந்தக் குறியீட்டைக் கேட்கவில்லை என்றால், இந்த மின்னஞ்சலைப் புறக்கணிக்கலாம்.",
+  "landing.greeting": "SLT Mobitel இல் உங்களை வரவேற்கிறோம்",
+  "landing.subtitle": "உங்கள் குரல் உதவியாளர்",
+  "landing.skip": "தவிர்க்க தொடவும்",
+  "loader.connecting": "இணைக்கிறது...",
+  "loader.sending": "உங்கள் குறியீட்டை அனுப்புகிறது...",
+  "loader.verifying": "சரிபார்க்கிறது...",
+  "loader.thinking": "யோசிக்கிறது...",
+  "wizard.progress": "{total} இல் {current}",
+  "dashboard.more": "மேலும்",
+  "dashboard.captions": "வசனங்கள்",
+  "dashboard.mic": "மைக்",
+  "dashboard.end": "முடிக்க",
+  "dashboard.history": "வரலாறு",
+  "dashboard.voice": "குரலும் அவதாரும்",
+  "dashboard.logout": "வெளியேறு",
+  "dashboard.theme": "தீம்",
+  "dashboard.sound": "தொடக்க ஒலி",
+  "dashboard.sheet_close": "மூடு",
+  "dashboard.mode": "பயன்முறை",
+  "empty.transcript": "உங்கள் உரையாடல் இங்கே தோன்றும்.",
+  "_meta": {
+    "language": "ta",
+    "machine_written": true,
+    "needs_native_review": true,
+    "note": "Machine written, needs native speaker review before production use."
+  }
 }

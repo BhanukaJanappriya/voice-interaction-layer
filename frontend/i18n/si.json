@@ -1,10 +1,4 @@
 {
-  "_meta": {
-    "language": "si",
-    "machine_written": true,
-    "needs_native_review": true,
-    "note": "Machine written, needs native speaker review before production use."
-  },
   "verify.step1.title": "පවතින පාරිභෝගිකයෙකු ලෙස තහවුරු කරන්න",
   "verify.step1.name_label": "ඔබේ නම",
   "verify.step1.name_placeholder": "ඔබේ SLT-MOBITEL ගිණුමේ ඇති නම",
@@ -46,5 +40,31 @@
   "llm.safety_blocked": "සමාවන්න, ඒ ඉල්ලීමට මට උදව් කළ නොහැක. කරුණාකර SLT-MOBITEL ගැන වෙනත් දෙයක් අසන්න.",
   "otp.sms_body": "SLT-MOBITEL: ඔබේ තහවුරු කිරීමේ කේතය {code} වේ. එය විනාඩි {minutes}ක් වලංගුයි. කිසිවෙකු සමඟ බෙදා නොගන්න.",
   "otp.email_subject": "ඔබේ SLT-MOBITEL තහවුරු කිරීමේ කේතය",
-  "otp.email_body": "ආයුබෝවන්,\n\nඔබේ SLT-MOBITEL තහවුරු කිරීමේ කේතය {code} වේ. එය විනාඩි {minutes}ක් වලංගුයි.\n\nමෙම කේතය කිසිවෙකු සමඟ බෙදා නොගන්න. SLT-MOBITEL ඔබෙන් කිසිවිටෙක එය ඉල්ලන්නේ නැත.\n\nඔබ මෙම කේතය ඉල්ලා නොතිබුණේ නම්, මෙම විද්‍යුත් තැපෑල නොසලකා හරින්න."
+  "otp.email_body": "ආයුබෝවන්,\n\nඔබේ SLT-MOBITEL තහවුරු කිරීමේ කේතය {code} වේ. එය විනාඩි {minutes}ක් වලංගුයි.\n\nමෙම කේතය කිසිවෙකු සමඟ බෙදා නොගන්න. SLT-MOBITEL ඔබෙන් කිසිවිටෙක එය ඉල්ලන්නේ නැත.\n\nඔබ මෙම කේතය ඉල්ලා නොතිබුණේ නම්, මෙම විද්‍යුත් තැපෑල නොසලකා හරින්න.",
+  "landing.greeting": "SLT Mobitel වෙත ඔබව සාදරයෙන් පිළිගනිමු",
+  "landing.subtitle": "ඔබේ හඬ සහායකයා",
+  "landing.skip": "මඟ හැරීමට ස්පර්ශ කරන්න",
+  "loader.connecting": "සම්බන්ධ වෙමින්...",
+  "loader.sending": "ඔබේ කේතය යවමින්...",
+  "loader.verifying": "තහවුරු කරමින්...",
+  "loader.thinking": "සිතමින්...",
+  "wizard.progress": "{total} න් {current}",
+  "dashboard.more": "තව",
+  "dashboard.captions": "උපසිරැසි",
+  "dashboard.mic": "මයික්",
+  "dashboard.end": "අවසන්",
+  "dashboard.history": "ඉතිහාසය",
+  "dashboard.voice": "හඬ සහ අවතාරය",
+  "dashboard.logout": "ඉවත් වන්න",
+  "dashboard.theme": "තේමාව",
+  "dashboard.sound": "ආරම්භක ශබ්දය",
+  "dashboard.sheet_close": "වසන්න",
+  "dashboard.mode": "ක්‍රමය",
+  "empty.transcript": "ඔබේ සංවාදය මෙහි පෙන්වනු ඇත.",
+  "_meta": {
+    "language": "si",
+    "machine_written": true,
+    "needs_native_review": true,
+    "note": "Machine written, needs native speaker review before production use."
+  }
 }
