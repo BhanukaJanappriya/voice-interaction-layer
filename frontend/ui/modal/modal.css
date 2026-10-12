@@ -1,0 +1,262 @@
+/* Modal polish: header badge, open and close motion, wizard progress, step
+   slide, micro interactions. Loaded after style.css and verify.css.
+
+   Everything that touches an existing element is scoped under [data-slt-m],
+   an attribute that modal.js adds to an overlay it enhanced. Without the
+   script nothing here applies. Only transform, opacity and filter animate
+   (backdrop-filter is the blur). The badge colors use the plan's --badge-bg
+   and --badge-ring when tokens.css defines them, else the values below,
+   which were contrast checked in light and dark. */
+
+:root {
+  --slt-ease-out: cubic-bezier(0.22, 0.8, 0.3, 1);
+  --slt-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --slt-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* == header badge == */
+
+.slt-badge {
+  --c: 31 87 214;
+  --ic: #1f57d6;
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 2px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ic);
+  background: var(--badge-bg, rgb(var(--c) / 0.12));
+  box-shadow: 0 0 0 1.5px var(--badge-ring, rgb(var(--c) / 0.35)), 0 0 24px rgb(var(--c) / 0.3);
+  animation: slt-badge-in 320ms var(--slt-ease-spring) 80ms both;
+}
+
+.slt-badge[data-tone="success"] { --c: 30 110 40; --ic: #1e6e28; }
+.slt-badge[data-tone="warning"] { --c: 138 90 0; --ic: #8a5a00; }
+.slt-badge[data-tone="danger"] { --c: 192 40 40; --ic: #c02828; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .slt-badge { --c: 126 166 255; --ic: #8fb2ff; background: rgb(var(--c) / 0.16); }
+  :root:not([data-theme="light"]) .slt-badge[data-tone="success"] { --c: 111 207 122; --ic: #6fcf7a; }
+  :root:not([data-theme="light"]) .slt-badge[data-tone="warning"] { --c: 240 183 90; --ic: #f0b75a; }
+  :root:not([data-theme="light"]) .slt-badge[data-tone="danger"] { --c: 255 138 138; --ic: #ff8a8a; }
+}
+:root[data-theme="dark"] .slt-badge { --c: 126 166 255; --ic: #8fb2ff; background: rgb(var(--c) / 0.16); }
+:root[data-theme="dark"] .slt-badge[data-tone="success"] { --c: 111 207 122; --ic: #6fcf7a; }
+:root[data-theme="dark"] .slt-badge[data-tone="warning"] { --c: 240 183 90; --ic: #f0b75a; }
+:root[data-theme="dark"] .slt-badge[data-tone="danger"] { --c: 255 138 138; --ic: #ff8a8a; }
+
+/* One soft ring that expands and fades after the badge appears. */
+.slt-badge::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgb(var(--c) / 0.5);
+  opacity: 0;
+  pointer-events: none;
+  animation: slt-badge-ring 700ms var(--slt-ease-out) 300ms both;
+}
+
+.slt-icon { flex: 0 0 auto; display: block; }
+
+@keyframes slt-badge-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes slt-badge-ring {
+  0% { opacity: 0.7; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.55); }
+}
+
+/* An old inline icon box is hidden (not removed) once the badge is shown. */
+[data-slt-m] .modal-icon { display: none; }
+
+/* == open and close == */
+
+[data-slt-m] {
+  animation: slt-m-overlay-in 240ms var(--slt-ease-out) both;
+}
+[data-slt-m]:not([data-slt-flat]) {
+  animation-name: slt-m-overlay-in-blur;
+}
+[data-slt-m] > :is(.modal-card, .slt-verify-card) {
+  animation: slt-m-card-in 240ms var(--slt-ease-out) both;
+}
+
+@keyframes slt-m-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slt-m-overlay-in-blur {
+  from { opacity: 0; -webkit-backdrop-filter: blur(0); backdrop-filter: blur(0); }
+  to { opacity: 1; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+}
+@keyframes slt-m-card-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slt-m-overlay-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes slt-m-overlay-out-blur {
+  from { opacity: 1; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  to { opacity: 0; -webkit-backdrop-filter: blur(0); backdrop-filter: blur(0); }
+}
+@keyframes slt-m-card-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(12px) scale(0.96); }
+}
+
+/* Closing: a copy of the overlay plays this and is then removed. Pointer
+   events are off so the copy can never catch a click. */
+[data-slt-ghost] {
+  pointer-events: none;
+  animation: slt-m-overlay-out 150ms var(--slt-ease-in) both;
+}
+[data-slt-ghost]:not([data-slt-flat]) { animation-name: slt-m-overlay-out-blur; }
+[data-slt-ghost] > :is(.modal-card, .slt-verify-card) {
+  animation: slt-m-card-out 150ms var(--slt-ease-in) both;
+}
+[data-slt-ghost] .slt-badge,
+[data-slt-ghost] .slt-badge::after { animation: none; }
+
+/* == wizard progress == */
+
+.slt-prog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.slt-prog-bar {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  max-width: 220px;
+}
+.slt-prog-seg {
+  flex: 1 1 0;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--card-border, #e3ecf5);
+}
+.slt-prog-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue, #2f6fed), var(--green, #43a047));
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 260ms var(--slt-ease-out);
+}
+.slt-prog-seg[data-on] .slt-prog-fill { transform: scaleX(1); }
+.slt-prog-label {
+  font-size: 0.8rem;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--text-dim, #64748b);
+  font-variant-numeric: tabular-nums;
+}
+[dir="rtl"] .slt-prog-fill { transform-origin: right center; }
+
+/* == micro interactions == */
+
+[data-slt-m] :is(button, .choice-button) {
+  transition: transform 90ms var(--slt-ease-out);
+}
+[data-slt-m] :is(button, .choice-button):not(:disabled):active { transform: scale(0.97); }
+
+/* A soft glow added to the existing focus outline (the outline stays). */
+[data-slt-m] :is(button, a, input, select, textarea):focus-visible {
+  box-shadow: 0 0 0 5px rgb(47 111 237 / 0.22);
+}
+
+/* One time code boxes light up when filled. modal.js sets data-filled. */
+[data-slt-m] .slt-v-digit {
+  transition: border-color 160ms var(--slt-ease-out), background-color 160ms var(--slt-ease-out);
+}
+[data-slt-m] .slt-v-digit[data-filled] {
+  border-color: var(--blue, #2f6fed);
+  background: var(--blue-dim, #eaf1ff);
+  box-shadow: 0 0 0 3px rgb(47 111 237 / 0.2);
+  animation: slt-digit-pop 160ms var(--slt-ease-out);
+}
+@keyframes slt-digit-pop { from { transform: scale(1.04); } to { transform: none; } }
+
+/* Error shake: 3 cycles of 6 px in 300 ms. */
+.slt-shake { animation: slt-shake 300ms var(--slt-ease-out); }
+@keyframes slt-shake {
+  0%, 100% { transform: translateX(0); }
+  17% { transform: translateX(-6px); }
+  33% { transform: translateX(6px); }
+  50% { transform: translateX(-6px); }
+  67% { transform: translateX(6px); }
+  83% { transform: translateX(-3px); }
+}
+
+/* Success: a check circle that draws itself and a short dot burst. */
+.slt-ok {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto;
+  color: #1e6e28;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .slt-ok { color: #6fcf7a; } }
+:root[data-theme="dark"] .slt-ok { color: #6fcf7a; }
+.slt-ok svg { width: 100%; height: 100%; display: block; }
+.slt-ok svg * {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: slt-draw 360ms var(--slt-ease-out) forwards;
+}
+.slt-ok svg path { animation-delay: 160ms; }
+@keyframes slt-draw { to { stroke-dashoffset: 0; } }
+.slt-ok-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+  animation: slt-dot 450ms var(--slt-ease-out) both;
+}
+@keyframes slt-dot {
+  0% { opacity: 1; transform: translate(0, 0) scale(1); }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.4); }
+}
+
+/* == reduced motion: no movement, a plain 150 ms fade == */
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slt-m],
+  [data-slt-m] > :is(.modal-card, .slt-verify-card),
+  .slt-badge {
+    animation: slt-m-overlay-in 150ms linear both !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  [data-slt-ghost],
+  [data-slt-ghost] > :is(.modal-card, .slt-verify-card) {
+    animation: slt-m-overlay-out 150ms linear both !important;
+  }
+  .slt-badge::after,
+  .slt-shake,
+  [data-slt-m] .slt-v-digit[data-filled] { animation: none !important; }
+  .slt-ok svg * { animation: none !important; stroke-dashoffset: 0; }
+  .slt-ok-dot { display: none; }
+  .slt-prog-fill,
+  [data-slt-m] :is(button, .choice-button),
+  [data-slt-m] .slt-v-digit { transition: none !important; }
+  [data-slt-m] :is(button, .choice-button):not(:disabled):active { transform: none; }
+}

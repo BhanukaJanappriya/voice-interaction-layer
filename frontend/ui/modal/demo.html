@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modal polish demo</title>
+<link rel="stylesheet" href="../../style.css">
+<link rel="stylesheet" href="../../verify/verify.css">
+<link rel="stylesheet" href="modal.css">
+</head>
+<body>
+<main class="page">
+  <section class="card" style="text-align:center">
+    <h1 style="margin:0;font-size:1.2rem">Modal polish demo</h1>
+    <p id="status" role="status" style="margin:0;color:var(--text-dim)">Nothing opened yet.</p>
+    <button id="open-mic" type="button" class="choice-button choice-button-solid">Mic explainer</button>
+    <button id="open-history" type="button" class="choice-button choice-button-outline">History</button>
+    <button id="open-wizard" type="button" class="choice-button choice-button-solid">Wizard (stubbed)</button>
+    <button id="net-toggle" type="button" class="choice-button choice-button-outline" aria-pressed="false">Simulate network failure: off</button>
+    <button id="theme" type="button" class="choice-button choice-button-outline">Toggle dark theme</button>
+    <p style="margin:0;color:var(--text-dim);font-size:0.85rem">
+      Wizard stub: a name with "nobody" is rejected; a number ending 0000 has no
+      contact; a number ending 9999 is rate limited; code 123456 succeeds, other
+      codes fail (the 3rd failure locks); add <code>?expires=8</code> to see the
+      expired state.
+    </p>
+  </section>
+
+  <section class="card" id="gallery" aria-labelledby="gal-title">
+    <h2 id="gal-title" style="margin:0;font-size:1.05rem">Badges, progress, success</h2>
+    <div id="badges" style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center"></div>
+    <div id="prog"></div>
+    <div id="ok-host"></div>
+    <button id="ok-replay" type="button" class="choice-button choice-button-outline">Replay success</button>
+    <button id="shake-btn" type="button" class="choice-button choice-button-outline">Shake this card</button>
+  </section>
+</main>
+
+<!-- Markup copied from frontend/index.html -->
+<div id="mic-permission-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-icon">
+      <svg class="icon" viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+        <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
+        <line x1="12" y1="19" x2="12" y2="23"></line>
+        <line x1="8" y1="23" x2="16" y2="23"></line>
+      </svg>
+    </div>
+    <h2 id="mic-modal-title">Enable your microphone</h2>
+    <p>This assistant needs microphone access to hear you speak. Your browser will ask you to confirm right after.</p>
+    <button id="allow-mic-button" class="choice-button choice-button-solid" type="button">Allow microphone</button>
+    <button id="dismiss-mic-modal" class="back-link modal-dismiss" type="button">Not now</button>
+  </div>
+</div>
+
+<div id="history-panel" class="modal-overlay hidden">
+  <div class="modal-card history-card">
+    <div class="history-header">
+      <h2>Conversation history</h2>
+      <button id="close-history" class="icon-button" type="button" aria-label="Close history">
+        <svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+    <div id="transcript" class="transcript history-transcript">
+      <p class="hint">Your conversation will appear here as it happens.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var en = {
+    "verify.step1.title": "Your details", "verify.step1.name_label": "Name", "verify.step1.name_placeholder": "Your full name",
+    "verify.step1.phone_label": "SLT telephone number", "verify.step1.phone_placeholder": "011 234 5678",
+    "verify.step1.terms_prefix": "I agree to the", "verify.step1.terms_link": "Terms and Conditions", "verify.step1.and": "and",
+    "verify.step1.privacy_link": "Privacy Policy", "verify.step1.back": "Back", "verify.step1.next": "Next",
+    "verify.step2.title": "Where would you like to receive the OTP?", "verify.step2.sms_option": "SMS to {masked}",
+    "verify.step2.email_option": "Email to {masked}", "verify.step2.send_otp": "Send OTP",
+    "verify.step2.change_number": "Change connection number",
+    "verify.step2.no_contact": "We have no mobile number or email for this account. Please contact SLT-MOBITEL.",
+    "verify.step3.title": "Enter OTP", "verify.step3.subtitle": "We sent a six digit code to {masked}.",
+    "verify.step3.digit_aria": "Digit {n} of {total}", "verify.step3.countdown": "Code expires in {time}",
+    "verify.step3.verify": "Verify", "verify.step3.resend": "Resend OTP",
+    "verify.step3.expired": "The code has expired. Please request a new one.",
+    "verify.errors.invalid_details": "We could not verify those details. Please check your name and number and try again.",
+    "verify.errors.generic": "We could not verify those details. Please check them and try again.",
+    "verify.errors.phone_format": "That does not look like a valid SLT telephone number.",
+    "verify.errors.rate_limited": "Too many attempts. Please wait {seconds} seconds.",
+    "verify.errors.invalid": "That code is not correct.", "verify.errors.expired": "The code has expired.",
+    "verify.errors.locked": "Too many wrong codes. Please request a new OTP.", "verify.errors.attempts_left": "{count} attempts left.",
+    "verify.errors.cooldown": "You can request a new code in {seconds} s.",
+    "verify.errors.unavailable": "This is not available right now. Please try again later.",
+    "verify.errors.network": "Could not reach the server. Please check your connection.",
+    "wizard.progress": "{current} of {total}"
+  };
+  window.SltI18n = {
+    t: function (key, vars) {
+      var s = Object.prototype.hasOwnProperty.call(en, key) ? en[key] : key;
+      return s.replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] !== undefined ? vars[k] : m; });
+    }
+  };
+})();
+</script>
+<script src="../../verify/icons.js"></script>
+<script src="../../verify/verify.js"></script>
+<script src="../icons/icons.js"></script>
+<script src="modal.js"></script>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var expires = parseInt(q.get("expires") || "120", 10);
+  var netFail = false;
+  var status = document.getElementById("status");
+  document.documentElement.classList.add("ui-on");
+  if (q.get("theme")) document.documentElement.setAttribute("data-theme", q.get("theme"));
+
+  // The only line the app needs: enhance the known modals and watch for the wizard.
+  if (!q.get("plain")) SltUi.modal.init();
+
+  // Fake backend for the wizard (same rules as verify/demo.html, plus two).
+  var wrong = 0;
+  function json(status, body) {
+    return new Response(JSON.stringify(body), { status: status, headers: { "Content-Type": "application/json" } });
+  }
+  window.fetch = function (url, init) {
+    var path = String(url).replace(/^https?:\/\/[^/]+/, "");
+    var body = {};
+    try { body = JSON.parse(init.body); } catch (e) {}
+    return new Promise(function (resolve, reject) {
+      setTimeout(function () {
+        if (netFail) return reject(new TypeError("network"));
+        var digits = String(body.phone || "").replace(/\D/g, "");
+        if (path === "/verify/lookup") {
+          if (/nobody/i.test(body.name)) return resolve(json(422, { code: "invalid_details" }));
+          if (/9999$/.test(digits)) return resolve(json(429, { retry_after: 45 }));
+          if (/0000$/.test(digits)) return resolve(json(200, { ticket: "t", methods: [] }));
+          return resolve(json(200, { ticket: "stub", methods: [
+            { id: "sms", masked: "07X XXX X123" }, { id: "email", masked: "XXXXXXXXX@gmail.com" } ] }));
+        }
+        if (path === "/verify/otp/send") {
+          wrong = 0;
+          return resolve(json(200, { challenge_id: "stub-" + Date.now(), expires_in: expires, resend_in: 30,
+            masked: body.method === "email" ? "XXXXXXXXX@gmail.com" : "07X XXX X123" }));
+        }
+        if (path === "/verify/otp/verify") {
+          if (body.code === "123456") return resolve(json(200, { display_name: "Demo Customer", language: "en" }));
+          wrong += 1;
+          if (wrong >= 3) return resolve(json(423, { code: "locked" }));
+          return resolve(json(401, { code: "invalid", attempts_left: 3 - wrong }));
+        }
+        resolve(json(404, {}));
+      }, 250);
+    });
+  };
+
+  function toggle(id, open) { document.getElementById(id).classList.toggle("hidden", !open); }
+  document.getElementById("open-mic").addEventListener("click", function () { toggle("mic-permission-modal", true); });
+  ["dismiss-mic-modal", "allow-mic-button"].forEach(function (id) {
+    document.getElementById(id).addEventListener("click", function () { toggle("mic-permission-modal", false); });
+  });
+  document.getElementById("open-history").addEventListener("click", function () { toggle("history-panel", true); });
+  document.getElementById("close-history").addEventListener("click", function () { toggle("history-panel", false); });
+  document.getElementById("open-wizard").addEventListener("click", function () {
+    SltVerify.open({
+      language: "en",
+      onVerified: function (u) { status.textContent = "Verified as " + u.display_name + "."; },
+      onCancel: function () { status.textContent = "Cancelled."; }
+    });
+  });
+  document.getElementById("net-toggle").addEventListener("click", function (e) {
+    netFail = !netFail;
+    e.currentTarget.setAttribute("aria-pressed", String(netFail));
+    e.currentTarget.textContent = "Simulate network failure: " + (netFail ? "on" : "off");
+  });
+  document.getElementById("theme").addEventListener("click", function () {
+    var r = document.documentElement;
+    r.setAttribute("data-theme", r.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Gallery: every badge tone and icon used by the popups.
+  var host = document.getElementById("badges");
+  [["mic", "brand"], ["history", "brand"], ["id-card", "brand"], ["message-square", "brand"], ["mail", "brand"],
+   ["key-round", "brand"], ["circle-check", "success"], ["clock-alert", "warning"], ["wifi-off", "warning"],
+   ["triangle-alert", "danger"], ["phone-call", "brand"], ["plug", "brand"]].forEach(function (p) {
+    host.appendChild(SltUi.badge(p[0], { tone: p[1] }));
+  });
+  SltUi.modal.wizardProgress(document.getElementById("prog"), {
+    current: 2, total: 3,
+    label: function (c, t) { return SltI18n.t("wizard.progress", { current: c, total: t }); }
+  });
+  function replay() {
+    var h = document.getElementById("ok-host");
+    h.textContent = "";
+    SltUi.modal.success(h);
+  }
+  document.getElementById("ok-replay").addEventListener("click", replay);
+  document.getElementById("shake-btn").addEventListener("click", function () { SltUi.modal.shake(document.getElementById("gallery")); });
+  replay();
+})();
+</script>
+</body>
+</html>
