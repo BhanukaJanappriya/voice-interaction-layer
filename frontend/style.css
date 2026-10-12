@@ -161,7 +161,7 @@ body {
    filled/active via the same brand blue already used for solid buttons
    elsewhere, rather than a color unrelated to the rest of the palette. */
 .icon-button[aria-pressed="true"] {
-  background: var(--blue-);
+  background: var(--blue);
   color: #fff;
   border-color: var(--blue);
 }
@@ -385,7 +385,12 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  /* The pseudo elements are listed too: "*" alone does not match them, which
+     left the drifting background glow running for people who asked for no
+     motion. */
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
