@@ -147,6 +147,11 @@ function navigateTo(screenName) {
       }
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
+    // Responsive layer for the voice screen (frontend/ui/dashboard); a no-op
+    // when the UI layer did not load.
+    if (screenName === "voice" && window.SltUi && window.SltUi.dashboard) {
+      try { window.SltUi.dashboard.attach(document.getElementById("screen-voice")); } catch (err) { /* decoration only */ }
+    }
   };
 
   const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -163,6 +168,8 @@ document.querySelectorAll(".choice-button[data-language]").forEach((button) => {
     selectedLanguage = button.getAttribute("data-language");
     // Sets <html lang> and loads the wizard's strings for this language.
     if (window.SltI18n) window.SltI18n.setLanguage(selectedLanguage);
+    // Remembered so the landing greeting uses it on the next visit.
+    try { localStorage.setItem("slt-language", selectedLanguage); } catch (err) { /* storage may be blocked */ }
     navigateTo("select");
   });
 });
@@ -805,6 +812,9 @@ function handleServerMessage(event) {
       break;
     case "agent_response":
       finalizeStreamingReply(payload.text, payload.mode);
+      if (window.SltUi && window.SltUi.dashboard && payload.mode) {
+        try { window.SltUi.dashboard.setMode(payload.mode); } catch (err) { /* decoration only */ }
+      }
       break;
     case "speaking_sentence":
       // The reply is now spoken while it is still being generated, so the

@@ -1,0 +1,15 @@
+{
+  "name": "SLT Mobitel Voice Assistant",
+  "short_name": "SLT Assistant",
+  "description": "Talk or chat with the SLT Mobitel assistant in English, Sinhala or Tamil.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2f6fed",
+  "icons": [
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "assets/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -4,8 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SLT Mobitel Voice Assistant</title>
+<meta name="theme-color" content="#2f6fed">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/icons/icon-192.png">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="verify/verify.css">
+<link rel="stylesheet" href="ui/tokens.css">
+<link rel="stylesheet" href="ui/modal/modal.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="ui/landing/landing.css">
+<link rel="stylesheet" href="ui/loader/loader.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="ui/dashboard/dashboard.css" media="print" onload="this.media='all'">
+<noscript>
+<link rel="stylesheet" href="ui/modal/modal.css">
+<link rel="stylesheet" href="ui/loader/loader.css">
+<link rel="stylesheet" href="ui/dashboard/dashboard.css">
+</noscript>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Sinhala:wght@400;600;700&family=Noto+Sans+Tamil:wght@400;600;700&display=swap" rel="stylesheet">
@@ -26,6 +39,12 @@
 </head>
 <body>
 <div class="bg-glow" aria-hidden="true"></div>
+
+<!-- The landing starts here, at the top of the body, so it paints at once and
+     does not wait for the scripts below (three.js and LiveKit load from a CDN).
+     Decoration only: if landing.js is missing this does nothing. -->
+<script src="ui/landing/landing.js"></script>
+<script>try { if (window.SltUi && window.SltUi.landing) window.SltUi.landing.run({}).catch(function () {}); } catch (e) { /* decoration only */ }</script>
 
 <button id="theme-toggle" class="icon-button theme-toggle" type="button" aria-label="Toggle dark and light theme">
   <span id="theme-toggle-icon" class="icon"></span>
@@ -60,7 +79,7 @@
      places. -->
 <input id="backend-url" type="hidden" value="ws://127.0.0.1:8000/ws/voice">
 
-<div class="page">
+<main class="page" id="main">
 
   <!-- Screen 1: language selection -->
   <section id="screen-language" class="screen active">
@@ -289,7 +308,7 @@
       <p class="brand-tagline">Text chat</p>
     </header>
 
-    <main class="card">
+    <div class="card">
       <div id="chat-transcript" class="transcript chat-transcript">
         <p class="hint">Type a message below to start chatting.</p>
       </div>
@@ -307,13 +326,13 @@
         </svg>
         Back
       </a>
-    </main>
+    </div>
   </section>
 
   <footer class="app-footer">
     <p class="footer-credit">SLT Digital Lab, voice interaction prototype</p>
   </footer>
-</div>
+</main>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="bot3d.js"></script>
@@ -327,6 +346,13 @@
 <script src="i18n/i18n.js"></script>
 <script src="verify/icons.js"></script>
 <script src="verify/verify.js"></script>
+<!-- Optional UI layer: motion, icons, landing, responsive voice screen. The page
+     works the same without any of these (see docs/UI_PLAN.md). -->
+<script src="ui/icons/icons.js" defer></script>
+<script src="ui/modal/modal.js" defer></script>
+<script src="ui/loader/loader.js" defer></script>
+<script src="ui/dashboard/dashboard.js" defer></script>
+<script src="ui/ui.js" defer></script>
 <script src="app.js"></script>
 </body>
 </html>
