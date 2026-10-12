@@ -705,3 +705,66 @@ Not live tested:
   process; the database counted limits still hold.
 - `test_live_roaming_retrieval` needs a working local model and times out on
   this machine at times.
+
+## Interface layer, phone layout and hub check (2026-10-13)
+
+**Lighthouse (mobile, language screen, default throttling).** Single runs on
+this machine are very noisy: the unchanged frontend scored 41, 56, 58, 67, 72,
+72, 80 and 81 on different runs, depending mostly on whether first paint
+happened before or after a one second task. So the comparison below uses
+interleaved runs of the committed frontend and the new one, served the same way.
+
+| Round | Committed frontend | New frontend |
+|---|---|---|
+| first, 4 runs, landing started at DOMContentLoaded | 67, 72, 72, 58 | 66, 56, 55, 54 |
+| after starting the landing at the top of the body, 3 runs | 56, 81, 80 | 66, 76, 76 |
+
+Accessibility went from 98 to 100 (the page now has one main landmark; the
+single baseline failure was landmark-one-main). Best practices stayed at 96.
+Performance in the last round is about 4 points lower on the median (76 against
+80), inside the run to run spread, with the largest contentful paint about 0.4 s
+later (4.2 s against 3.8 s). That is the cost of the extra files and the landing
+overlay, and it is not better than before. What was done about it: the three
+stylesheets that are only needed after the first screen load without blocking,
+the scripts are deferred, and the landing starts at the top of the body.
+Not done: the 3D avatar script (bot3d.js, not part of this work) builds its
+scene at page load and takes about one second of main thread time; when first
+paint comes earlier than that task, Lighthouse counts it as blocking time (about
+400 to 950 ms in those runs), and it did the same on the committed frontend. Starting
+that scene only when the voice screen opens would remove it; it was left alone
+because it changes existing behavior. The very first baseline run (31) was probably a
+cold CDN fetch (largest contentful paint 201 s) and is not comparable.
+
+**Only emulated.** Phone layouts, touch targets, safe area insets and dynamic
+viewport units were checked in desktop Chrome with emulated phones (360x740,
+390x844, 360x640, 480, 768, 1024, 1440 and a landscape 740x360). Not run on a
+real iPhone, Pixel or Galaxy, and not in Safari or Firefox (the Playwright
+builds for them are not installed here, so their tests skip). The `:has()`
+rule that hides the bottom bar under the history sheet needs Chrome 105, Safari
+15.4 or Firefox 121; on older browsers the bar stays visible above the sheet.
+
+**Not checked.** Screen readers; the intro sound; the low power branch (no
+blur) because this machine reports enough cores and memory; the Sinhala and
+Tamil rendering with the real Noto fonts (the tests block Google Fonts, so
+system fonts were used); the admin dialogs with a signed in admin (the layer is
+loaded there, only copied markup was tested); the landing on a real slow
+phone; the mode chip over LiveKit (it follows the agent_response mode field,
+which the WebSocket path sends).
+
+**Known behavior.** The landing covers the first screen for up to 2.5 s on the
+first visit in a session and swallows the first click or key that skips it. The
+wizard's wrong code and rate limited messages share one icon because the page
+text cannot tell them apart. The Sinhala and Tamil text for all new strings is
+machine written and needs a native speaker. The voice screen's mode chip only
+shows on the phone layout.
+
+**Hub.** The hub speaks the older SSE transport at /sse; registering it over
+streamable http at the root fails. `CUSTOMER_DATA_SOURCE` stays `local`
+because the hub has no customer lookup tool (see docs/MCP_HUB.md). The check
+command was run against the real hub for the tool list only; its optional read
+only calls and any customer tool were not run there.
+
+**Tests.** `tests/ui` is opt in (about 13 minutes here) and needs the dev
+packages playwright, pytest-playwright and axe-playwright-python plus the
+system Chrome. A few of its checks are timing based (the landing duration must
+be under 2.5 s) and can fail on a heavily loaded machine.

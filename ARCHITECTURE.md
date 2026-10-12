@@ -499,3 +499,28 @@ Measured: the guard adds about 0.04 ms per request (mean 0.043 ms, p95 0.097
 ms over 6600 calls, rules and classifier on a sample set). The chain adds no network call of its own and was not separately timed;
 the time to the first word is the tier's own, for
 LiveKit Inference 1.3 to 2.2 s warm as measured earlier.
+
+## The optional UI layer (2026-10-13)
+
+```
+index.html loads, in order:  style.css, verify.css, ui/tokens.css, ui/modal/modal.css,
+                             landing.css, loader.css, dashboard.css
+                             ... app scripts ... i18n.js, verify/*, ui/icons, ui/modal,
+                             ui/landing, ui/loader, ui/dashboard, ui/ui.js, app.js
+ui/ui.js: starts icons and modal inside try and catch, binds the loader, then adds
+          the root class "ui-on" only if nothing failed.
+```
+
+Nothing in the voice or chat pipeline calls into the UI layer except three
+guarded lines in app.js (the landing after load, the dashboard attach when the
+voice screen is shown, the mode chip when agent_response arrives). Everything
+else is observed: the loader watches the wizard dialog's aria-busy and the
+avatar's state class, the dashboard watches the avatar's state class, and the
+modal layer watches for the wizard overlay. So a failure in the UI layer
+cannot stop a turn, and removing the folder returns the previous look.
+
+Phone layout of the voice screen (up to 1023 px): the existing buttons are
+MOVED (not copied) into a bottom bar and a More sheet, so their ids, handlers
+and aria state keep working; they go back to their original place when the
+viewport widens or the screen is left. From 1024 px the desktop layout is
+untouched.

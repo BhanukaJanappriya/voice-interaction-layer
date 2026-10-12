@@ -644,3 +644,49 @@ and cannot send a message on its own. Put fake test rows in with
 **Languages.** Wizard text lives in `frontend/i18n/{en,si,ta}.json`, server
 messages in `backend/i18n/{en,si,ta}.json`. The Sinhala and Tamil wording is
 machine written and needs review by a native speaker.
+
+## Animated interface, icons, phone layout and the hub check
+
+Added 2026-10-13. Design and decisions: docs/UI_PLAN.md. Hub details: docs/MCP_HUB.md.
+
+**What changed on screen.** A short landing animation (the logo with a glow and
+a tracing ring, then the greeting revealed word by word in the language chosen
+in this browser, at most 2.5 s the first time in a session and about 0.9 s
+after; any click, tap or key skips it). Every popup (microphone explainer,
+history, the verification wizard, the admin dialogs) has a glowing icon badge
+and a soft open and close motion; the wizard also shows a "1 of 3" progress
+bar and slides between steps. The same glowing logo is the waiting indicator
+while the wizard sends or checks a code and while the voice screen connects or
+the assistant is thinking. On a phone the voice screen has a bottom bar with
+Captions, Mic and End (icon plus label, each at least 44 by 44 px) and a More
+sheet for history, voice and avatar, log out, theme and the intro sound; the
+top bar no longer sits on the logo. Desktop keeps its layout. A web app
+manifest and icons let the page be added to a phone home screen (no service
+worker, so there is no offline mode).
+
+**It is layered on top.** All of it lives in `frontend/ui/` and is added
+only after `frontend/ui/ui.js` started cleanly (the root gets the class
+`ui-on`). If those files fail to load, the older screens work exactly as
+before. All motion uses transform, opacity and filter only, stops under
+`prefers-reduced-motion`, and pauses when the tab is hidden. New text is in
+`frontend/i18n/{en,si,ta}.json` (Sinhala and Tamil are machine written and need
+a native speaker). The intro sound is off by default (More sheet, remembered in
+the browser).
+
+**Hub check.** `cd backend; python -m mcp_client.check` (or
+`python -m backend.mcp_client.check`) prints reachability, the transport, the
+auth result and the tool list, never the key. The hub speaks the older SSE
+transport at `/sse`; an MCP client has to register it with the SSE transport,
+the URL `https://mcphub.sltdigitallab.lk/sse` and the `X-API-Key` header (a
+streamable http registration at the root does not work). `CUSTOMER_DATA_SOURCE` is
+`local` by default because the hub has no customer lookup tool; `mcp_hub` uses
+`MCP_HUB_CUSTOMER_LOOKUP_TOOL` and the wizard says "unavailable" while it is
+missing.
+
+**UI tests.** `venv/Scripts/python.exe -m pytest tests/ui -q` starts the app on
+a free port with a throwaway database and drives Chrome at 360, 390, 768, 1024
+and 1440 px in light, dark and reduced motion, plus touch target sizes, overflow,
+axe checks and the wizard in three languages. Needs `playwright`,
+`pytest-playwright` and `axe-playwright-python` (dev only, not in
+requirements.txt) and the system Chrome. Screenshots go to `docs/ui-after/`
+(ignored by git).

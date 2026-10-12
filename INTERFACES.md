@@ -559,3 +559,28 @@ backend/i18n: t(key, lang=None, **vars) falls back to en, then the key. frontend
     window.SltI18n {setLanguage, t, language, apply}. frontend/verify: window.SltVerify
     {open({language, prefill, backendBase, onVerified, onCancel}), close}.
 LiveKit: the token carries the signed attribute access=verified|guest; SessionSettings.access_verified.
+
+
+Additions for the UI layer and the hub check (2026-10-13). Nothing above changed.
+
+frontend/ui (window.SltUi, every function is optional and guarded by the caller)
+    ui.js: SltUi.ready; adds class ui-on on the root; binds the loader
+    icons: SltUi.icon(name, {size, label}), SltUi.badge(name, {tone}), SltUi.icons.inject()
+    modal: SltUi.modal.init(), enhance(overlayEl, {icon, tone}), remove(el), wizardProgress(...),
+        transition(from, to, direction), shake(el), success(host), watchWizard()
+    landing: SltUi.landing.run({language, skip}) -> Promise
+    loader: SltUi.loader.show(target, {label, size, overlay}) -> {hide(), setLabel(text), element}
+    dashboard: attach(screenEl), setState(name), setLevel(0..1), setMode(text), soundOn()
+    document events: slt:modal-open, slt:modal-close, slt:wizard-step, slt:sound
+    browser storage (this browser only): slt-language, slt-sound, sessionStorage slt-landing-seen
+    i18n keys: landing.*, loader.*, dashboard.*, wizard.progress, empty.transcript
+
+backend/mcp_client
+    python -m mcp_client.check [--json] [--timeout N] [--call-read-only]
+        exit 0 only when the hub works; never prints the key
+    errors.HubError(reason=None, status=None); reasons not_configured dns tls connect timeout
+        budget http_status no_transport auth_rejected tool_error breaker_open
+    HubClient.status() also gives last_error_reason, auth (accepted|rejected|unknown), checked_at
+    customer_lookup.select_customer_lookup(source=None) -> CustomerDirectory (local) or
+        HubCustomerLookup (mcp_hub); CustomerLookupUnavailable(reason)
+    config: CUSTOMER_DATA_SOURCE local|mcp_hub (default local)
