@@ -1,0 +1,495 @@
+/*
+ * Dashboard layer styles. Everything is scoped to .dash-* class names or to
+ * .dash-mobile / html.dash-voice, which dashboard.js adds only while the narrow
+ * layout is active (viewport up to 1023 px). At 1024 px and up nothing here
+ * changes the existing desktop layout.
+ * Motion: transform, opacity and filter only. Reduced motion replaces slides
+ * with 150 ms fades and removes the ambience movement.
+ */
+
+/* Pieces that exist in the DOM but must stay invisible outside the narrow layout. */
+.dash-bar,
+.dash-backdrop,
+.dash-sheet,
+.dash-halo,
+.dash-mode { display: none; }
+.dash-bar[hidden] { display: none !important; }
+
+html.dash-voice .app-footer { display: none; }
+/* The history overlay lives inside .page (z-index 1), below the bar: hide the bar while it is open. */
+html:has(#history-panel:not(.hidden)) .dash-bar { visibility: hidden; }
+
+/* screen grid (narrow) */
+
+.voice-screen.dash-mobile.active,
+.voice-screen.dash-mobile.leaving {
+  --dash-bar-h: 96px;
+  display: grid;
+  position: fixed;
+  inset: 0;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  justify-items: center;
+  gap: clamp(4px, 1.2dvh, 12px);
+  padding:
+    calc(env(safe-area-inset-top, 0px) + clamp(8px, 2dvh, 20px))
+    calc(env(safe-area-inset-right, 0px) + clamp(16px, 4vw, 40px))
+    calc(var(--dash-bar-h) + 8px)
+    calc(env(safe-area-inset-left, 0px) + clamp(16px, 4vw, 40px));
+  overflow: hidden;
+}
+
+.dash-mobile .voice-topbar-left,
+.dash-mobile .voice-topbar-right,
+.dash-mobile .voice-topbar-gender { display: none; }
+
+.dash-mobile .voice-logo {
+  position: static !important;
+  transform: none !important;
+  left: auto !important;
+  top: auto !important;
+  grid-row: 1;
+  margin: 0;
+  width: 100%;
+}
+.dash-mobile .voice-logo .brand-logo { width: clamp(120px, 38vw, 170px); max-width: 100%; }
+
+.dash-mobile .dash-mode {
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  color: var(--text);
+  font-size: clamp(0.72rem, 0.68rem + 0.25vw, 0.82rem);
+  line-height: 1.2;
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.dash-mobile .dash-mode.has-text { opacity: 1; }
+.dash-mode-label { color: var(--text-dim); }
+.dash-mode-label::after { content: ":"; }
+.dash-chip-box { position: relative; display: inline-grid; overflow: hidden; min-width: 2ch; }
+.dash-chip-text { grid-area: 1 / 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60vw; font-weight: 600; }
+.dash-chip-in { animation: dash-chip-in 220ms ease-out both; }
+.dash-chip-out { animation: dash-chip-out 220ms ease-out both; }
+@keyframes dash-chip-in { from { opacity: 0; transform: translateY(70%); } to { opacity: 1; transform: none; } }
+@keyframes dash-chip-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-70%); } }
+
+/* stage: avatar and captions */
+
+.dash-mobile .voice-stage {
+  grid-row: 3;
+  container-type: inline-size;
+  container-name: stage;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  justify-items: center;
+  align-content: start;
+  width: 100%;
+  min-height: 0;
+  gap: clamp(6px, 1.5dvh, 16px);
+}
+
+.dash-mobile .voice-stage .bot {
+  width: min(70vw, 42vh);
+  width: min(70vw, 42dvh);
+  height: auto;
+  aspect-ratio: 1;
+  margin: clamp(12px, 3dvh, 26px) auto clamp(8px, 2dvh, 18px);
+}
+@container stage (min-width: 560px) {
+  .dash-mobile .voice-stage .bot { width: min(56cqw, 46dvh); }
+}
+
+/* The flat fallback face keeps its natural size, centred in the larger avatar. */
+.dash-mobile .bot-ring { inset: calc(50% - 66px); }
+.dash-mobile .bot-waves { bottom: calc(50% - 80px); }
+
+.dash-mobile .captions-overlay {
+  width: 100%;
+  max-width: min(460px, 100%);
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  border-radius: 20px;
+  padding: 10px 16px;
+  align-self: start;
+}
+.dash-mobile .captions-text { font-size: clamp(0.88rem, 0.82rem + 0.4vw, 1.05rem); overflow-wrap: anywhere; }
+@container stage (max-width: 340px) {
+  .dash-mobile .captions-text { font-size: 0.86rem; }
+}
+
+/* action bar */
+
+html.dash-voice .dash-bar {
+  --bar-max: 640px;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 12;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 88px));
+  justify-content: center;
+  column-gap: clamp(0px, 2vw, 20px);
+  align-items: end;
+  justify-items: center;
+  max-width: var(--bar-max);
+  margin-inline: auto;
+  padding: 8px clamp(4px, 2vw, 24px) calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--card);
+  border-top: 1px solid var(--card-border);
+  box-shadow: 0 -6px 18px rgba(15, 28, 38, 0.08);
+}
+html.dash-voice .dash-backdrop,
+html.dash-voice .dash-sheet { display: block; }
+
+.dash-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+.dash-label {
+  box-sizing: border-box;
+  min-height: 2.3em;
+  max-width: 100%;
+  padding: 0 2px;
+  color: var(--text);
+  font-size: clamp(0.68rem, 0.64rem + 0.3vw, 0.8rem);
+  line-height: 1.15;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.dash-label:lang(si), .dash-label:lang(ta) { font-size: clamp(0.62rem, 0.58rem + 0.3vw, 0.76rem); }
+html[lang="si"] .dash-label, html[lang="ta"] .dash-label { font-size: clamp(0.62rem, 0.58rem + 0.3vw, 0.76rem); }
+
+.dash-bar .dash-item .icon-button,
+.dash-more {
+  width: 48px;
+  height: 48px;
+  min-width: 44px;
+  min-height: 44px;
+  flex: none;
+}
+.dash-bar .dash-item .mic-toggle { width: 60px; height: 60px; }
+.dash-bar .dash-item .icon { width: 24px; height: 24px; }
+.dash-bar .dash-item .mic-toggle .icon { width: 28px; height: 28px; }
+.dash-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  color: var(--blue);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  padding: 0;
+}
+.dash-more:active, .dash-close:active { transform: scale(0.94); }
+.dash-bar .caption-toggle[aria-pressed="false"] { color: var(--text-dim); }
+.dash-bar button:focus-visible, .dash-sheet button:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* More sheet */
+
+.dash-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(15, 28, 38, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 280ms ease-out, visibility 0s linear 280ms;
+}
+.dash-backdrop.open { opacity: 1; visibility: visible; transition: opacity 280ms ease-out, visibility 0s; }
+
+.dash-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 61;
+  box-sizing: border-box;
+  max-width: 480px;
+  max-height: 82vh;
+  max-height: 82dvh;
+  margin-inline: auto;
+  overflow-y: auto;
+  padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  border-radius: 20px 20px 0 0;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-bottom: 0;
+  color: var(--text);
+  transform: translateY(100%);
+  visibility: hidden;
+  transition: transform 280ms ease-out, visibility 0s linear 280ms;
+}
+.dash-sheet.open { transform: none; visibility: visible; transition: transform 280ms ease-out, visibility 0s; }
+.dash-sheet::before {
+  content: "";
+  display: block;
+  width: 40px;
+  height: 4px;
+  margin: 0 auto 6px;
+  border-radius: 2px;
+  background: var(--card-border);
+}
+.dash-sheet-head { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
+.dash-sheet-title { margin: 0; font-size: 1.05rem; }
+.dash-close {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+}
+.dash-rows { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.dash-row { display: flex; align-items: center; gap: 14px; min-height: 56px; }
+.dash-row-label { flex: 1; min-width: 0; font-size: 0.98rem; line-height: 1.25; overflow-wrap: anywhere; cursor: pointer; }
+.dash-row .icon-button, .dash-row .theme-toggle {
+  position: static;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  z-index: auto;
+}
+.dash-row .icon-button svg, .dash-row .theme-toggle svg { width: 22px; height: 22px; }
+.dash-row #gender-toggle { color: var(--text); }
+.dash-row #gender-toggle .gender-letter { font-size: 1.05rem; }
+.dash-row #gender-toggle[aria-pressed="true"] { background: var(--blue); border-color: var(--blue); color: #fff; }
+.dash-row #logout-button { color: var(--bad); }
+.dash-switch {
+  flex: none;
+  position: relative;
+  width: 56px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.dash-switch::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 9px;
+  width: 48px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--text-dim);
+  transition: opacity 150ms linear;
+}
+.dash-switch[aria-checked="true"]::before { background: var(--blue); }
+.dash-knob {
+  position: absolute;
+  left: 7px;
+  top: 12px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 160ms ease-out;
+}
+.dash-switch[aria-checked="true"] .dash-knob { transform: translateX(22px); }
+
+/* history panel: bottom sheet, side drawer from 768 px */
+
+.dash-hist.modal-overlay { align-items: flex-end; padding: 0; background: rgba(15, 28, 38, 0.5); }
+.dash-hist .history-card {
+  max-width: none;
+  max-height: 78vh;
+  max-height: 78dvh;
+  width: 100%;
+  align-items: stretch;
+  border-radius: 20px 20px 0 0;
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  animation: dash-up 280ms ease-out both;
+}
+.dash-hist .history-card::before {
+  content: "";
+  width: 40px;
+  height: 4px;
+  margin: 0 auto;
+  border-radius: 2px;
+  background: var(--card-border);
+}
+.dash-hist .history-header .icon-button { width: 44px; height: 44px; }
+@keyframes dash-up { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes dash-in-right { from { transform: translateX(100%); } to { transform: none; } }
+
+@media (min-width: 768px) {
+  .dash-hist.modal-overlay { align-items: stretch; justify-content: flex-end; }
+  .dash-hist .history-card {
+    width: min(420px, 50vw);
+    max-height: none;
+    height: 100%;
+    border-radius: 20px 0 0 20px;
+    animation-name: dash-in-right;
+  }
+  .dash-hist .history-card::before { display: none; }
+  html.dash-voice .dash-bar { --bar-max: 560px; border-radius: 20px 20px 0 0; border: 1px solid var(--card-border); border-bottom: 0; padding-top: 12px; }
+  html.dash-voice .dash-label { font-size: 0.86rem; }
+  .voice-screen.dash-mobile.active,
+  .voice-screen.dash-mobile.leaving { --dash-gap: 20px; gap: 20px; }
+  .dash-mobile .voice-logo .brand-logo { width: clamp(170px, 24vw, 230px); }
+}
+
+/* ambience around the avatar */
+
+.dash-mobile .dash-halo {
+  display: block;
+  position: absolute;
+  inset: -9%;
+  pointer-events: none;
+}
+.dash-halo > span { position: absolute; inset: 0; border-radius: 50%; opacity: 0; }
+.dash-ring1 { border: 2px solid rgb(47 111 237 / 0.7); }
+.dash-ring2 { border: 2px solid rgb(67 160 71 / 0.6); }
+.dash-arc {
+  background: conic-gradient(from 0deg, transparent 0deg, transparent 200deg, rgb(47 111 237 / 0.9) 320deg, rgb(67 160 71 / 0.95) 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+}
+.dash-glow { box-shadow: 0 0 36px 8px rgb(67 160 71 / 0.55), inset 0 0 28px rgb(67 160 71 / 0.25); }
+
+.dash-st-listening .dash-ring1 { opacity: 0.85; }
+.dash-st-listening .dash-ring2 { opacity: 0.4; }
+.dash-st-thinking .dash-arc { opacity: 1; animation: dash-spin 1400ms linear infinite; }
+.dash-st-speaking .dash-glow { opacity: 0.6; }
+.dash-st-error .dash-ring1 { opacity: 0.8; border-color: var(--bad); }
+.dash-paused .dash-arc { animation-play-state: paused; }
+@keyframes dash-spin { to { transform: rotate(360deg); } }
+
+/* empty states */
+
+.dash-empty-hint { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 18px 8px; text-align: center; }
+.dash-empty-ico {
+  display: inline-flex;
+  width: 52px;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--blue-dim);
+  color: var(--blue);
+  animation: dash-float 3s ease-in-out infinite;
+}
+.dash-skel { display: flex; flex-direction: column; gap: 8px; width: min(260px, 80%); }
+.dash-skel i {
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--card-border);
+  animation: dash-shimmer 1.6s ease-in-out infinite;
+}
+.dash-skel i:nth-child(2) { width: 80%; animation-delay: 0.15s; }
+.dash-skel i:nth-child(3) { width: 55%; animation-delay: 0.3s; }
+@keyframes dash-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes dash-shimmer { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.9; } }
+
+/* landscape phones: avatar left, captions right, vertical rail */
+
+@media (max-height: 480px) and (orientation: landscape) {
+  .voice-screen.dash-mobile.active,
+  .voice-screen.dash-mobile.leaving {
+    grid-template-columns: minmax(0, 42%) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "logo chip" "bot cap";
+    column-gap: 16px;
+    padding:
+      calc(env(safe-area-inset-top, 0px) + 6px)
+      calc(var(--dash-bar-w, 84px) + 12px)
+      calc(env(safe-area-inset-bottom, 0px) + 6px)
+      calc(env(safe-area-inset-left, 0px) + 16px);
+  }
+  .dash-mobile .voice-stage { display: contents; }
+  .dash-mobile .voice-logo { grid-area: logo; grid-row: auto; justify-self: center; }
+  .dash-mobile .voice-logo .brand-logo { width: clamp(96px, 16vw, 130px); }
+  .dash-mobile .dash-mode { grid-area: chip; grid-row: auto; justify-self: start; }
+  .dash-mobile .voice-stage .bot {
+    grid-area: bot;
+    align-self: center;
+    width: min(36vw, 62vh);
+    width: min(36vw, 62dvh);
+    margin: 8px auto;
+  }
+  .dash-mobile .captions-overlay { grid-area: cap; align-self: center; max-height: 100%; }
+
+  html.dash-voice .dash-bar {
+    --bar-max: none;
+    left: auto;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: calc(76px + env(safe-area-inset-right, 0px));
+    max-width: none;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    overflow-y: auto;
+    padding: 6px 2px 6px 2px;
+    padding-right: calc(2px + env(safe-area-inset-right, 0px));
+    border-radius: 0;
+    border: 0;
+    border-left: 1px solid var(--card-border);
+    box-shadow: -6px 0 18px rgba(15, 28, 38, 0.08);
+  }
+  .dash-label { min-height: 0; }
+  .dash-bar .dash-item .icon-button,
+  .dash-more { width: 44px; height: 44px; }
+  .dash-bar .dash-item .mic-toggle { width: 52px; height: 52px; }
+  .dash-bar .dash-item .icon { width: 22px; height: 22px; }
+  .dash-bar .dash-item .mic-toggle .icon { width: 24px; height: 24px; }
+  .dash-item { gap: 2px; }
+  .dash-sheet { max-width: 560px; max-height: 90vh; max-height: 90dvh; }
+  .dash-rows { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 12px; }
+}
+
+/* hover devices on the desktop layout: titles supply tooltips */
+@media (hover: hover) {
+  .dash-label { cursor: default; }
+}
+
+/* reduced motion: no ambience movement, fades instead of slides */
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-st-thinking .dash-arc { animation: none; opacity: 0.8; }
+  .dash-empty-ico, .dash-skel i { animation: none; }
+  .dash-chip-in { animation: dash-fade-in 150ms linear both; }
+  .dash-chip-out { animation: dash-fade-out 150ms linear both; }
+  .dash-sheet, .dash-sheet.open { transform: none; opacity: 0; transition: opacity 150ms linear, visibility 0s linear 150ms; }
+  .dash-sheet.open { opacity: 1; transition: opacity 150ms linear, visibility 0s; }
+  .dash-backdrop, .dash-backdrop.open { transition-duration: 150ms, 0s; }
+  .dash-hist .history-card { animation: dash-fade-in 150ms linear both; }
+  .dash-knob { transition: none; }
+}
+@keyframes dash-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dash-fade-out { from { opacity: 1; } to { opacity: 0; } }

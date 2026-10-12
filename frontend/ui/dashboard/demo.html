@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Dashboard demo</title>
+<link rel="stylesheet" href="../../style.css">
+<link rel="stylesheet" href="dashboard.css">
+<style>
+  /* demo only: the optional state panel (?panel=1) */
+  .demo-panel { position: fixed; left: 4px; bottom: 120px; z-index: 5; display: none; gap: 4px; flex-wrap: wrap; max-width: 50vw;
+    background: var(--card); border: 1px solid var(--card-border); padding: 6px; border-radius: 8px; font-size: 12px; }
+  .demo-panel.on { display: flex; }
+  .demo-panel button, .demo-panel select, .demo-panel input { font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="bg-glow" aria-hidden="true"></div>
+
+<button id="theme-toggle" class="icon-button theme-toggle" type="button" aria-label="Toggle dark and light theme">
+  <span id="theme-toggle-icon" class="icon"></span>
+</button>
+
+<main class="page" id="main">
+
+  <!-- Copied from frontend/index.html (#screen-voice), keep in sync by hand. -->
+  <section id="screen-voice" class="screen voice-screen active">
+    <div class="voice-topbar-left">
+      <button id="history-toggle" class="icon-button" type="button" aria-label="View conversation history">
+        <svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"></circle>
+          <polyline points="12 7 12 12 16 14"></polyline>
+        </svg>
+      </button>
+    </div>
+    <div class="voice-topbar-right">
+      <button id="logout-button" class="icon-button" type="button" aria-label="Log out">
+        <svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+          <polyline points="16 17 21 12 16 7"></polyline>
+          <line x1="21" y1="12" x2="9" y2="12"></line>
+        </svg>
+      </button>
+    </div>
+    <div class="voice-topbar-gender">
+      <button id="gender-toggle" class="icon-button gender-toggle" type="button" aria-pressed="false" aria-label="Female voice and avatar. Switch to male">
+        <span id="gender-toggle-letter" class="gender-letter" aria-hidden="true">F</span>
+      </button>
+    </div>
+
+    <header class="brand voice-logo" style="position: absolute; top: 0; left: 25%; transform: translateX(-50%);">
+      <img class="brand-logo" src="../../assets/mobitel-logo.png" alt="SLT Mobitel">
+    </header>
+
+    <div class="voice-stage">
+      <div id="bot-avatar" class="bot state-idle" aria-hidden="true">
+        <canvas id="bot-canvas" class="bot-canvas"></canvas>
+        <div class="bot-ring"></div>
+        <div class="bot-face">
+          <div class="bot-eye bot-eye-left"></div>
+          <div class="bot-eye bot-eye-right"></div>
+          <div class="bot-mouth"></div>
+        </div>
+        <div class="bot-waves">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+      <div id="captions-overlay" class="captions-overlay">
+        <p id="captions-text" class="captions-text">Welcome to SLT Mobitel. How can I help you today?</p>
+      </div>
+    </div>
+
+    <div class="voice-bottombar">
+      <button id="captions-toggle" class="icon-button caption-toggle" type="button" aria-pressed="true" aria-label="Toggle captions">
+        <svg class="icon" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+          <path d="M10.5 15a2.5 2.5 0 1 1 0-5c.7 0 1.3.3 1.8.7"></path>
+          <path d="M17.5 15a2.5 2.5 0 1 1 0-5c.7 0 1.3.3 1.8.7"></path>
+        </svg>
+      </button>
+      <button id="mic-toggle" class="icon-button mic-toggle" type="button" aria-pressed="false" aria-label="Start the conversation">
+        <svg id="mic-icon" class="icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+          <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
+          <line x1="12" y1="19" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+      </button>
+      <button id="end-chat-button" class="icon-button cut-button" type="button" aria-label="End the conversation">
+        <svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+  </section>
+
+  <div id="history-panel" class="modal-overlay hidden">
+    <div class="modal-card history-card">
+      <div class="history-header">
+        <h2>Conversation history</h2>
+        <button id="close-history" class="icon-button" type="button" aria-label="Close history">
+          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div id="transcript" class="transcript history-transcript">
+        <p class="hint">Your conversation will appear here as it happens.</p>
+      </div>
+    </div>
+  </div>
+
+  <section id="screen-chat" class="screen">
+    <main class="card">
+      <div id="chat-transcript" class="transcript chat-transcript">
+        <p class="hint">Type a message below to start chatting.</p>
+      </div>
+    </main>
+  </section>
+
+  <footer class="app-footer">
+    <p class="footer-credit">SLT Digital Lab, voice interaction prototype</p>
+  </footer>
+</main>
+
+<div class="demo-panel" id="demo-panel">
+  <button data-s="idle">idle</button><button data-s="listening">listen</button><button data-s="thinking">think</button>
+  <button data-s="speaking">speak</button><button data-s="error">error</button>
+  <input id="demo-level" type="range" min="0" max="1" step="0.05" value="0.5">
+  <input id="demo-mode" value="Cloud: Gemini">
+  <select id="demo-lang"><option>en</option><option>si</option><option>ta</option></select>
+</div>
+
+<script src="dashboard.js"></script>
+<script>
+/* Machine written Sinhala and Tamil, needs native speaker review. Stands in for SltI18n. */
+(function () {
+  var D = {
+    en: {},
+    si: {
+      "dashboard.more": "තව", "dashboard.captions": "උපසිරැසි", "dashboard.mic": "මයික්", "dashboard.end": "අවසන්",
+      "dashboard.history": "ඉතිහාසය", "dashboard.voice": "හඬ සහ අවතාරය", "dashboard.logout": "ඉවත් වන්න", "dashboard.theme": "තේමාව",
+      "dashboard.sound": "ආරම්භක ශබ්දය", "dashboard.sheet_close": "වසන්න", "dashboard.mode": "ක්‍රමය",
+      "empty.transcript": "ඔබේ සංවාදය මෙහි පෙන්වනු ඇත."
+    },
+    ta: {
+      "dashboard.more": "மேலும்", "dashboard.captions": "வசனங்கள்", "dashboard.mic": "மைக்", "dashboard.end": "முடிக்க",
+      "dashboard.history": "வரலாறு", "dashboard.voice": "குரலும் அவதாரும்", "dashboard.logout": "வெளியேறு", "dashboard.theme": "தீம்",
+      "dashboard.sound": "தொடக்க ஒலி", "dashboard.sheet_close": "மூடு", "dashboard.mode": "பயன்முறை",
+      "empty.transcript": "உங்கள் உரையாடல் இங்கே தோன்றும்."
+    }
+  };
+  var lang = "en";
+  window.SltI18n = {
+    t: function (k) { return (D[lang] && D[lang][k]) || k; },
+    language: function () { return lang; },
+    setLanguage: function (l) { lang = l; document.documentElement.lang = l; }
+  };
+})();
+
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var q = new URLSearchParams(location.search);
+  if (q.get("theme")) document.documentElement.setAttribute("data-theme", q.get("theme"));
+  if (q.get("lang")) window.SltI18n.setLanguage(q.get("lang"));
+
+  /* the same icons and handlers app.js gives the real page, reduced to the minimum */
+  var SUN = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>';
+  var MOON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+  function dark() { return document.documentElement.getAttribute("data-theme") === "dark"; }
+  function icon() { $("theme-toggle-icon").innerHTML = dark() ? SUN : MOON; }
+  icon();
+  $("theme-toggle").addEventListener("click", function () {
+    document.documentElement.setAttribute("data-theme", dark() ? "light" : "dark"); icon();
+  });
+  $("captions-toggle").addEventListener("click", function () {
+    var b = $("captions-toggle"), on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", String(on)); $("captions-overlay").classList.toggle("hidden", !on);
+  });
+  $("mic-toggle").addEventListener("click", function () {
+    var b = $("mic-toggle"); b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true"));
+  });
+  $("gender-toggle").addEventListener("click", function () {
+    var b = $("gender-toggle"), m = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", String(m)); $("gender-toggle-letter").textContent = m ? "M" : "F";
+    b.setAttribute("aria-label", m ? "Male voice and avatar. Switch to female" : "Female voice and avatar. Switch to male");
+  });
+  $("history-toggle").addEventListener("click", function () { $("history-panel").classList.remove("hidden"); });
+  $("close-history").addEventListener("click", function () { $("history-panel").classList.add("hidden"); });
+
+  /* same way app.js setStatus changes the avatar class */
+  window.demo = {
+    setStatus: function (s) {
+      var b = $("bot-avatar");
+      b.className = b.className.replace(/\bstate-\S+/, "").trim(); b.classList.add("state-" + s);
+    },
+    showChat: function () {
+      $("screen-voice").classList.remove("active"); $("screen-chat").classList.add("active");
+    },
+    showVoice: function () {
+      $("screen-chat").classList.remove("active"); $("screen-voice").classList.add("active");
+    }
+  };
+
+  document.documentElement.classList.add("ui-on");
+  if (window.SltUi && window.SltUi.dashboard) window.SltUi.dashboard.attach($("screen-voice"));
+
+  if (q.get("panel")) {
+    $("demo-panel").classList.add("on");
+    Array.prototype.forEach.call(document.querySelectorAll("#demo-panel [data-s]"), function (b) {
+      b.addEventListener("click", function () { window.demo.setStatus(b.getAttribute("data-s")); });
+    });
+    $("demo-level").addEventListener("input", function (e) { SltUi.dashboard.setLevel(e.target.value); });
+    $("demo-mode").addEventListener("change", function (e) { SltUi.dashboard.setMode(e.target.value); });
+    $("demo-lang").addEventListener("change", function (e) { window.SltI18n.setLanguage(e.target.value); });
+  }
+  if (q.get("mode") && window.SltUi && window.SltUi.dashboard) window.SltUi.dashboard.setMode(q.get("mode"));
+})();
+</script>
+</body>
+</html>
