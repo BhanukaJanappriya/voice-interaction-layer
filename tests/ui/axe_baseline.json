@@ -1,0 +1,52 @@
+{
+  "chat|dark": {},
+  "chat|light": {
+    "color-contrast": 2
+  },
+  "history|dark": {},
+  "history|light": {
+    "color-contrast": 1
+  },
+  "language|dark": {},
+  "language|light": {
+    "color-contrast": 1
+  },
+  "mic|dark": {},
+  "mic|light": {
+    "color-contrast": 1
+  },
+  "select|dark": {
+    "color-contrast": 1
+  },
+  "select|light": {
+    "color-contrast": 1
+  },
+  "user|dark": {
+    "color-contrast": 1
+  },
+  "user|light": {
+    "color-contrast": 1
+  },
+  "voice|dark": {},
+  "voice|light": {
+    "color-contrast": 1
+  },
+  "wizard1|dark": {
+    "color-contrast": 3
+  },
+  "wizard1|light": {
+    "color-contrast": 1
+  },
+  "wizard2|dark": {
+    "color-contrast": 1
+  },
+  "wizard2|light": {
+    "color-contrast": 1
+  },
+  "wizard3|dark": {
+    "color-contrast": 1
+  },
+  "wizard3|light": {
+    "color-contrast": 1
+  }
+}
