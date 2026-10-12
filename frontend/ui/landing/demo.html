@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Landing and loader demo</title>
+<link rel="stylesheet" href="../../style.css">
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="landing.css">
+<link rel="stylesheet" href="../loader/loader.css">
+<style>
+  .demo-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .demo-box { position: relative; min-height: 190px; border: 1px dashed var(--card-border); border-radius: 12px; }
+  button.demo { padding: 10px 16px; min-height: 44px; border-radius: 12px; border: 1px solid var(--card-border); background: var(--card); color: var(--text); font: inherit; }
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="card" style="padding:20px">
+    <h1>Landing and loader demo</h1>
+    <p>Add ?lang=si or ?lang=ta to the address. Add ?reset=1 to force the full 2.5 s version (a replay in the same session is the short one). The paths below load assets/mobitel-logo.png relative to the page, so open this page through a server rooted at the frontend folder: http://localhost:8021/ui/landing/demo.html</p>
+    <div class="demo-row">
+      <button class="demo" id="replay" type="button">Replay landing</button>
+      <button class="demo" id="toggle" type="button">Toggle loader (md)</button>
+      <button class="demo" id="toggle-sm" type="button">Toggle loader (sm)</button>
+    </div>
+    <p id="log" aria-live="polite"></p>
+    <div id="box" class="demo-box"></div>
+  </section>
+</main>
+<script src="../loader/loader.js"></script>
+<script src="landing.js"></script>
+<script>
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var lang = q.get("lang") || undefined;
+    if (q.get("reset")) { try { sessionStorage.removeItem("slt-landing-seen"); } catch (e) {} }
+    var log = document.getElementById("log");
+    function go() {
+      var t0 = performance.now();
+      window.__landingMs = null;
+      SltUi.landing.run({ language: lang }).then(function () {
+        window.__landingMs = Math.round(performance.now() - t0);
+        log.textContent = "Landing finished in " + window.__landingMs + " ms";
+      });
+    }
+    document.getElementById("replay").addEventListener("click", go);
+    var h = null;
+    var box = document.getElementById("box");
+    function tog(size) {
+      if (h) { h.hide(); h = null; return; }
+      h = SltUi.loader.show(box, { label: "Connecting...", size: size });
+    }
+    document.getElementById("toggle").addEventListener("click", function () { tog("md"); });
+    document.getElementById("toggle-sm").addEventListener("click", function () { tog("sm"); });
+    go();
+  })();
+</script>
+</body>
+</html>
