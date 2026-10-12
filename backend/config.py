@@ -312,6 +312,13 @@ VERIFY_RATE_LIMIT_PER_PHONE_PER_HOUR = _env_int("VERIFY_RATE_LIMIT_PER_PHONE_PER
 VERIFY_TICKET_MINUTES = _env_int("VERIFY_TICKET_MINUTES", 10)
 NAME_MATCH_REQUIRED = _env_bool("NAME_MATCH_REQUIRED", True)
 VERIFY_OTP_SENDER = os.environ.get("VERIFY_OTP_SENDER", "").strip().lower() or OTP_SENDER
+# Where the verification wizard finds a customer: "local" (the customer_directory
+# table) or "mcp_hub" (the hub tool named by MCP_HUB_CUSTOMER_LOOKUP_TOOL). The
+# default is local because the hub has no lookup tool today (docs/MCP_HUB.md);
+# choosing mcp_hub without that tool makes the wizard say "unavailable".
+CUSTOMER_DATA_SOURCE = os.environ.get("CUSTOMER_DATA_SOURCE", "local").strip().lower()
+if CUSTOMER_DATA_SOURCE not in ("local", "mcp_hub"):
+    CUSTOMER_DATA_SOURCE = "local"
 
 
 def livekit_configured() -> bool:

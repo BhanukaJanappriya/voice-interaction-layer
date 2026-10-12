@@ -43,7 +43,8 @@ from db.base import session_scope
 from otp import hashing, masking
 from otp.sender import OtpSender
 from verification import audit, senders
-from verification.lookup import CustomerDirectory, CustomerLookup, CustomerRecord
+from mcp_client.customer_lookup import CustomerLookupUnavailable, select_customer_lookup
+from verification.lookup import CustomerLookup, CustomerRecord
 from verification.models import PURPOSE, challenges, users
 from verification.namematch import names_match
 
@@ -123,7 +124,7 @@ class VerificationService:
         sender_resolver: Optional[Callable[[str], Optional[OtpSender]]] = None,
         clock: Callable[[], datetime] = utcnow,
     ):
-        self.directory: CustomerLookup = lookup or CustomerDirectory()
+        self.directory: CustomerLookup = lookup or select_customer_lookup()
         self._resolve_sender = sender_resolver or senders.sender_for
         self.clock = clock  # injectable, so tests can move time
         self._lock = threading.Lock()
@@ -162,8 +163,8 @@ class VerificationService:
                     extra={"tel": phone_e164, "lang": chosen},
                 )
                 audit.record("lookup", "ok" if ok else "invalid_details", now, phone_hash, ip_hash)
-        except SQLAlchemyError as exc:
-            print(f"VERIFY lookup failed: database error {type(exc).__name__}")
+        except (SQLAlchemyError, CustomerLookupUnavailable) as exc:
+            print(f"VERIFY lookup failed: {type(exc).__name__}")
             raise VerifyError("unavailable") from None
         if not ok:
             raise VerifyError("invalid_details")
