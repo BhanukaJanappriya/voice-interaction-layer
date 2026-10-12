@@ -1,0 +1,68 @@
+/* Motion and glow tokens for the UI layer (docs/UI_PLAN.md section 2).
+ * Loaded after style.css. Nothing here changes an existing rule: it only
+ * defines new custom properties and a few helper classes scoped to .ui-on.
+ * Colors derive from --blue (#2f6fed) and --green (#43a047) as rgb triplets,
+ * so no new brand color is introduced. Dark values follow style.css: the
+ * prefers-color-scheme block (unless the user forced light) and the explicit
+ * [data-theme="dark"] override. */
+
+:root {
+  --glow-color: 47 111 237;
+  --glow-color-2: 67 160 71;
+  --glow-soft: 0 0 24px rgb(var(--glow-color) / 0.35);
+  --glow-strong: 0 0 40px rgb(var(--glow-color) / 0.55), 0 0 90px rgb(var(--glow-color-2) / 0.25);
+  --grad-brand: linear-gradient(135deg, var(--blue), var(--green));
+  --grad-stream: linear-gradient(90deg, transparent, rgb(var(--glow-color) / 0.8), rgb(var(--glow-color-2) / 0.8), transparent);
+  --dur-fast: 120ms;
+  --dur-med: 240ms;
+  --dur-slow: 480ms;
+  --dur-intro: 2200ms;
+  --ease-out: cubic-bezier(0.22, 0.8, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --badge-bg: rgb(var(--glow-color) / 0.12);
+  --badge-ring: rgb(var(--glow-color) / 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --glow-soft: 0 0 24px rgb(var(--glow-color) / 0.45);
+    --glow-strong: 0 0 40px rgb(var(--glow-color) / 0.65), 0 0 90px rgb(var(--glow-color-2) / 0.32);
+    --badge-bg: rgb(var(--glow-color) / 0.22);
+    --badge-ring: rgb(var(--glow-color) / 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  --glow-soft: 0 0 24px rgb(var(--glow-color) / 0.45);
+  --glow-strong: 0 0 40px rgb(var(--glow-color) / 0.65), 0 0 90px rgb(var(--glow-color-2) / 0.32);
+  --badge-bg: rgb(var(--glow-color) / 0.22);
+  --badge-ring: rgb(var(--glow-color) / 0.5);
+}
+
+/* Helpers, only active once the bootstrap added .ui-on to the root. */
+.ui-on .ui-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ui-on .ui-brand-text {
+  background: var(--grad-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-on .ui-motion {
+    animation: none !important;
+    transition: none !important;
+  }
+}
