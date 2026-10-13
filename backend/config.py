@@ -339,6 +339,28 @@ CUSTOMER_DATA_TO_CLOUD_LLM = _env_bool("CUSTOMER_DATA_TO_CLOUD_LLM", False)
 CUSTOMER_TOOLS_BUDGET_SECONDS = _env_float("CUSTOMER_TOOLS_BUDGET_SECONDS", 8.0)
 CUSTOMER_TOOLS_MAX_CHARS = _env_int("CUSTOMER_TOOLS_MAX_CHARS", 6000)
 
+# MCP hub as the only source for SLT answers (docs/MCP_INTEGRATION_PLAN.md).
+# ANSWER_SOURCE=mcp_hub: SLT questions are answered only from hub tool results
+# (the old local knowledge base and the model's own knowledge are not used for
+# SLT facts). Any other value keeps the earlier behaviour.
+ANSWER_SOURCE = os.environ.get("ANSWER_SOURCE", "mcp_hub").strip().lower()
+TOOL_ACCESS_PATH = os.environ.get("TOOL_ACCESS_PATH", "") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "tool_access.yaml"
+)
+# The hub's login belongs to one open connection, so each verified customer
+# keeps one. Idle ones are closed after HUB_SESSION_IDLE_SECONDS.
+HUB_SESSION_IDLE_SECONDS = _env_int("HUB_SESSION_IDLE_SECONDS", 900)
+HUB_SESSION_MAX = _env_int("HUB_SESSION_MAX", 50)
+EXPOSE_LATENCY_TOOL = _env_bool("EXPOSE_LATENCY_TOOL", False)
+# Knowledge base chunks below this score are treated as "not found" (the hub's
+# own scores run 0 to 1; a clear hit was seen at 0.44).
+KB_MIN_SCORE = _env_float("KB_MIN_SCORE", 0.25)
+KB_MAX_CHARS = _env_int("KB_MAX_CHARS", 4000)
+# Buying, subscribing and logging a fault. Off until the owner has approved a
+# live test; when on, each one still needs a confirmed pending action.
+STATE_CHANGING_TOOLS_ENABLED = _env_bool("STATE_CHANGING_TOOLS_ENABLED", False)
+CONFIRMATION_TTL_SECONDS = _env_int("CONFIRMATION_TTL_SECONDS", 60)
+
 
 def livekit_configured() -> bool:
     """True when a LiveKit URL, key and secret are all present (no network call)."""

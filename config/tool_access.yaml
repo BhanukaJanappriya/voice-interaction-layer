@@ -1,0 +1,67 @@
+# Which hub tools each kind of session may use. Read by backend/mcp_gateway at
+# start up; edit and restart, no code change needed. A tool that is not listed
+# in the session's tier is refused by the gateway on the server, whatever the
+# model asks for. "service_types" narrows the authenticated tier further: a
+# tool listed there is hidden from customers whose service type is not named.
+# Service types: postpaid (also fibre and copper), lte_prepaid, unknown.
+tiers:
+  guest:
+    - search_knowledgebase_tool
+  authenticating:
+    # Called only by the wizard endpoints, never offered to a model.
+    - validate_customer_and_send_otp
+    - verify_otp_and_authenticate
+  authenticated:
+    - show_gb_balance
+    - show_extra_gb_packages
+    - purchase_extra_gb
+    - show_daily_usage
+    - show_bill_history
+    - show_last_payment
+    - show_vas_data_bundle_packages
+    - add_vas_data_bundle
+    - show_service_detail
+    - show_fault_list
+    - log_fault
+    - show_lte_subscriber_status
+    - show_lte_wallet_detail
+    - show_lte_purchased_packages
+    - show_reload_history
+    - show_lte_prepaid_package_list
+    - subscribe_lte_prepaid_package
+    - search_knowledgebase_tool
+    - compare_package
+  diagnostic:
+    # Admin page and /health only. Customers get it only with EXPOSE_LATENCY_TOOL=true.
+    - get_function_latencies
+  never:
+    # The hub renews tokens itself; seeding a session from tokens is not used.
+    - authenticate_with_token
+    - refresh_customer_token
+
+service_types:
+  postpaid:
+    - show_gb_balance
+    - show_extra_gb_packages
+    - purchase_extra_gb
+    - show_daily_usage
+    - show_bill_history
+    - show_last_payment
+    - show_vas_data_bundle_packages
+    - add_vas_data_bundle
+  lte_prepaid:
+    - show_lte_subscriber_status
+    - show_lte_wallet_detail
+    - show_lte_purchased_packages
+    - show_reload_history
+    - show_lte_prepaid_package_list
+    - subscribe_lte_prepaid_package
+  # Tools not named under any service type are common to all of them.
+
+# Tools that change an account or cost money. They need a confirmed pending
+# action and are never retried.
+state_changing:
+  - purchase_extra_gb
+  - add_vas_data_bundle
+  - subscribe_lte_prepaid_package
+  - log_fault
