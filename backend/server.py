@@ -150,6 +150,11 @@ retriever = get_retriever()
 # The MCP hub's search tool adds to the knowledge base notes, never replaces
 # them: retrieval runs first and a hub failure leaves its output untouched.
 _tool_callback = compose_tool_callbacks(retriever.context_for, hub_context_for)
+if config.ANSWER_SOURCE == "mcp_hub":
+    # The MCP hub is the only source of SLT facts: the tool agent fetches them
+    # before the model runs (agent.py), so the local knowledge base and the
+    # hub notes callback are not used for the assistant's answers.
+    _tool_callback = None
 orchestrator = Orchestrator(
     tool_callback=_tool_callback,
     external_agent_provider=admin_service.get_active_agent,
@@ -294,6 +299,9 @@ if config.VERIFY_ENABLED:
 
     app.include_router(verification_router)
 app.include_router(admin_router)
+from confirmations.routes import router as confirm_router  # noqa: E402  (confirm modal endpoints, /confirm)
+
+app.include_router(confirm_router)
 
 # Additive routers: the LiveKit token endpoint (/api/livekit) and voicekit,
 # the reusable text to speech API (/api/tts/stream, /ws/tts), which refuses
@@ -601,8 +609,18 @@ async def _run_one_utterance(
     return final_text, final_language, session_ended
 
 
+def _status_text(key: Optional[str], language: Optional[str]) -> Optional[str]:
+    """The localized status line for a tool_agent status key, or None."""
+    if not key:
+        return None
+    from i18n import t
+
+    text = t(key, language)
+    return None if text == key else text
+
+
 async def _stream_agent_reply(
-    text_input: str, user_name: Optional[str], language: Optional[str], access=None
+    text_input: str, user_name: Optional[str], language: Optional[str], access=None, websocket=None
 ):
     """Runs orchestrator.respond_stream() (agent.py) on a background
     thread and yields each text chunk as it arrives, bridged into the
@@ -616,9 +634,19 @@ async def _stream_agent_reply(
     loop = asyncio.get_running_loop()
     chunk_queue: "asyncio.Queue" = asyncio.Queue()
 
+    def _status(key: str) -> None:
+        # Keeps the "thinking" state and says what is being checked.
+        if websocket is None:
+            return
+        detail = _status_text(key, language)
+        if detail:
+            asyncio.run_coroutine_threadsafe(
+                _send_json(websocket, {"type": "status", "state": "thinking", "detail": detail}), loop
+            )
+
     def _worker():
         try:
-            for chunk in orchestrator.respond_stream(text_input, user_name, language, access=access):
+            for chunk in orchestrator.respond_stream(text_input, user_name, language, access=access, status_cb=_status):
                 loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
         except Exception as exc:
             loop.call_soon_threadsafe(chunk_queue.put_nowait, exc)
@@ -636,6 +664,34 @@ async def _stream_agent_reply(
         yield item
 
 
+def _for_speech(sentence: str, language: Optional[str], announcer=None) -> str:
+    """The wording sent to TTS: amounts and units spelled out the way a person
+    says them (tool_agent.voice). The transcript keeps the written sentence."""
+    if config.ANSWER_SOURCE != "mcp_hub":
+        return sentence
+    try:
+        from tool_agent import for_speech
+
+        spoken = for_speech(sentence, language or "en")
+    except Exception:  # noqa: BLE001  speech wording must never cost the reply
+        return sentence
+    if announcer is not None and spoken != sentence:
+        announcer.written[spoken] = sentence
+    return spoken
+
+
+def _pending_confirmation(access) -> Optional[dict]:
+    """The browser safe view of the customer's pending action, or None."""
+    if access is None or not getattr(access, "is_verified", False):
+        return None
+    try:
+        import confirmations
+
+        return confirmations.pending_for(access)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class _SentenceAnnouncer:
     """Passed to tts.speak_stream() as on_sentence_start. It runs on the
     TTS playback thread, right before each sentence's audio starts, and
@@ -649,8 +705,12 @@ class _SentenceAnnouncer:
         self._websocket = websocket
         self._loop = loop
         self.first_audio_at: Optional[float] = None
+        # Spoken wording (tool_agent.for_speech) back to the written sentence,
+        # so the transcript and captions keep the original text.
+        self.written: dict = {}
 
     def __call__(self, sentence: str):
+        sentence = self.written.pop(sentence, sentence)
         messages = []
         if self.first_audio_at is None:
             self.first_audio_at = time.time()
@@ -735,23 +795,29 @@ async def _speak_streamed_reply(
     agent_start = time.time()
     reply_text = ""
     try:
-        async for chunk in _stream_agent_reply(text_input, user_name, language, access):
+        async for chunk in _stream_agent_reply(text_input, user_name, language, access, websocket):
             reply_text += chunk
             await _send_json(websocket, {"type": "agent_response_chunk", "text": reply_text})
             for sentence in chunker.feed(chunk):
-                sentence_source.put(sentence)
+                sentence_source.put(_for_speech(sentence, language, announcer))
     except Exception as exc:
         await _send_json(websocket, {"type": "error", "message": f"Agent error: {exc}"})
     finally:
         for sentence in chunker.flush():
-            sentence_source.put(sentence)
+            sentence_source.put(_for_speech(sentence, language, announcer))
         sentence_source.close()
     agent_time = time.time() - agent_start
 
     if reply_text:
-        await _send_json(
-            websocket, {"type": "agent_response", "text": reply_text, "mode": orchestrator.last_mode}
-        )
+        message = {"type": "agent_response", "text": reply_text, "mode": orchestrator.last_mode}
+        if getattr(orchestrator, "last_timings", None):
+            message["timings"] = dict(orchestrator.last_timings)
+        if getattr(orchestrator, "last_expired", False):
+            message["expired"] = True
+        await _send_json(websocket, message)
+        pending = await asyncio.to_thread(_pending_confirmation, access)
+        if pending:
+            await _send_json(websocket, {"type": "confirmation", "confirmation": pending})
 
     try:
         await tts_task
@@ -921,9 +987,17 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     mode: str
+    # Additive fields: the customer's pending action for the confirmation modal
+    # (no tokens of the hub, only the one time id), whether their hub login
+    # ended, and the tool and model time of this turn in milliseconds.
+    # They are left out of the JSON unless they have a value, so the earlier
+    # {reply, mode} shape is unchanged for every ordinary turn.
+    confirmation: Optional[dict] = None
+    expired: Optional[bool] = None
+    timings: Optional[dict] = None
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat", response_model=ChatResponse, response_model_exclude_none=True)
 async def chat(request: ChatRequest, http_request: Request):
     """Text only alternative to the voice pipeline, for the frontend's
     Start Chat screen. Runs the same Orchestrator the voice flow uses (so
@@ -947,7 +1021,43 @@ async def chat(request: ChatRequest, http_request: Request):
         None,
         functools.partial(orchestrator.respond, request.text, user_name, request.language, access=access_context),
     )
-    return ChatResponse(reply=reply, mode=orchestrator.last_mode)
+    pending = await asyncio.to_thread(_pending_confirmation, access_context)
+    return ChatResponse(
+        reply=reply,
+        mode=orchestrator.last_mode,
+        confirmation=pending,
+        expired=True if getattr(orchestrator, "last_expired", False) else None,
+        timings=dict(getattr(orchestrator, "last_timings", None) or {}) or None,
+    )
+
+
+def _answers_status() -> dict:
+    status = {"source": config.ANSWER_SOURCE, "state_changing_tools": config.STATE_CHANGING_TOOLS_ENABLED}
+    try:
+        import mcp_gateway
+        import tool_agent
+
+        status["gateway"] = mcp_gateway.status()
+        status["tool_agent"] = tool_agent.stats()
+        status["tool_latency_classes"] = _latency_classes()
+    except Exception as exc:  # noqa: BLE001  /health must always answer
+        status["error"] = type(exc).__name__
+    return status
+
+
+_latency_cache: dict = {"at": 0.0, "value": None}
+
+
+def _latency_classes() -> Optional[dict]:
+    """The hub's get_function_latencies answer (a static classification, not a
+    measurement), cached for 5 minutes so /health stays cheap."""
+    if _latency_cache["at"] and time.monotonic() - _latency_cache["at"] < 300:
+        return _latency_cache["value"]
+    import mcp_gateway
+
+    value = mcp_gateway.latencies() or None
+    _latency_cache.update(at=time.monotonic(), value=value)  # a failure is cached too
+    return value
 
 
 @app.get("/health")
@@ -979,6 +1089,11 @@ async def health():
             "data_to_cloud_llm": config.CUSTOMER_DATA_TO_CLOUD_LLM,
             "data_source": config.CUSTOMER_DATA_SOURCE,
         },
+        # The hub as the only source of SLT answers: the gateway (open customer
+        # connections, last error, access matrix loaded), the tool agent's
+        # per turn tool time, the static latency classes the hub publishes, and
+        # whether buying or fault logging is switched on.
+        "answers": await asyncio.to_thread(_answers_status),
         "cloud_speech_configured": config.cloud_speech_configured(),
         "cloud_speech_provider": config.CLOUD_SPEECH_PROVIDER,
         "supported_languages": config.SUPPORTED_LANGUAGES,

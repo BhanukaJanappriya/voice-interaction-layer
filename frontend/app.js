@@ -800,6 +800,13 @@ function handleServerMessage(event) {
   switch (payload.type) {
     case "status":
       setStatus(payload.state);
+      // While the hub is being asked the server adds a short line such as
+      // "Checking your balance"; it clears as soon as the state changes.
+      if (window.SLTConfirm) SLTConfirm.setStatus(payload.state === "thinking" && payload.detail ? payload.detail : null);
+      break;
+    case "confirmation":
+      // A purchase or fault report waits for the customer's answer (modal).
+      if (window.SLTConfirm && payload.confirmation) SLTConfirm.show(payload.confirmation);
       break;
     case "partial_transcript":
       updateOrAddPartial(payload.text, payload.language);
@@ -812,6 +819,7 @@ function handleServerMessage(event) {
       break;
     case "agent_response":
       finalizeStreamingReply(payload.text, payload.mode);
+      if (window.SLTConfirm) SLTConfirm.setStatus(null);
       if (window.SltUi && window.SltUi.dashboard && payload.mode) {
         try { window.SltUi.dashboard.setMode(payload.mode); } catch (err) { /* decoration only */ }
       }
@@ -1341,6 +1349,10 @@ if (chatForm) {
       typingBubble.remove();
       addBubble("assistant", data.reply, data.mode, chatTranscript);
       setChatModeBadge(data.mode);
+      if (window.SLTConfirm) {
+        if (data.confirmation) SLTConfirm.show(data.confirmation);
+        else SLTConfirm.hide();
+      }
     } catch (err) {
       typingBubble.remove();
       addBubble("assistant", `Error: could not reach the backend (${err.message}).`, null, chatTranscript);
@@ -1350,3 +1362,10 @@ if (chatForm) {
     }
   });
 }
+
+// The answer to a confirmation (executed, cancelled, expired or failed) joins
+// the transcript with the hub's own wording. See ui/confirm/confirm.js.
+document.addEventListener("slt:confirmation-result", function (event) {
+  var detail = (event && event.detail) || {};
+  if (detail.text) addBubble("assistant", detail.text, null, chatTranscript);
+});

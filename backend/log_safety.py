@@ -23,8 +23,15 @@ SENSITIVE_LOGGERS = (
 )
 
 
+# The HTTP clients log the hub's transport address ("POST .../messages/?session_id=...")
+# at INFO on every call. That id is a handle to a customer's open hub connection, so
+# these stay quiet below WARNING.
+QUIET_LOGGERS = ("httpx", "httpx2", "httpcore", "httpcore2")
+
+
 def cap_sensitive_loggers(level: int = logging.INFO) -> None:
     for name in SENSITIVE_LOGGERS:
         logger = logging.getLogger(name)
-        if logger.level == logging.NOTSET or logger.level < level:
-            logger.setLevel(level)
+        wanted = max(level, logging.WARNING) if name in QUIET_LOGGERS else level
+        if logger.level == logging.NOTSET or logger.level < wanted:
+            logger.setLevel(wanted)

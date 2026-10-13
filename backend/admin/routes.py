@@ -303,3 +303,22 @@ def list_audit(limit: int = Query(100, ge=1, le=500)):
         )
         for entry in entries
     ]
+
+
+@router.get("/hub")
+def hub_gateway():
+    """For the admin page: the MCP gateway's state (open customer connections,
+    last error), the hub's own latency classes per tool (get_function_latencies,
+    a static classification meant for operators, not customers), the tool agent's
+    per turn tool time, and the last gateway calls (tool, outcome, milliseconds;
+    never arguments, results or numbers)."""
+    import mcp_gateway
+    import tool_agent
+    from mcp_gateway import audit
+
+    return {
+        "gateway": mcp_gateway.status(),
+        "tool_latency_classes": mcp_gateway.latencies() or None,
+        "tool_agent": tool_agent.stats(),
+        "recent_calls": audit.recent(),
+    }

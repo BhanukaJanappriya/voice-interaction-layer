@@ -555,6 +555,8 @@ class Orchestrator(ChatAgent):
         self.external_agent_provider = external_agent_provider
         self.local_agent = LlamaOllamaAgent(tool_callback=tool_callback)
         self.last_mode: str = "unknown"
+        self.last_expired = False  # the last reply was a "your session ended" notice
+        self.last_timings: dict = {}  # tool_ms and llm_ms of the last hub grounded turn
         # Circuit breaker: after a cloud failure, go straight to the local
         # agent until this time instead of paying for another failing
         # cloud call (and its timeout) on every turn. A dead key or used up
@@ -591,12 +593,22 @@ class Orchestrator(ChatAgent):
                 print(f"Agent warm up: cloud unavailable ({exc}); using the local agent for now.")
 
     def respond(
-        self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None, access=None
+        self,
+        text_input: str,
+        user_name: Optional[str] = None,
+        language: Optional[str] = None,
+        access=None,
+        status_cb=None,
     ) -> str:
-        return "".join(self.respond_stream(text_input, user_name, language, access)).strip()
+        return "".join(self.respond_stream(text_input, user_name, language, access, status_cb)).strip()
 
     def respond_stream(
-        self, text_input: str, user_name: Optional[str] = None, language: Optional[str] = None, access=None
+        self,
+        text_input: str,
+        user_name: Optional[str] = None,
+        language: Optional[str] = None,
+        access=None,
+        status_cb=None,
     ) -> Iterator[str]:
         """Yields the reply in pieces as it is generated, on both the cloud
         and the local path, so the voice pipeline can start speaking the
@@ -615,15 +627,34 @@ class Orchestrator(ChatAgent):
 
         access is an access.AccessContext (None means guest). When access
         control is on, a guest asking for customer service gets the canned
-        translated dial message and no model is called at all."""
+        translated dial message and no model is called at all.
+
+        With ANSWER_SOURCE=mcp_hub (the default) SLT facts come only from the
+        hub: tool_agent.prepare fetches them first, a missing answer or a
+        hub outage is a fixed translated reply with no model, and the
+        old retrieval and an external agent are not used for SLT questions.
+        status_cb(key) is told which short status line to show while the hub
+        is being asked."""
+        self.last_expired = False
+        self.last_timings = {}
         blocked = self._blocked_reply(text_input, language, access)
         if blocked is not None:
             self.last_mode = "access policy (canned reply)"
+            self.last_expired = bool(getattr(access, "session_expired", False))
             print(f"Orchestrator mode: {self.last_mode}")
             yield blocked
             return
 
-        external_agent = self._active_external_agent()
+        plan = self._hub_plan(text_input, user_name, language, access, status_cb)
+        if plan is not None and plan.kind == "canned":
+            self.last_mode = "SLT hub (fixed reply)"
+            self.last_expired = bool(plan.expired)
+            self.last_timings = {}
+            print(f"Orchestrator mode: {self.last_mode}")
+            yield plan.canned
+            return
+
+        external_agent = None if plan is not None else self._active_external_agent()
         if external_agent is not None:
             external_stream = external_agent.respond_stream(text_input, user_name, language)
             try:
@@ -647,11 +678,22 @@ class Orchestrator(ChatAgent):
                 return
 
         if config.LLM_CHAIN:
-            yield from self._stream_chain(text_input, user_name, language, access)
+            yield from self._stream_chain(text_input, user_name, language, access, plan)
             return
 
+        # No chain: the older cloud then local path. Hub data travels in the
+        # message, and a private turn (customer data) never goes to the cloud.
+        suffix = ""
+        private = False
+        if plan is not None:
+            text_input = self._with_plan(text_input, plan)
+            suffix = plan.mode_suffix or ""
+            private = bool(plan.private)
+
         cloud_paused_for = self._cloud_retry_at - time.monotonic()
-        if config.cloud_llm_configured() and cloud_paused_for > 0:
+        if private:
+            print("Orchestrator: customer data in this turn, the cloud path is skipped.")
+        elif config.cloud_llm_configured() and cloud_paused_for > 0:
             print(f"Orchestrator: cloud failed recently, skipping it for another {cloud_paused_for:.0f}s.")
         elif config.cloud_llm_configured():
             cloud_stream = self._stream_cloud(text_input, user_name, language)
@@ -663,7 +705,7 @@ class Orchestrator(ChatAgent):
                 print(f"Orchestrator: cloud path unavailable ({exc}), falling back to local agent alone.")
             else:
                 self.last_cloud_error = None
-                self.last_mode = f"cloud multi agent ({config.CLOUD_LLM_PROVIDER})"
+                self.last_mode = f"cloud multi agent ({config.CLOUD_LLM_PROVIDER})" + suffix
                 print(f"Orchestrator mode: {self.last_mode}")
                 yield first_chunk
                 try:
@@ -675,7 +717,7 @@ class Orchestrator(ChatAgent):
         else:
             print("Orchestrator: no cloud LLM provider configured, using local agent alone.")
 
-        self.last_mode = "local single agent (Llama via Ollama)"
+        self.last_mode = "local single agent (Llama via Ollama)" + suffix
         print(f"Orchestrator mode: {self.last_mode}")
         yield from self.local_agent.respond_stream(text_input, user_name, language)
 
@@ -693,7 +735,44 @@ class Orchestrator(ChatAgent):
         except Exception as exc:  # noqa: BLE001
             print(f"Orchestrator: access guard failed ({type(exc).__name__}), treating the request as blocked.")
             return blocked_reply(language)
-        return None if decision.allowed else blocked_reply(language)
+        if decision.allowed:
+            return None
+        if getattr(access, "session_expired", False):
+            # Their hub login ended: say so and offer to verify again.
+            from access import expired_reply
+
+            return expired_reply(language)
+        return blocked_reply(language)
+
+    @staticmethod
+    def _hub_plan(text_input: str, user_name: Optional[str], language: Optional[str], access, status_cb=None):
+        """The tool agent's plan (backend/tool_agent) when ANSWER_SOURCE is
+        mcp_hub, else None. Blocking: respond_stream runs on a worker thread.
+        It never raises; if it somehow does, the answer is the fixed
+        "temporarily unavailable" text, never a model guess about SLT."""
+        if config.ANSWER_SOURCE != "mcp_hub":
+            return None
+        try:
+            import tool_agent
+
+            return tool_agent.prepare(text_input, language, access, user_name, on_status=status_cb)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Orchestrator: tool agent failed ({type(exc).__name__}), answering with the fixed unavailable text.")
+            from tool_agent.messages import dial_text
+            from tool_agent.plan import CANNED, TurnPlan
+
+            return TurnPlan(CANNED, canned=dial_text("tool_agent.hub_unavailable", language))
+
+    @staticmethod
+    def _with_plan(text: str, plan) -> str:
+        """The user's words plus the grounding clause and the hub data. The
+        local model builds its own system prompt, so instructions and data
+        travel in the message."""
+        if plan.clause:
+            text += f"\n\n{plan.clause}"
+        if plan.kind == "grounded" and plan.context:
+            text += f"\n\nInformation from the SLT systems (the only source for SLT facts):\n{plan.context}"
+        return text
 
     @property
     def chain(self):
@@ -706,7 +785,7 @@ class Orchestrator(ChatAgent):
         return self._chain
 
     def _stream_chain(
-        self, text_input: str, user_name: Optional[str], language: Optional[str], access
+        self, text_input: str, user_name: Optional[str], language: Optional[str], access, plan=None
     ) -> Iterator[str]:
         """One turn through Gemini, LiveKit Inference and local Llama in the
         order of LLM_CHAIN, each with its own breaker (llm_chain/chain.py)."""
@@ -716,7 +795,7 @@ class Orchestrator(ChatAgent):
         # Account data for a verified customer (hub tools, read only). A missing
         # sign in or an unreachable hub is answered with fixed translated text and
         # no model, so a model can never make up account details.
-        outcome = self._customer_outcome(text_input, language, access)
+        outcome = None if plan is not None else self._customer_outcome(text_input, language, access)
         if outcome is not None and outcome.kind in ("reauth", "unavailable"):
             self.last_mode = "account data unavailable (fixed reply)"
             print(f"Orchestrator mode: {self.last_mode}")
@@ -739,6 +818,10 @@ class Orchestrator(ChatAgent):
             text += f"\n\nKnowledge base excerpts (from the tool/retrieval stage):\n{tool_context}"
         private = False
         suffix = ""
+        if plan is not None:
+            text = self._with_plan(text, plan)
+            private = bool(plan.private)
+            suffix = plan.mode_suffix or ""
         if outcome is not None and outcome.kind == "data":
             from customer_service import system_clause
 
@@ -761,6 +844,7 @@ class Orchestrator(ChatAgent):
         )
         chain = self.chain
         first = True
+        llm_started = time.perf_counter()
         for piece in chain.stream(turn):
             if first:
                 first = False
@@ -768,6 +852,12 @@ class Orchestrator(ChatAgent):
                 print(f"Orchestrator mode: {self.last_mode}")
             yield piece
         self.last_mode = chain.last_mode + suffix
+        if plan is not None and plan.kind == "grounded":
+            self.last_timings = {
+                "tool_ms": int((plan.timings or {}).get("tool_ms", 0)),
+                "llm_ms": int((time.perf_counter() - llm_started) * 1000),
+            }
+            print(f"Orchestrator timing: tool_ms={self.last_timings['tool_ms']} llm_ms={self.last_timings['llm_ms']}")
 
     @staticmethod
     def _customer_outcome(text_input: str, language: Optional[str], access):
