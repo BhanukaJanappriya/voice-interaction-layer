@@ -36,6 +36,9 @@ class Turn:
     user_name: Optional[str] = None
     language: Optional[str] = None
     tool_context: Optional[str] = None
+    # True when the text carries a customer's account data: only tiers that run on
+    # this machine may see it (see config.CUSTOMER_DATA_TO_CLOUD_LLM).
+    private: bool = False
 
 
 def _cloud_prompts(turn: Turn) -> tuple[str, str]:
@@ -71,6 +74,8 @@ def _guarded(pieces: Iterator[str]) -> Iterator[str]:
 
 class Tier(ABC):
     name: str = ""
+    # False only for a model that runs on this machine.
+    cloud: bool = True
 
     @abstractmethod
     def label(self) -> str:
@@ -150,6 +155,7 @@ class LocalTier(Tier):
     spoken to the user rather than falling further."""
 
     name = LOCAL
+    cloud = False
 
     def __init__(self, agent_factory: Optional[Callable[[Turn], object]] = None):
         self._agent_factory = agent_factory

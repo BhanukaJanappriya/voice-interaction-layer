@@ -539,3 +539,16 @@ def test_probe_all_with_real_tiers_uses_the_agents_and_never_the_network(monkeyp
     assert status["tiers"]["livekit"]["state"] == "not_configured"
     assert status["tiers"]["local"]["last_error"]
     assert status["tiers"]["local"]["state"] == "ready"  # local never trips
+
+
+def test_private_turn_never_reaches_a_cloud_tier(monkeypatch):
+    """A turn that carries customer data is answered by the local tier only,
+    and skipping the cloud tiers is not a failure (no breaker, no error)."""
+    s = Scenario(monkeypatch)
+    out = "".join(s.chain.stream(Turn(text="What is my balance?", private=True)))
+    assert out == "local reply"
+    assert s.hits() == {"gemini": 0, "livekit": 0, "local": 1}
+    assert s.chain.last_mode == "local single agent (Llama via Ollama)"
+    assert not any(b.open() for b in s.chain.breakers.values())
+    # a normal turn afterwards still starts with the first tier
+    assert s.run() == "G1G2"

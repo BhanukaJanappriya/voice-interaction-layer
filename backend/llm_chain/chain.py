@@ -86,6 +86,11 @@ class LlmChain:
             breaker = self.breakers[name]
             last_resort = name == LOCAL
 
+            if turn.private and tier.cloud:
+                # Customer account data never goes to a hosted model. This is not
+                # a failure, so the tier's error and breaker are left alone.
+                print(f"LLM chain: skipping {name}, this turn carries customer data.")
+                continue
             if not tier.configured():
                 self._record_error(name, _NOT_CONFIGURED)
                 continue
