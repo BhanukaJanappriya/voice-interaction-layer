@@ -320,6 +320,25 @@ CUSTOMER_DATA_SOURCE = os.environ.get("CUSTOMER_DATA_SOURCE", "local").strip().l
 if CUSTOMER_DATA_SOURCE not in ("local", "mcp_hub"):
     CUSTOMER_DATA_SOURCE = "local"
 
+# Which one time code backend the wizard uses: "local" (our own code, HMAC,
+# 120 s) or "hub" (the hub's validate_customer_and_send_otp and
+# verify_otp_and_authenticate, which also authenticates the hub session that the
+# customer tools need). Our own limits (120 s, 3 attempts, single use, resend
+# wait) are applied on top in both modes. Default local: hub mode sends a real SMS
+# to a real customer on every run.
+VERIFY_OTP_BACKEND = os.environ.get("VERIFY_OTP_BACKEND", "local").strip().lower()
+if VERIFY_OTP_BACKEND not in ("local", "hub"):
+    VERIFY_OTP_BACKEND = "local"
+
+# Account answers for verified customers through the hub's read only customer
+# tools (backend/customer_service). Customer data is only given to the local
+# model unless CUSTOMER_DATA_TO_CLOUD_LLM is true. Tools that change an account
+# (purchases, subscriptions, logging a fault) are not offered at all.
+CUSTOMER_TOOLS_ENABLED = _env_bool("CUSTOMER_TOOLS_ENABLED", True)
+CUSTOMER_DATA_TO_CLOUD_LLM = _env_bool("CUSTOMER_DATA_TO_CLOUD_LLM", False)
+CUSTOMER_TOOLS_BUDGET_SECONDS = _env_float("CUSTOMER_TOOLS_BUDGET_SECONDS", 8.0)
+CUSTOMER_TOOLS_MAX_CHARS = _env_int("CUSTOMER_TOOLS_MAX_CHARS", 6000)
+
 
 def livekit_configured() -> bool:
     """True when a LiveKit URL, key and secret are all present (no network call)."""
