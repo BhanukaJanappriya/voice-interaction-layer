@@ -1,7 +1,8 @@
 """Hub mode of the verification wizard (plan 4.3, VERIFY_OTP_BACKEND=hub).
 
-The hub is the local mock (mcp_client.mock_hub): it never sends a real SMS and
-no network beyond 127.0.0.1 is used. Time moves through the service's
+The hub is the local mock (mcp_client.mock_hub, customer_tools mode, which ties
+a login to one connection like the real hub) driven through mcp_gateway: it
+never sends a real SMS and no network beyond 127.0.0.1 is used. Time moves through the service's
 injectable clock, so the 120 second expiry is checked on the server clock
 even though the mock hub would still accept the code.
 """
@@ -86,7 +87,7 @@ def clock():
 @pytest.fixture(scope="module")
 def mock_hub(verification):
     mock = require_module("mcp_client.mock_hub")
-    server = mock.MockHub(mode="sse", path="/mcp", api_key=KEY)
+    server = mock.MockHub(mode="sse", path="/mcp", api_key=KEY, customer_tools=True)
     server.start()
     yield server
     server.stop()
@@ -105,11 +106,20 @@ def hub(mock_hub):
     mock_hub.tool_calls.clear()
     mock_hub.fail_next = 0
     mock_hub.otp_code = "123456"
-    mock_hub.otp_session_key = "session_id"
-    mock_hub.otp_masked_in_response = True
+    mock_hub.authenticated.clear()
+    mock_hub.connection_auth.clear()
     mock_hub.otp_customers = {KNOWN_NATIONAL: {"name": HUB_NAME, "masked": "07X XXX X567"}}
     _install(mock_hub.url)
+    from mcp_gateway import gateway, pool as pool_module
+
+    pool = pool_module.SessionPool(sweep=False)
+    pool_module.set_pool(pool)
+    gateway._pending.clear()
     yield mock_hub
+    pool.close_all()
+    for number in list(gateway._pending):
+        gateway._close_pending(number)
+    pool_module.set_pool(None)
     require_module("mcp_client.client").set_hub(None)
 
 
@@ -171,11 +181,14 @@ def wrong(code="123456"):
 # Lookup
 
 
-def test_lookup_returns_the_generic_sms_method_and_a_ticket(api):
+def test_lookup_returns_the_generic_sms_and_email_methods_and_a_ticket(api):
     response = lookup(api.client)
     assert response.status_code == 200
     body = response.json()
-    assert body["methods"] == [{"id": "sms", "masked": None, "generic": True}]
+    assert body["methods"] == [
+        {"id": "sms", "masked": None, "generic": True},
+        {"id": "email", "masked": None, "generic": True},
+    ]
     assert body["mode"] == "hub"
     assert body["ticket"]
     assert response.headers["cache-control"] == "no-store"
@@ -223,7 +236,7 @@ def test_full_flow_success_sets_the_cookie_with_otp_and_hub(api, hub):
     sent = start(api)
     assert sent["expires_in"] == 120 and sent["resend_in"] == 30
     assert set(sent) == {"challenge_id", "expires_in", "resend_in", "masked"}
-    assert sent["masked"] is None
+    assert re.fullmatch(r"X{6}\d{4}", sent["masked"])  # the hub's mask for sms, never the number
     assert hub.sms_outbox[-1]["to"] == KNOWN_NATIONAL  # national form, as the backend sends it
 
     done = verify(api.client, sent["challenge_id"], hub.otp_code)
@@ -231,7 +244,9 @@ def test_full_flow_success_sets_the_cookie_with_otp_and_hub(api, hub):
     assert done.json() == {"display_name": HUB_NAME, "language": "en"}
     claims = decode_token(api.client.cookies.get("user_session"), AUDIENCE_USER)
     assert "otp" in claims["amr"] and "hub" in claims["amr"]
-    assert api.client.get("/verify/session").json() == {"verified": True, "display_name": HUB_NAME}
+    assert api.client.get("/verify/session").json() == {
+        "verified": True, "display_name": HUB_NAME, "hub_session": True, "expired": False,
+    }
 
     from access import AccessContext
 
@@ -403,7 +418,8 @@ def test_unknown_number_gets_an_identical_response_at_send(api, hub, clock):
     unknown = start(api, phone=UNKNOWN_RAW, client=other)
     assert set(known) == set(unknown)
     assert known["expires_in"] == unknown["expires_in"] and known["resend_in"] == unknown["resend_in"]
-    assert known["masked"] == unknown["masked"] is None
+    for body in (known, unknown):
+        assert re.fullmatch(r"X{6}\d{4}", body["masked"])
     assert len(known["challenge_id"]) == len(unknown["challenge_id"])
     assert len(hub.sms_outbox) == 1  # only the real customer was texted
     assert [c[1]["telephone_no"] for c in hub.tool_calls if c[0] == "validate_customer_and_send_otp"] == [
@@ -458,50 +474,40 @@ def test_hub_down_at_send_is_503_and_starts_no_cooldown(api, hub, clock, mock_hu
     assert again.status_code == 200
 
 
-def test_hub_down_at_verify_is_503_and_only_one_attempt_is_used(api, hub, mock_hub):
+def _hub_unreachable(monkeypatch):
+    import mcp_gateway
+
+    monkeypatch.setattr(mcp_gateway, "finish_login", lambda *a, **k: mcp_gateway.LoginResult(False, "unavailable"))
+
+
+def test_hub_down_at_verify_is_503_and_only_one_attempt_is_used(api, hub, monkeypatch):
+    import mcp_gateway
+
     sent = start(api)
-    _install("http://127.0.0.1:9/mcp", timeout=1.0)
+    real = mcp_gateway.finish_login
+    _hub_unreachable(monkeypatch)
     response = verify(api.client, sent["challenge_id"], hub.otp_code)
     assert response.status_code == 503 and response.json() == {"code": "unavailable"}
-    _install(mock_hub.url)
+    monkeypatch.setattr(mcp_gateway, "finish_login", real)
     again = verify(api.client, sent["challenge_id"], wrong())
     assert again.status_code == 401 and again.json()["attempts_left"] == 1  # one for the 503, one for this
     assert verify(api.client, sent["challenge_id"], hub.otp_code).status_code == 200
 
 
-def test_hub_timeout_is_503_not_invalid(api, hub, mock_hub, monkeypatch):
+def test_hub_timeout_is_503_not_invalid(api, hub, monkeypatch):
     sent = start(api)
-    from otp.hub_backend import HubOtpBackend
-
-    def slow(self, phone, session, code):
-        raise TimeoutError("budget")
-
-    monkeypatch.setattr(HubOtpBackend, "verify", slow)
+    _hub_unreachable(monkeypatch)
     response = verify(api.client, sent["challenge_id"], hub.otp_code)
     assert response.status_code == 503 and response.json() == {"code": "unavailable"}
 
 
-def test_unrecognised_request_answer_is_503(api, hub):
-    hub.otp_session_key = "something_else"  # success without a session id the parser knows
+def test_unavailable_hub_at_send_is_503(api, hub, monkeypatch):
+    import mcp_gateway
+
+    monkeypatch.setattr(mcp_gateway, "begin_login", lambda *a, **k: mcp_gateway.LoginStart(False, reason="unavailable"))
     found = lookup(api.client).json()["ticket"]
     response = send(api.client, found)
     assert response.status_code == 503 and response.json() == {"code": "unavailable"}
-
-
-def test_unrecognised_verify_answer_is_503_and_costs_one_attempt(api, hub, verification, clock, monkeypatch):
-    from otp.hub_backend import HubOtpBackend, HubOtpUnknownResponse
-
-    class Odd(HubOtpBackend):
-        def verify(self, phone, session, code):
-            raise HubOtpUnknownResponse("shape")
-
-    api.service.hub_otp = Odd()
-    sent = start(api)
-    response = verify(api.client, sent["challenge_id"], hub.otp_code)
-    assert response.status_code == 503 and response.json() == {"code": "unavailable"}
-    api.service.hub_otp = HubOtpBackend()
-    left = verify(api.client, sent["challenge_id"], wrong())
-    assert left.json() == {"code": "invalid", "attempts_left": 1}
 
 
 def test_a_hub_that_rejects_the_code_is_invalid_not_unavailable(api, hub):
@@ -574,18 +580,18 @@ def test_a_local_ticket_is_refused_in_hub_mode_and_a_hub_ticket_in_local_mode(ap
     assert refused.status_code == 401 and refused.json() == {"code": "ticket_invalid"}
 
 
-def test_only_the_sms_method_exists(api):
+def test_only_sms_and_email_exist(api):
     ticket = lookup(api.client).json()["ticket"]
-    response = send(api.client, ticket, "email")
+    response = send(api.client, ticket, "voice")
     assert response.status_code == 409 and response.json() == {"code": "no_contact"}
 
 
-def test_session_and_logout_are_unchanged(api, hub):
+def test_session_and_logout(api, hub):
     sent = start(api)
     verify(api.client, sent["challenge_id"], hub.otp_code)
     assert api.client.get("/verify/session").json()["verified"] is True
     assert api.client.post("/verify/logout").json() == {"ok": True}
-    assert api.client.get("/verify/session").json() == {"verified": False}
+    assert api.client.get("/verify/session").json() == {"verified": False}  # the cookie is gone
 
 
 def test_audit_rows_use_hashes_only(api, hub, db_schema):

@@ -7,7 +7,8 @@
         422 {code: "phone_format"}      impossible syntax only
         429 {code: "rate_limited", retry_after}
     POST /verify/otp/send  {ticket, method, language}
-        200 {challenge_id, expires_in, resend_in, masked}
+        200 {challenge_id, expires_in, resend_in, masked}  hub mode: masked is the hub's
+            mask for the chosen channel (a lookalike for a number that is not a customer)
         409 {code: "no_contact"}
         429 {code: "cooldown" | "rate_limited", retry_after}
         401 {code: "ticket_invalid"}    ticket missing, forged or expired
@@ -18,8 +19,8 @@
         410 {code: "expired"}
         423 {code: "locked", retry_after}
         429 {code: "rate_limited", retry_after}
-    GET  /verify/session   {verified, display_name?}
-    POST /verify/logout    {ok: true}, clears the cookie
+    GET  /verify/session   {verified, display_name?}; a hub session adds hub_session and expired
+    POST /verify/logout    {ok: true}, clears the cookie and ends the hub login
 
 Every response is JSON with Cache-Control: no-store. Unmasked contacts never
 leave the server. Plain def handlers: the database blocks, FastAPI runs them
@@ -35,8 +36,8 @@ from pydantic import BaseModel, Field
 import config
 from auth.dependencies import USER_COOKIE, client_ip
 from auth.phone import InvalidPhoneNumber
-from auth.tokens import AUDIENCE_USER, TokenError, decode_token, issue_token
-from auth.users import get_user
+from auth.access_context import candidate_from_request
+from auth.tokens import AUDIENCE_USER, issue_token
 from verification import audit, service
 from verification.service import VerifyError
 
@@ -144,25 +145,40 @@ def otp_verify(body: VerifyBody, request: Request):
 
 @router.get("/session")
 def session(request: Request):
-    token = request.cookies.get(USER_COOKIE)
-    if not token:
-        header = request.headers.get("authorization", "")
-        scheme, _, value = header.partition(" ")
-        token = value.strip() if scheme.lower() == "bearer" else None
+    """{verified, display_name?}. For a session made by the hub it adds
+    hub_session (the hub login is alive) and expired. A hub session whose hub
+    login is gone is NOT verified: {verified: false, hub_session: false,
+    expired: true}. Local mode and guests keep the short form."""
+    access, hub = candidate_from_request(request)
+    if access is None or not access.is_verified:
+        return _json(200, {"verified": False})
+    if not hub:
+        return _json(200, {"verified": True, "display_name": access.display_name})
+    if not _hub_alive(access):
+        return _json(200, {"verified": False, "hub_session": False, "expired": True})
+    return _json(200, {"verified": True, "display_name": access.display_name, "hub_session": True, "expired": False})
+
+
+def _hub_alive(access) -> bool:
     try:
-        claims = decode_token(token, AUDIENCE_USER)
-        if "otp" not in (claims.get("amr") or []):
-            return _json(200, {"verified": False})
-        user = get_user(int(claims["sub"]))
-    except (TokenError, KeyError, TypeError, ValueError):
-        return _json(200, {"verified": False})
-    if user is None:
-        return _json(200, {"verified": False})
-    return _json(200, {"verified": True, "display_name": user.display_name})
+        import mcp_gateway
+
+        return bool(mcp_gateway.has_session(access))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 @router.post("/logout")
 def logout(request: Request):
+    access, hub = candidate_from_request(request)
+    if access is not None and access.is_verified and hub:
+        try:  # the hub login ends with the visit
+            import mcp_gateway
+
+            mcp_gateway.drop_session(access)
+            mcp_gateway.end_login(access.phone_e164)
+        except Exception as exc:  # noqa: BLE001
+            print(f"VERIFY logout: hub session not closed ({type(exc).__name__})")
     audit.record("logout", "ok", service.get_service().clock())
     response = _json(200, {"ok": True})
     response.delete_cookie(key=USER_COOKIE, path="/", httponly=True, secure=config.COOKIE_SECURE, samesite="lax")

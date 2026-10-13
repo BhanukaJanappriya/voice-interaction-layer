@@ -49,16 +49,37 @@ def _dial() -> dict:
         return dict(_DEFAULT_DIAL)
 
 
-def _from_i18n(language: str, dial: dict) -> Optional[str]:
+EXPIRED_KEY = "session.expired"
+
+_EXPIRED_BUILTIN = {
+    "en": (
+        "Your verified session has ended, so I can no longer open your account details. Please verify again "
+        "with a one time code, or contact SLT directly: call the hotline {hotline} (toll free from SLT lines), "
+        "send an SMS to {sms}, or call {prepaid} for CDMA prepaid."
+    ),
+    "si": (
+        "ඔබගේ තහවුරු කළ සැසිය අවසන් වී ඇත, එබැවින් ඔබගේ ගිණුම් තොරතුරු දැන් විවෘත කළ නොහැක. කරුණාකර නැවත "
+        "එක් වරක් භාවිත කරන කේතයකින් තහවුරු වන්න, නැතහොත් SLT වෙත කෙළින්ම අමතන්න: හොට්ලයින් {hotline} "
+        "(SLT ඇමතුම් වලින් නොමිලේ), SMS {sms}, CDMA ප්‍රීපේඩ් සඳහා {prepaid}."
+    ),
+    "ta": (
+        "உங்கள் சரிபார்க்கப்பட்ட அமர்வு முடிந்துவிட்டது, அதனால் உங்கள் கணக்கு விவரங்களை இப்போது திறக்க முடியாது. "
+        "ஒருமுறை பயன்படுத்தும் குறியீட்டால் மீண்டும் சரிபார்க்கவும், அல்லது SLT-ஐ நேரடியாக தொடர்பு கொள்ளுங்கள்: "
+        "ஹாட்லைன் {hotline} (SLT இணைப்புகளிலிருந்து இலவசம்), SMS {sms}, CDMA ப்ரீபெய்டுக்கு {prepaid}."
+    ),
+}
+
+
+def _from_i18n(language: str, dial: dict, key: str = KEY) -> Optional[str]:
     try:
         from i18n import t  # lazy: backend/i18n is built by another workstream
     except Exception:  # noqa: BLE001
         return None
     try:
-        text = t(KEY, language, **dial)
+        text = t(key, language, **dial)
     except Exception:  # noqa: BLE001
         return None
-    if not isinstance(text, str) or not text or text == KEY:
+    if not isinstance(text, str) or not text or text == key:
         return None
     if not all(number in text for number in dial.values()):
         return None  # a translation without the official numbers is not safe to use
@@ -71,3 +92,12 @@ def blocked_reply(language: Optional[str] = None) -> str:
         lang = "en"
     dial = _dial()
     return _from_i18n(lang, dial) or _BUILTIN[lang].format(**dial)
+
+
+def expired_reply(language: Optional[str] = None) -> str:
+    """The reply when a hub login has ended: verify again, or call SLT."""
+    lang = (language or "en").strip().lower()[:2]
+    if lang not in _EXPIRED_BUILTIN:
+        lang = "en"
+    dial = _dial()
+    return _from_i18n(lang, dial, EXPIRED_KEY) or _EXPIRED_BUILTIN[lang].format(**dial)

@@ -18,6 +18,9 @@ class AccessContext:
     display_name: Optional[str] = None
     phone_e164: Optional[str] = None
     language: Optional[str] = None
+    # True only for the guest a hub login that is no longer alive is turned
+    # into (see auth.access_context): the chat says "verify again".
+    session_expired: bool = False
 
     @property
     def is_verified(self) -> bool:
@@ -54,3 +57,4 @@ class AccessContext:
 
 
 GUEST = AccessContext()
+GUEST_EXPIRED = AccessContext(session_expired=True)

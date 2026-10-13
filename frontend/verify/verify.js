@@ -366,7 +366,10 @@
 
     // ---- step 2: where to send ----------------------------------------
     function methodLabel(m) {
-      var key = m.id === "email" ? "verify.step2.email_option" : (m.generic && !m.masked ? "verify.step2.sms_generic" : "verify.step2.sms_option");
+      var generic = m.generic && !m.masked; // hub mode: the mask is only known after sending
+      var key = m.id === "email"
+        ? (generic ? "verify.step2.email_generic" : "verify.step2.email_option")
+        : (generic ? "verify.step2.sms_generic" : "verify.step2.sms_option");
       var text = t(key, { masked: m.masked });
       var parts = [el("span", { class: "slt-v-method-text", text: text })];
       if (m.masked && text.indexOf(m.masked) === -1) {
@@ -805,5 +808,31 @@
     return api;
   }
 
-  window.SltVerify = { open: open, close: close, _phoneLooksValid: phoneLooksValid };
+  // What the server says about the visitor's session: {verified, expired,
+  // hubSession}. The server decides; this only reads GET /verify/session.
+  function sessionState(backendBase) {
+    var base = typeof backendBase === "string" ? backendBase : defaultBase();
+    return fetch(base.replace(/\/+$/, "") + "/verify/session", {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    }).then(
+      function (res) {
+        return res.json().then(
+          function (data) {
+            data = data || {};
+            return { verified: data.verified === true, expired: data.expired === true, hubSession: data.hub_session === true };
+          },
+          function () {
+            return { verified: false, expired: false, hubSession: false };
+          }
+        );
+      },
+      function () {
+        return { verified: false, expired: false, hubSession: false };
+      }
+    );
+  }
+
+  window.SltVerify = { open: open, close: close, sessionState: sessionState, _phoneLooksValid: phoneLooksValid };
+  window.SLTVerify = window.SltVerify;
 })();

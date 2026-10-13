@@ -13,12 +13,12 @@ Self check: python -m access   (from the backend directory)
 
 from .context import GUEST, AccessContext
 from .guard import Decision, evaluate
-from .messages import blocked_reply
+from .messages import blocked_reply, expired_reply
 from .policy import PolicyError
 from .prompt import level_clause
 from .tool_gate import AccessDenied, authorize_tool, bind_arguments
 
 __all__ = [
-    "GUEST", "AccessContext", "Decision", "evaluate", "blocked_reply", "PolicyError",
+    "GUEST", "AccessContext", "Decision", "evaluate", "blocked_reply", "expired_reply", "PolicyError",
     "level_clause", "AccessDenied", "authorize_tool", "bind_arguments",
 ]
