@@ -43,6 +43,7 @@
   "otp.email_body": "Hello,\n\nYour SLT-MOBITEL verification code is {code}. It is valid for {minutes} minutes.\n\nDo not share this code with anyone. SLT-MOBITEL will never ask you for it.\n\nIf you did not ask for this code, you can ignore this email.",
   "landing.greeting": "Welcome to SLT Mobitel",
   "landing.subtitle": "Your voice assistant in English, Sinhala and Tamil",
+  "landing.quote": "Sri Lanka's No.1 Connection",
   "landing.skip": "Tap to skip",
   "loader.connecting": "Connecting...",
   "loader.sending": "Sending your code...",
