@@ -138,11 +138,12 @@ document.hidden.
 
 | Motion | Duration | Easing | Sequence |
 |---|---|---|---|
-| Logo intro | 700 ms | ease-spring | scale 0.6 to 1, opacity 0 to 1; glow layer pulses 2 times (opacity .35 to .8) behind it |
-| Ring trace | 900 ms | ease-out | an SVG circle stroke-dashoffset draws around the logo once |
-| Greeting words | 70 ms stagger, 280 ms each | ease-out | translateY 10px to 0 and opacity, word by word; light stream sweeps across (gradient line translateX) |
-| Subtitle | 300 ms after the last word | ease-out | opacity and translateY |
-| Landing exit | 350 ms | ease-in | overlay opacity to 0, then removed; the language screen underneath never moved |
+| Shape morph | 1600 ms | spline | an organic outline (SVG path, all shapes share one structure) morphs through three forms and settles into a circle; the logo scales in at 300 ms |
+| Ripples | 4 x 1500 ms, 650 ms apart from 1.5 s | cubic-bezier(.2,.6,.3,1) | glowing circles scale 0.9 to 2.3 and fade, transform and opacity only |
+| Greeting typing | 1500 ms from 1.4 s | steps (one per perceived character) | the line is clipped from the right and revealed; a glowing caret rides the edge; a light stream grows under it |
+| Quote typing | 1100 ms from 3.1 s | steps | same, in gradient text, "Sri Lanka's No.1 Connection" |
+| Subtitle | 400 ms at 4.2 s | ease-out | opacity and translateY |
+| Landing exit (morph out) | 650 ms from 4.65 s | cubic-bezier(.65,0,.35,1) | the logo glides (transform) to the first screen's logo and lands on it; ripples, text and streamlines fade; the gradient fades to reveal the screen |
 | Modal open | 240 ms | ease-out | backdrop opacity and blur(0 to 6px) fade, panel translateY 12px to 0 and scale .96 to 1 |
 | Modal close | 150 ms | ease-in | reverse |
 | Icon badge | 320 ms, 80 ms delay | ease-spring | scale .6 to 1 and fade; glow ring pulses once |
@@ -160,14 +161,19 @@ document.hidden.
 | Mode chip change | 220 ms | ease-out | old text slides up and fades, new slides in |
 | Transcript message | 220 ms | ease-out | existing bubble-in kept |
 
-Landing sequence: total at most 2.5 s. First visit in a session: full (logo
-intro 0 to 0.7 s, ring 0.2 to 1.1 s, greeting words 0.6 to 1.8 s, subtitle to
-2.1 s, exit 2.1 to 2.45 s). Later visits in the same session or a returning
-browser: shortened to 0.9 s (logo and glow only, then the greeting as one fade).
+Landing sequence (changed 2026-10-13 at the owner's request; the first version
+was 2.5 s): first visit in a session about 5.3 s (shape morph 0 to 1.6 s, four
+glowing rings from 1.5 s, greeting typed 1.4 to 2.9 s, quote typed 3.1 to 4.2
+s, subtitle 4.2 s, logo glides to the first screen 4.65 to 5.3 s). Later visits
+in the same session: about 1.7 s (logo, one ring, the greeting typed fast, the
+glide). Reduced motion: a static 0.7 s with one fade, no morph, rings or typing.
+Typing is a clip reveal of the whole line (never split into characters) so
+Sinhala and Tamil combining marks stay whole; a line wider than the screen is
+scaled down to stay on one line.
 Any click, tap or key skips it at once. Skipping removes the overlay; the first
 screen is already underneath, so skip changes nothing in the app's state.
 
-The greeting words come from new i18n keys (landing.greeting, landing.subtitle),
+The text comes from new i18n keys (landing.greeting, landing.quote, landing.subtitle),
 derived from the existing greeting copy ("Welcome to SLT Mobitel ..."). Language
 for the landing text: the language already chosen in this browser if there is
 one, else the browser language if it is si or ta, else English. Sinhala and

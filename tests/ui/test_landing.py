@@ -11,8 +11,9 @@ import pytest
 from ui_helpers import LANDING_JS, has_landing, landing_visible, ui_on
 
 LANDING_FN = "(" + LANDING_JS.strip() + ")"
-MAX_TOTAL_MS = 2500
-SHORT_MS = 1100  # the plan says 0.9 s; a little slack for a slow machine
+MAX_TOTAL_MS = 5600  # the first visit takes about 5.3 s (docs/UI_PLAN.md section 3)
+MIN_TOTAL_MS = 4000  # and it must stay clearly longer than the old 2.5 s landing
+SHORT_MS = 2000  # about 1.7 s on later visits; a little slack for a slow machine
 
 
 def _load(page, base_url):
@@ -54,10 +55,34 @@ def test_landing_shows_on_first_load(make_page, base_url):
     assert landing_visible(page)
 
 
-def test_landing_total_duration_under_2500(make_page, base_url):
+def test_landing_total_duration_in_range(make_page, base_url):
     page = _landing_run(make_page, base_url)
     took = _duration(page)
-    assert took < MAX_TOTAL_MS, f"landing lasted {took:.0f} ms"
+    assert MIN_TOTAL_MS <= took < MAX_TOTAL_MS, f"landing lasted {took:.0f} ms"
+
+
+def test_landing_has_rings_typing_and_quote(make_page, base_url):
+    page = _landing_run(make_page, base_url)
+    _wait_visible(page)
+    info = page.evaluate(
+        """() => {
+          const q = document.querySelector('.lnd-q .lnd-type');
+          const names = [...document.querySelectorAll('.slt-landing *')]
+            .flatMap(e => e.getAnimations().map(a => a.animationName)).filter(Boolean);
+          return {
+            ripples: document.querySelectorAll('.lnd-ripple').length,
+            carets: document.querySelectorAll('.lnd-caret').length,
+            quote: q ? q.textContent : '',
+            typing: names.includes('lnd-type'),
+            morph: !!document.querySelector('.lnd-blob animate'),
+          };
+        }"""
+    )
+    assert info["ripples"] >= 3, f"only {info['ripples']} glowing circles"
+    assert info["carets"] >= 2, "greeting and quote should both type with a caret"
+    assert "No.1" in info["quote"], f"quote text is {info['quote']!r}"
+    assert info["typing"], "no typing animation found"
+    assert info["morph"], "no morph animation on the shape"
 
 
 def test_skip_by_click(make_page, base_url):
@@ -88,7 +113,7 @@ def test_shortened_on_second_load_in_same_session(make_page, base_url):
     page.evaluate("() => { window.__landing = window.__landing || {}; }")
     second = _duration(page)
     assert second < first, f"second load {second:.0f} ms not shorter than first {first:.0f} ms"
-    assert second <= SHORT_MS, f"second load took {second:.0f} ms, plan says about 900 ms"
+    assert second <= SHORT_MS, f"second load took {second:.0f} ms, plan says about 1.7 s"
 
 
 def test_first_screen_interactive_right_after_skip(make_page, base_url):

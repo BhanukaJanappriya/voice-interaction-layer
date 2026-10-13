@@ -751,7 +751,7 @@ loaded there, only copied markup was tested); the landing on a real slow
 phone; the mode chip over LiveKit (it follows the agent_response mode field,
 which the WebSocket path sends).
 
-**Known behavior.** The landing covers the first screen for up to 2.5 s on the
+**Known behavior.** The landing covers the first screen for about 5.3 s on the
 first visit in a session and swallows the first click or key that skips it. The
 wizard's wrong code and rate limited messages share one icon because the page
 text cannot tell them apart. The Sinhala and Tamil text for all new strings is
@@ -767,4 +767,4 @@ only calls and any customer tool were not run there.
 **Tests.** `tests/ui` is opt in (about 13 minutes here) and needs the dev
 packages playwright, pytest-playwright and axe-playwright-python plus the
 system Chrome. A few of its checks are timing based (the landing duration must
-be under 2.5 s) and can fail on a heavily loaded machine.
+be between 4 and 5.6 s) and can fail on a heavily loaded machine.

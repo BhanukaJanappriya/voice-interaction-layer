@@ -649,10 +649,12 @@ machine written and needs review by a native speaker.
 
 Added 2026-10-13. Design and decisions: docs/UI_PLAN.md. Hub details: docs/MCP_HUB.md.
 
-**What changed on screen.** A short landing animation (the logo with a glow and
-a tracing ring, then the greeting revealed word by word in the language chosen
-in this browser, at most 2.5 s the first time in a session and about 0.9 s
-after; any click, tap or key skips it). Every popup (microphone explainer,
+**What changed on screen.** A landing animation: a gradient shape morphs into a
+circle around the logo, four glowing rings pulse out of it, then the greeting
+and the quote "Sri Lanka's No.1 Connection" type out with a light caret and a
+stream growing under each line, and the logo glides to its place on the first
+screen. It follows the language chosen in this browser, takes about 5.3 s the
+first time in a session and about 1.7 s after; any click, tap or key skips it. Every popup (microphone explainer,
 history, the verification wizard, the admin dialogs) has a glowing icon badge
 and a soft open and close motion; the wizard also shows a "1 of 3" progress
 bar and slides between steps. The same glowing logo is the waiting indicator
