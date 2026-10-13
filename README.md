@@ -692,3 +692,37 @@ axe checks and the wizard in three languages. Needs `playwright`,
 `pytest-playwright` and `axe-playwright-python` (dev only, not in
 requirements.txt) and the system Chrome. Screenshots go to `docs/ui-after/`
 (ignored by git).
+
+## Account answers for verified customers
+
+Added 2026-10-13. Design and decisions: docs/IMPLEMENTATION_PLAN.md Part 4. Hub
+details: docs/MCP_HUB.md section 7.
+
+A customer who finished the one time code can ask for their balance, usage,
+bills, last payment, service details, faults and packages in English, Sinhala or
+Tamil. The assistant calls the hub's read only customer tools for that customer's
+own number (the access gate forces the number, so asking about another number
+changes nothing), hands the answer to the model and the model says it in the
+customer's language. The mode badge then ends with " + SLT account data". A
+guest still gets the fixed dial message and the hub is never called.
+
+What it will not do: change anything. Buying a package, subscribing to an add on
+or logging a fault are not offered (those hub tools are never called, enforced by
+an allow list in the code); a request to change gets the data and a pointer to
+1212, the SMS number and 1222. If the hub says the customer is not signed in, or
+the hub cannot be reached, the reply is a fixed translated text, not a model's
+guess.
+
+Privacy: customer data is given to the local Llama model only. Gemini and
+LiveKit Inference are skipped for that turn (this is not counted as a failure).
+`CUSTOMER_DATA_TO_CLOUD_LLM=true` opens it to them. `CUSTOMER_TOOLS_ENABLED=false`
+turns the feature off; with no hub configured it does nothing.
+
+**Hub sign in through the wizard.** The hub's customer tools only work for a
+customer the hub itself signed in, which happens through its own one time code. So
+`VERIFY_OTP_BACKEND=hub` makes the wizard send and check the code through the hub
+(one code verifies the user and signs them in on the hub). Our own limits still
+apply on top: 120 s, 3 attempts, single use, 30 s before a resend. The default is
+`local` because hub mode sends a real SMS to a real customer on every run and
+cannot be tried with the fake test customers. To try it, set
+`VERIFY_OTP_BACKEND=hub`, restart, and use a number you own.

@@ -204,3 +204,25 @@ can.
 * `--call-read-only` was tested against the mock hub only.
 * The mapping of "customer" and "public" follows `backend/access/policy.json`,
   not the hub's own documentation.
+
+
+## 7. How the assistant uses the hub for account answers (2026-10-13)
+
+Read only tools only, for a verified customer's own number (the access gate forces
+it): show_gb_balance, show_lte_wallet_detail, show_lte_purchased_packages,
+show_bill_history, show_last_payment, show_reload_history, show_service_detail,
+show_lte_subscriber_status, show_fault_list, show_extra_gb_packages and
+show_vas_data_bundle_packages. Never called: purchase_extra_gb, add_vas_data_bundle,
+log_fault, subscribe_lte_prepaid_package, authenticate_with_token,
+refresh_customer_token (the code refuses them even if asked), and not used yet:
+show_daily_usage, show_lte_prepaid_package_list, compare_package.
+
+The hub signs a customer in through its own one time code, so the wizard has a hub
+mode (VERIFY_OTP_BACKEND=hub) that uses validate_customer_and_send_otp and
+verify_otp_and_authenticate. With the local code the hub has no session for the
+customer and the customer tools answer "not authenticated".
+
+What to ask the hub administrator, now that this is built: (1) the exact response of
+each read only tool for one test number, (2) what otp_media values mean and the format
+of telephone_no, (3) how "not signed in" and "not a customer" are reported, (4) a test
+number whose code goes to a phone you control, so this can be tried live.

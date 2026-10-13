@@ -524,3 +524,34 @@ MOVED (not copied) into a bottom bar and a More sheet, so their ids, handlers
 and aria state keep working; they go back to their original place when the
 viewport widens or the screen is left. From 1024 px the desktop layout is
 untouched.
+
+## Account answers (2026-10-13)
+
+```
+verified request -> access guard (allowed) -> customer_service.fetch
+        kind "none"        not an account question, or no hub: normal flow
+        kind "reauth"      hub says not signed in  -> fixed translated reply, no model
+        kind "unavailable" hub down or too slow    -> fixed translated reply, no model
+        kind "data"        read only tool answers  -> added to the message, Turn.private
+                                                      Turn.private: only tiers with cloud=False
+                                                      (local Llama) may answer, the hosted tiers
+                                                      are skipped without tripping a breaker
+```
+
+fetch picks tools from the access policy's topic rules, learns the product type
+(postpaid, fixed, LTE prepaid) from show_service_detail and caches it for 10
+minutes, calls the tools in parallel inside CUSTOMER_TOOLS_BUDGET_SECONDS, and
+drops keys such as token, password and otp from the answers. Every call goes
+through the access gate, so the telephone number is the verified one. Only the
+read only tools on the allow list are callable; the changing tools and the sign in
+tools are refused by a function that raises. Third party loggers (the MCP SDK and
+the HTTP libraries) are capped at INFO by log_safety.py because at DEBUG they
+record tool arguments and answers.
+
+Wizard hub mode (VERIFY_OTP_BACKEND=hub): lookup checks the number's format and
+the limits only (the hub gives no name or contact before it sends); send calls
+validate_customer_and_send_otp and keeps the hub session id sealed in the
+challenge row; verify applies our 120 s, 3 attempt and single use rules first and
+then calls verify_otp_and_authenticate; the cookie then carries amr ["otp","hub"].
+An unknown number gets a decoy challenge with the same response, and the decoy
+still asks the hub at verify so timing does not tell which numbers exist.

@@ -974,3 +974,143 @@ tier failure matrix, safety no fallback, guest blocked in en, si and ta over
 /chat and /ws/voice, tool gate refusals, wizard rules (120 s expiry with a
 fake clock, single use, 3 attempts, resend invalidation, rate limits,
 masking) and a Chrome run of the wizard in en, si and ta.
+
+
+---
+
+# Part 4: account answers through the hub for verified customers
+
+Written 2026-10-13. Owner decisions (asked, answered): (1) the wizard may use
+the hub's own one time code so one code verifies the user and signs them in on
+the hub; (2) customer data is given to the local model only; (3) read only for
+now, nothing that changes an account.
+
+## 4.1 What the hub offers and what is unknown
+
+The 24 tools are in docs/MCP_HUB.md. Every customer tool says the customer "must
+be authenticated", and the hub only authenticates through
+`validate_customer_and_send_otp` then `verify_otp_and_authenticate` (it keeps the
+token in the hub session, later tools only need telephone_no). So a customer
+verified by our own local code has no hub session, and the customer tools would
+refuse. That is why the wizard gets a hub mode (4.3).
+
+Never observed (no customer tool was ever called on the real hub: they send real
+SMS and some change accounts): the response shape of any customer tool, the
+format of telephone_no (the code sends the national form 0112345678), the meaning
+of otp_media (default 2), the date format of show_reload_history, the meaning of
+bill_date in show_daily_usage, and the allowed package_type values. All parsing is
+defensive and tested against the mock hub only. Tools whose arguments cannot be
+filled with confidence (show_daily_usage, show_lte_prepaid_package_list) are not
+used in this version.
+
+## 4.2 backend/customer_service (Agent S)
+
+Read only tools used (all take telephone_no, which the access gate forces to the
+verified number, so a request for another number is impossible):
+
+| Policy topic (backend/access/policy.json) | Tools |
+|---|---|
+| balance, usage | show_gb_balance (postpaid and fixed), show_lte_wallet_detail, show_lte_purchased_packages (LTE prepaid) |
+| bills_payments | show_bill_history, show_last_payment, show_reload_history (LTE prepaid, last 90 days, ISO dates) |
+| account, connection_status | show_service_detail, show_lte_subscriber_status (LTE prepaid) |
+| faults | show_fault_list |
+| package_change | show_extra_gb_packages and show_vas_data_bundle_packages (package_name empty), show_lte_purchased_packages; information only |
+
+The product type (postpaid, fixed, LTE prepaid) is learned from
+show_service_detail, cached per verified number for 10 minutes, parsed defensively
+(the text mentions LTE and Prepaid or not); when unknown the postpaid set is tried
+first and the LTE set on a "not applicable" style error.
+
+API:
+
+    ToolCall(name, arguments, topic)
+    plan(text, language, access) -> list[ToolCall]     topics come from access.policy keyword rules
+    fetch(text, language, access) -> CustomerOutcome   blocking, never raises
+    CustomerOutcome(kind, context, canned, tools, errors)
+        kind: "none"        not an account question, or disabled, or not verified: caller does nothing
+              "data"        context is the text block for the model (tool name and trimmed JSON per tool)
+              "reauth"      the hub says the customer is not authenticated: canned is the reply, no model
+              "unavailable" hub down, breaker open, timeout, no tool answered: canned is the reply, no model
+    system_clause(language) -> str                      instructions appended to the system prompt
+    canned(reason, language) -> str                     reason: reauth_needed | unavailable | changes_not_supported
+
+Rules: only tools in the read only table are ever called (a hard allow list in the
+package, checked again before each call; purchase_extra_gb, add_vas_data_bundle,
+log_fault, subscribe_lte_prepaid_package, authenticate_with_token,
+refresh_customer_token and the OTP tools are never called by this package); calls
+go through `mcp_client.tools.call_tool_sync(name, arguments, budget, access=access)`
+so the gate runs; calls run in parallel inside config.CUSTOMER_TOOLS_BUDGET_SECONDS
+in total; the context is cut to config.CUSTOMER_TOOLS_MAX_CHARS and keys such as
+token, access_token, refresh_token, password, secret, otp are dropped; nothing
+about the customer is logged (tool names, outcome and milliseconds only); a request
+to change something (buy, activate, subscribe, cancel) gets the data plus the
+changes_not_supported clause, never a tool call. Config flags (already in
+config.py): CUSTOMER_TOOLS_ENABLED, CUSTOMER_TOOLS_BUDGET_SECONDS,
+CUSTOMER_TOOLS_MAX_CHARS. Canned i18n keys (backend/i18n en, si, ta):
+customer.reauth_needed, customer.unavailable, customer.changes_not_supported.
+
+Lead wiring in the Orchestrator: after the access guard, a verified request calls
+fetch in a thread; "reauth" and "unavailable" are answered with the canned text and
+no model; "data" adds the context and the clause to the turn and, unless
+CUSTOMER_DATA_TO_CLOUD_LLM is true, marks the turn `private` so the chain skips the
+Gemini and LiveKit tiers (Turn.private, Tier.cloud, already built). The mode string
+gets the suffix " + SLT account data".
+
+Mock hub (backend/mcp_client/mock_hub.py, Agent S): `MockHub(customer_tools=True)`
+registers the read only customer tools above returning plausible fake JSON, plus a
+set `authenticated` of national form numbers; a customer tool for a number not in
+the set returns an error result "Customer not authenticated. Call
+validate_customer_and_send_otp first."; the existing OTP tools of the mock add a
+number to the set when verify succeeds; `tool_calls` records (name, arguments).
+
+## 4.3 Hub mode of the wizard (Agent H)
+
+config.VERIFY_OTP_BACKEND = local (default) or hub. In hub mode:
+- POST /verify/lookup checks the number's format and the rate limits only (the hub
+  gives no name or contact before it sends a code); the customer directory is not
+  used; the response is methods [{id: "sms", masked: null, generic: true}] so the
+  page shows a translated generic label; NAME_MATCH_REQUIRED cannot be applied, the
+  name typed is used for the greeting only unless the hub returns one (the hub name
+  wins).
+- POST /verify/otp/send calls HubOtpBackend.request (backend/otp/hub_backend.py,
+  reuse it, do not duplicate its parsing); a "not a customer" answer is a decoy
+  challenge with the same response as success (no enumeration); the hub session id
+  is kept sealed in the challenge row (hub_ref), no local code is stored.
+- POST /verify/otp/verify applies OUR rules before the hub is asked (120 s from the
+  send on the server clock, 3 attempts, single use, a new send retires the old one),
+  then HubOtpBackend.verify; success issues the same cookie with extra claims
+  amr ["otp", "hub"].
+- Hub trouble or an unrecognised answer is 503 unavailable, never "invalid".
+- The mock hub's existing OTP tools are used in tests. A live test needs the owner's
+  own SLT number (a real SMS), so none was run.
+
+## 4.4 Privacy
+
+Customer data never goes to Gemini or the LiveKit gateway unless
+CUSTOMER_DATA_TO_CLOUD_LLM=true. Turn.private makes LlmChain skip every tier whose
+`cloud` attribute is true without tripping its breaker. If the local model is down,
+the user gets the local tier's own error text, not a hosted model's answer.
+
+## 4.5 File ownership
+
+S: backend/customer_service/**, backend/mcp_client/mock_hub.py,
+backend/i18n/*.json (the three customer.* keys), tests/test_customer_service*.py.
+H: backend/verification/** (service.py, routes.py, a new hub_mode.py),
+tests/test_verification_hub.py. F: tests/test_e2e_customer.py. Lead only: agent.py,
+server.py, config.py, llm_chain, mcp_client/tools.py and client.py, frontend/**,
+docs, requirements.
+
+## 4.6 Decisions
+
+- 4.1 Hub OTP is a mode, default local, because hub mode sends a real SMS on every
+  run and cannot be tried with the fake test customers.
+- 4.2 Our own limits are applied in hub mode too, so a hub with a longer code
+  lifetime does not weaken the wizard.
+- 4.3 Customer data stays on the local model by default; a flag opens it to the
+  cloud tiers.
+- 4.4 A hard allow list of read only tools lives in the package, separate from the
+  access gate, so adding a tool to the hub never lets the assistant call it.
+- 4.5 "Not authenticated" and "hub down" are answered with fixed translated text, not
+  by a model, so a model cannot make up account details when the data is missing.
+- 4.6 Changes to an account are not built; a request to change gets the data and a
+  pointer to the dial numbers.

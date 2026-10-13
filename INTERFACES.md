@@ -584,3 +584,29 @@ backend/mcp_client
     customer_lookup.select_customer_lookup(source=None) -> CustomerDirectory (local) or
         HubCustomerLookup (mcp_hub); CustomerLookupUnavailable(reason)
     config: CUSTOMER_DATA_SOURCE local|mcp_hub (default local)
+
+
+Additions for account answers and the wizard's hub mode (2026-10-13). Nothing above changed.
+
+backend/customer_service
+    fetch(text, language, access) -> CustomerOutcome   blocking, never raises
+    CustomerOutcome(kind "none"|"data"|"reauth"|"unavailable", context, canned, tools, errors,
+        changes_requested, topics, product "postpaid"|"lte_prepaid"|None, timings_ms)
+    plan(text, language, access) -> [ToolCall(name, arguments, topic)]
+    system_clause(language, changes_requested=False), canned(reason, language)
+    ALLOWED_TOOLS, require_allowed(name) raises ToolRefused, clear_cache(), detect(text)
+    i18n keys: customer.reauth_needed, customer.unavailable, customer.changes_not_supported
+agent.Orchestrator: last_mode may end with " + SLT account data"; "account data unavailable
+    (fixed reply)" for a reauth or unavailable outcome
+llm_chain: Turn.private (bool), Tier.cloud (False for the local tier); a private turn skips
+    every cloud tier
+mcp_client.tools.call_tool_sync(name, arguments, budget=None, access=None): with access the
+    access gate runs and the number is forced; without it the call is trusted (login flow)
+verification: config VERIFY_OTP_BACKEND local|hub; POST /verify/lookup also returns mode and,
+    in hub mode, methods [{"id":"sms","masked":null,"generic":true}]; the verify cookie carries
+    amr ["otp","hub"] in hub mode
+log_safety.cap_sensitive_loggers(level=INFO)
+GET /health: customer_service {enabled, data_to_cloud_llm, data_source}, verification.otp_backend
+config: CUSTOMER_TOOLS_ENABLED, CUSTOMER_DATA_TO_CLOUD_LLM, CUSTOMER_TOOLS_BUDGET_SECONDS,
+    CUSTOMER_TOOLS_MAX_CHARS, VERIFY_OTP_BACKEND
+i18n: verify.neutral_name (backend), verify.step2.sms_generic and verify.step3.subtitle_generic (frontend)

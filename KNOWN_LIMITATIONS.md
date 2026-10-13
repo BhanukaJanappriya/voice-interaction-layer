@@ -768,3 +768,43 @@ only calls and any customer tool were not run there.
 packages playwright, pytest-playwright and axe-playwright-python plus the
 system Chrome. A few of its checks are timing based (the landing duration must
 be between 4 and 5.6 s) and can fail on a heavily loaded machine.
+
+## Account answers and the wizard's hub mode (2026-10-13)
+
+**Never tried against the real hub.** No customer tool was called on the real hub
+(they send real SMS or change accounts), so everything here is verified against the
+mock hub only: 103 tests for the package, 69 end to end and 35 for the wizard's hub
+mode. Unknown until a real call: the response shape of every customer tool (parsing
+accepts text, JSON, structured content and JSON wrapped in data or result, and the
+model is given the trimmed JSON), the format of telephone_no (the national form
+0112345678 is sent), what otp_media 2 means, how the hub reports "not a customer" or
+"not signed in" (an error result, a status word and an error field are all handled),
+the date format of show_reload_history (ISO dates, last 90 days), and what
+show_extra_gb_packages and show_vas_data_bundle_packages do with an empty
+package_name.
+
+**Not used.** show_daily_usage and show_lte_prepaid_package_list (their arguments
+cannot be filled with confidence), compare_package and search_knowledgebase_tool for
+account answers (the existing retrieval is unchanged), and every tool that changes an
+account. There is no way to buy, subscribe or log a fault through the assistant in
+this version.
+
+**Hub mode of the wizard.** It sends a real SMS on every run, so it was not run
+live. The name typed in step 1 cannot be checked against anything (the hub gives no
+name before it sends), so it is used for the greeting only, unless the hub returns one.
+Our own limits (120 s, 3 attempts) apply on top, but the hub may have shorter ones.
+Logging: at DEBUG the MCP SDK and the HTTP libraries record tool arguments, the typed
+code and the answers; log_safety.py caps them at INFO, but any later setting of those
+loggers back to DEBUG would leak the telephone number and account data.
+
+**Behavior to know.** A verified customer asking an account question gets a fixed
+"verify again" text if the hub says they are not signed in, which is what happens
+after a local mode verification (the hub never signed them in): with
+VERIFY_OTP_BACKEND=local the customer tools will normally answer "verify again" for a
+real number, so local mode is for development. The model for these answers is the local
+Llama (slower and plainer than the hosted models); the access level clause of the system
+prompt does not reach it, the instructions travel in the message. The access policy's
+keywords decide what is an account question: for example "show my last payments"
+(plural) is not matched and goes to the model without data. A hub answer that is slow
+beyond CUSTOMER_TOOLS_BUDGET_SECONDS (8 s) gives the fixed "unavailable" text. Customer
+data is sent to Gemini and LiveKit only if CUSTOMER_DATA_TO_CLOUD_LLM=true.
