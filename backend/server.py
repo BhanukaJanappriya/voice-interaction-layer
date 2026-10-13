@@ -109,6 +109,7 @@ from admin import service as admin_service
 from admin.routes import router as admin_router
 from agent import Orchestrator
 from auth.admins import seed_first_admin_from_env
+from log_safety import cap_sensitive_loggers
 from auth.access_context import access_from_request
 from auth.dependencies import verified_user_from_request
 from auth.routes import router as auth_router
@@ -263,6 +264,9 @@ async def _lifespan(_app: FastAPI):
         if worker is not None:
             await asyncio.to_thread(worker.stop, 5)
 
+
+# Third party loggers must never record customer data (see log_safety.py).
+cap_sensitive_loggers()
 
 app = FastAPI(title="Voice Interaction Backend", lifespan=_lifespan)
 
@@ -967,7 +971,14 @@ async def health():
         # state and last error reason. None when LLM_CHAIN is empty.
         "llm_chain": orchestrator.chain.status() if config.LLM_CHAIN else None,
         "access_control": {"enabled": config.ACCESS_CONTROL_ENABLED},
-        "verification": {"enabled": config.VERIFY_ENABLED},
+        "verification": {"enabled": config.VERIFY_ENABLED, "otp_backend": config.VERIFY_OTP_BACKEND},
+        # Account answers for verified customers (read only hub tools). Customer
+        # data goes to the local model only unless data_to_cloud_llm is true.
+        "customer_service": {
+            "enabled": config.CUSTOMER_TOOLS_ENABLED,
+            "data_to_cloud_llm": config.CUSTOMER_DATA_TO_CLOUD_LLM,
+            "data_source": config.CUSTOMER_DATA_SOURCE,
+        },
         "cloud_speech_configured": config.cloud_speech_configured(),
         "cloud_speech_provider": config.CLOUD_SPEECH_PROVIDER,
         "supported_languages": config.SUPPORTED_LANGUAGES,

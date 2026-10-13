@@ -713,6 +713,16 @@ class Orchestrator(ChatAgent):
         from access import GUEST, level_clause
         from llm_chain import Turn
 
+        # Account data for a verified customer (hub tools, read only). A missing
+        # sign in or an unreachable hub is answered with fixed translated text and
+        # no model, so a model can never make up account details.
+        outcome = self._customer_outcome(text_input, language, access)
+        if outcome is not None and outcome.kind in ("reauth", "unavailable"):
+            self.last_mode = "account data unavailable (fixed reply)"
+            print(f"Orchestrator mode: {self.last_mode}")
+            yield outcome.canned
+            return
+
         tool_context = None
         if self.tool_callback is not None:
             try:
@@ -724,23 +734,59 @@ class Orchestrator(ChatAgent):
         )
         if config.ACCESS_CONTROL_ENABLED:
             system_prompt += f"\n\n{level_clause(access or GUEST, language)}"
+        text = f"User said: {text_input}"
+        if tool_context:
+            text += f"\n\nKnowledge base excerpts (from the tool/retrieval stage):\n{tool_context}"
+        private = False
+        suffix = ""
+        if outcome is not None and outcome.kind == "data":
+            from customer_service import system_clause
+
+            # The instructions travel with the data in the message, because the local
+            # model builds its own system prompt and ignores the turn's.
+            text += (
+                f"\n\n{system_clause(language, outcome.changes_requested)}"
+                f"\n\nSLT account data for this customer, from the SLT system:\n{outcome.context}"
+            )
+            # Customer data stays on this machine unless the owner opened it up.
+            private = not config.CUSTOMER_DATA_TO_CLOUD_LLM
+            suffix = " + SLT account data"
         turn = Turn(
-            text=f"User said: {text_input}"
-            + (f"\n\nKnowledge base excerpts (from the tool/retrieval stage):\n{tool_context}" if tool_context else ""),
+            text=text,
             system_prompt=system_prompt,
             user_name=user_name,
             language=language,
             tool_context=tool_context,
+            private=private,
         )
         chain = self.chain
         first = True
         for piece in chain.stream(turn):
             if first:
                 first = False
-                self.last_mode = chain.last_mode
+                self.last_mode = chain.last_mode + suffix
                 print(f"Orchestrator mode: {self.last_mode}")
             yield piece
-        self.last_mode = chain.last_mode
+        self.last_mode = chain.last_mode + suffix
+
+    @staticmethod
+    def _customer_outcome(text_input: str, language: Optional[str], access):
+        """Account data for a verified customer, or None. Blocking (a hub call
+        with its own time budget); respond_stream already runs on a worker thread.
+        A failure here must not cost the user their answer."""
+        if not config.CUSTOMER_TOOLS_ENABLED or access is None or not getattr(access, "is_verified", False):
+            return None
+        if not config.mcp_hub_configured():
+            # No hub, no account data: the assistant behaves exactly as it did before.
+            return None
+        try:
+            from customer_service import fetch
+
+            outcome = fetch(text_input, language, access)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Orchestrator: customer data step failed ({type(exc).__name__}), answering without it.")
+            return None
+        return outcome if outcome.kind != "none" else None
 
     def _active_external_agent(self) -> Optional[ChatAgent]:
         """The external agent to try first, or None. A failing lookup (for
