@@ -67,5 +67,15 @@
   "_meta": {
     "language": "en",
     "reviewed": true
-  }
+  },
+  "verify.step2.email_generic": "Email to your registered email address",
+  "confirm.ui.confirm": "Confirm",
+  "confirm.ui.cancel": "Cancel",
+  "confirm.ui.expires": "Expires in {time}",
+  "confirm.ui.expired": "This request timed out. Nothing was changed.",
+  "confirm.ui.cancelled": "Cancelled. Nothing was changed.",
+  "confirm.ui.invalid": "This request is no longer valid. Nothing was changed.",
+  "confirm.ui.unknown": "I could not tell whether it went through. Please check your account before trying again.",
+  "confirm.ui.busy": "Working",
+  "confirm.ui.hint": "Check the details, then confirm to go ahead."
 }

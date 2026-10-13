@@ -69,5 +69,15 @@
     "machine_written": true,
     "needs_native_review": true,
     "note": "Machine written, needs native speaker review before production use."
-  }
+  },
+  "verify.step2.email_generic": "உங்கள் பதிவு செய்த மின்னஞ்சல் முகவரிக்கு மின்னஞ்சல்",
+  "confirm.ui.confirm": "உறுதிப்படுத்து",
+  "confirm.ui.cancel": "ரத்து செய்",
+  "confirm.ui.expires": "{time} இல் காலாவதியாகும்",
+  "confirm.ui.expired": "இந்த கோரிக்கை காலாவதியானது. எதுவும் மாற்றப்படவில்லை.",
+  "confirm.ui.cancelled": "ரத்து செய்யப்பட்டது. எதுவும் மாற்றப்படவில்லை.",
+  "confirm.ui.invalid": "இந்த கோரிக்கை இனி செல்லுபடியாகாது. எதுவும் மாற்றப்படவில்லை.",
+  "confirm.ui.unknown": "அது நடந்ததா என்று சொல்ல முடியவில்லை. மீண்டும் முயற்சிக்கும் முன் உங்கள் கணக்கைச் சரிபார்க்கவும்.",
+  "confirm.ui.busy": "செயல்படுகிறது",
+  "confirm.ui.hint": "விவரங்களைச் சரிபார்த்து, தொடர உறுதிப்படுத்துங்கள்."
 }

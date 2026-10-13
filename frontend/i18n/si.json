@@ -69,5 +69,15 @@
     "machine_written": true,
     "needs_native_review": true,
     "note": "Machine written, needs native speaker review before production use."
-  }
+  },
+  "verify.step2.email_generic": "ඔබගේ ලියාපදිංචි විද්‍යුත් තැපැල් ලිපිනයට විද්‍යුත් තැපෑලක්",
+  "confirm.ui.confirm": "තහවුරු කරන්න",
+  "confirm.ui.cancel": "අවලංගු කරන්න",
+  "confirm.ui.expires": "{time} කින් කල් ඉකුත් වේ",
+  "confirm.ui.expired": "මෙම ඉල්ලීම කල් ඉකුත් විය. කිසිවක් වෙනස් කර නැත.",
+  "confirm.ui.cancelled": "අවලංගු කළා. කිසිවක් වෙනස් කර නැත.",
+  "confirm.ui.invalid": "මෙම ඉල්ලීම තවදුරටත් වලංගු නැත. කිසිවක් වෙනස් කර නැත.",
+  "confirm.ui.unknown": "එය සිදු වූයේදැයි කිව නොහැක. නැවත උත්සාහ කිරීමට පෙර ඔබේ ගිණුම පරීක්ෂා කරන්න.",
+  "confirm.ui.busy": "සකසමින්",
+  "confirm.ui.hint": "විස්තර පරීක්ෂා කර, ඉදිරියට යාමට තහවුරු කරන්න."
 }
