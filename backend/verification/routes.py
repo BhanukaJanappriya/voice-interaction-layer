@@ -1,7 +1,8 @@
 """HTTP endpoints of the verification wizard (plan 3.3 R3), prefix /verify.
 
     POST /verify/lookup    {name, phone, language}
-        200 {ticket, methods: [{id: "sms"|"email", masked}]}
+        200 {ticket, methods: [{id: "sms"|"email", masked}], mode: "local"|"hub"}
+            hub mode (VERIFY_OTP_BACKEND=hub): methods [{id: "sms", masked: null, generic: true}]
         422 {code: "invalid_details"}   wrong name or unknown number: ONE answer
         422 {code: "phone_format"}      impossible syntax only
         429 {code: "rate_limited", retry_after}
@@ -97,7 +98,7 @@ def lookup(body: LookupBody, request: Request):
         return _json(422, {"code": "phone_format"})
     except VerifyError as error:
         return _failure(error)
-    return _json(200, {"ticket": result.ticket, "methods": result.methods})
+    return _json(200, {"ticket": result.ticket, "methods": result.methods, "mode": result.mode})
 
 
 @router.post("/otp/send")
@@ -126,7 +127,7 @@ def otp_verify(body: VerifyBody, request: Request):
     # Same audience, lifetime and cookie as POST /auth/otp/verify, plus the
     # claim that makes this session "verified" for the access layer.
     token, _ = issue_token(
-        str(result.user_id), AUDIENCE_USER, config.USER_SESSION_MINUTES, extra={"amr": ["otp"]}
+        str(result.user_id), AUDIENCE_USER, config.USER_SESSION_MINUTES, extra={"amr": ["otp", "hub"] if result.hub else ["otp"]}
     )
     response = _json(200, {"display_name": result.display_name, "language": result.language})
     response.set_cookie(

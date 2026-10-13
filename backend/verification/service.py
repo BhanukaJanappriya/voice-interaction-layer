@@ -69,7 +69,8 @@ class VerifyError(Exception):
 @dataclass(frozen=True)
 class LookupResult:
     ticket: str
-    methods: list  # [{"id": "sms"|"email", "masked": str}]
+    methods: list  # [{"id": "sms"|"email", "masked": str}]; hub mode: [{"id": "sms", "masked": None, "generic": True}]
+    mode: str = "local"  # "local" or "hub" (VERIFY_OTP_BACKEND)
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ class SendResult:
     challenge_id: str
     expires_in: int
     resend_in: int
-    masked: str
+    masked: Optional[str]  # None in hub mode (the page shows a generic sentence)
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ class VerifyResult:
     user_id: int
     display_name: str
     language: str
+    hub: bool = False  # True: the hub verified the code (cookie claim amr gets "hub")
 
 
 def utcnow() -> datetime:
@@ -123,7 +125,9 @@ class VerificationService:
         lookup: Optional[CustomerLookup] = None,
         sender_resolver: Optional[Callable[[str], Optional[OtpSender]]] = None,
         clock: Callable[[], datetime] = utcnow,
+        hub_otp=None,  # otp.hub_backend.HubOtpBackend, for VERIFY_OTP_BACKEND=hub (see hub_mode.py)
     ):
+        self.hub_otp = hub_otp
         self.directory: CustomerLookup = lookup or select_customer_lookup()
         self._resolve_sender = sender_resolver or senders.sender_for
         self.clock = clock  # injectable, so tests can move time
@@ -139,6 +143,8 @@ class VerificationService:
     def lookup(self, name: str, phone: str, language: Optional[str], client_ip: str) -> LookupResult:
         """Raises auth.phone.InvalidPhoneNumber for impossible syntax (decided
         before anything is read), VerifyError otherwise."""
+        if hub_mode.active():
+            return hub_mode.lookup(self, name, phone, language, client_ip)
         phone_e164 = normalize_sl_landline(phone)
         phone_hash = hashing.hash_phone(phone_e164)
         ip_hash = hashing.hash_ip(client_ip)
@@ -209,6 +215,8 @@ class VerificationService:
         return record, claims.get("lang")
 
     def send_code(self, ticket: str, method: str, language: Optional[str], client_ip: str) -> SendResult:
+        if hub_mode.active():
+            return hub_mode.send_code(self, ticket, method, language, client_ip)
         ip_hash = hashing.hash_ip(client_ip)
         try:
             record, ticket_language = self._open_ticket(ticket)
@@ -336,6 +344,8 @@ class VerificationService:
         if retry is not None:
             audit.record("verify", "rate_limited", self.clock(), None, ip_hash)
             raise VerifyError("rate_limited", retry)
+        if hub_mode.active():
+            return hub_mode.verify_code(self, challenge_id, code, client_ip)
         challenge_id = (challenge_id or "")[:64]
         code = code or ""
         well_formed = len(code) == 6 and code.isascii() and code.isdigit()
@@ -469,3 +479,6 @@ def set_service(service: Optional[VerificationService]) -> None:
     global _service
     with _service_lock:
         _service = service
+
+
+from verification import hub_mode  # noqa: E402  (bottom: hub_mode imports this module)

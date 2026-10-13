@@ -366,7 +366,7 @@
 
     // ---- step 2: where to send ----------------------------------------
     function methodLabel(m) {
-      var key = m.id === "email" ? "verify.step2.email_option" : "verify.step2.sms_option";
+      var key = m.id === "email" ? "verify.step2.email_option" : (m.generic && !m.masked ? "verify.step2.sms_generic" : "verify.step2.sms_option");
       var text = t(key, { masked: m.masked });
       var parts = [el("span", { class: "slt-v-method-text", text: text })];
       if (m.masked && text.indexOf(m.masked) === -1) {
@@ -537,7 +537,8 @@
       var backBtn = textButton(t("verify.step1.back"), true);
 
       var masked = sent.masked || "";
-      var subtitle = el("p", { class: "slt-v-sub", text: t("verify.step3.subtitle", { masked: masked }) });
+      var subtitleKey = masked ? "verify.step3.subtitle" : "verify.step3.subtitle_generic";
+      var subtitle = el("p", { class: "slt-v-sub", text: t(subtitleKey, { masked: masked }) });
 
       var formEl = el("form", { class: "slt-v-form", novalidate: true }, [
         subtitle,
