@@ -152,7 +152,7 @@ def _mock_hub_module():
     mock = require_module("mcp_client.mock_hub", "mcp_client.mock_hub not delivered yet")
     if "customer_tools" not in inspect.signature(mock.MockHub.__init__).parameters:
         pytest.skip("MockHub(customer_tools=True) not delivered yet (Agent S)")
-    hub = mock.MockHub(mode="streamable", api_key=HUB_KEY, customer_tools=True)
+    hub = mock.MockHub(mode="sse", api_key=HUB_KEY, customer_tools=True)
     hub.start()
     yield hub
     hub.stop()
@@ -168,7 +168,10 @@ def env(customer_wired, llm_env, _mock_hub_module, monkeypatch):
     hub = _mock_hub_module
     hub.reset_counters()
     hub.authenticated.clear()
-    hub.authenticated.add(NATIONAL)
+    hub.connection_auth.clear()
+    hub.customer_payloads.clear()
+    hub.customer_tool_errors.clear()
+    hub.otp_customers[NATIONAL] = {"name": "Nimal Perera", "masked": "x"}
 
     monkeypatch.setattr(config, "MCP_HUB_URL", hub.url)
     monkeypatch.setattr(config, "MCP_HUB_API_KEY", HUB_KEY)
@@ -187,9 +190,35 @@ def env(customer_wired, llm_env, _mock_hub_module, monkeypatch):
 
     monkeypatch.setattr(hub_module.HubClient, "call_tool_output", spy)
 
+    # The customer's own pooled connection is the path of every customer call.
+    from mcp_gateway import session as session_module
+
+    original_session_call = session_module.HubSession.call
+
+    def session_spy(self, name, arguments, timeout=None):
+        attempted.append((name, dict(arguments)))
+        return original_session_call(self, name, arguments, timeout)
+
+    monkeypatch.setattr(session_module.HubSession, "call", session_spy)
+
     client = hub_module.HubClient(hub.url, "X-API-Key", HUB_KEY, 3.0, 0, 300.0)
     hub_module.set_hub(client)
     _clear_customer_caches()
+
+    # The login belongs to one pooled connection the gateway keeps per customer.
+    from mcp_gateway import gateway as gateway_module
+    from mcp_gateway import pool as pool_module
+
+    pool = pool_module.SessionPool(sweep=False)
+    pool_module.set_pool(pool)
+    gateway_module._service_types.clear()
+    started = gateway_module.begin_login(NATIONAL, 2)
+    assert started.ok, started.reason
+    assert gateway_module.finish_login(NATIONAL, started.hub_session_id, hub.otp_code).ok
+    hub.reset_counters()
+    attempted.clear()
+    llm_env.gateway = gateway_module
+    llm_env.pool = pool
 
     llm_env.hub = hub
     llm_env.hub_client = client
@@ -197,10 +226,18 @@ def env(customer_wired, llm_env, _mock_hub_module, monkeypatch):
     llm_env.hub_module = hub_module
     yield llm_env
 
+    pool.close_all()
+    pool_module.set_pool(None)
     hub_module.set_hub(None)
     _clear_customer_caches()
     tried = {name for name, _ in attempted} | {name for name, _ in hub.tool_calls}
     assert not (tried & FORBIDDEN_TOOLS), f"the assistant called a forbidden tool: {sorted(tried & FORBIDDEN_TOOLS)}"
+
+
+def _access_for_number():
+    from access import AccessContext
+
+    return AccessContext.verified(1, "Nimal", USER_PHONE_E164)
 
 
 def _clear_customer_caches():
@@ -297,12 +334,14 @@ def raw_results(env, tool_names):
     from mcp_client import tools as hub_tools
 
     texts = []
+    env.hub.authenticated.add(NATIONAL)  # any connection may ask, for this trusted read only
     for name in tool_names:
         try:
             output = hub_tools.call_tool_sync(name, {"telephone_no": NATIONAL})
         except Exception as exc:  # the mock may not offer every tool
             pytest.fail(f"the mock hub could not serve {name} with customer_tools=True: {exc!r}")
         texts.append(output.text or json.dumps(output.structured))
+    env.hub.authenticated.discard(NATIONAL)
     env.attempted.clear()
     env.hub.reset_counters()
     return texts
@@ -431,12 +470,10 @@ def test_a_session_without_otp_in_amr_gets_nothing_from_the_hub(env, make_user):
 
 @pytest.mark.parametrize("language", ["en", "si", "ta"])
 def test_unauthenticated_on_the_hub_gets_the_reverify_text_and_no_model(env, verified_cookie, language):
-    env.hub.authenticated.discard(NATIONAL)
+    env.gateway.drop_session(env.pool and _access_for_number())
     body = post_chat(env, QUESTIONS["balance"][language], language, verified_cookie)
     env.assert_no_model_called()
-    assert hub_customer_calls(env), "the hub had to be asked to learn that"
-    for _, args in hub_customer_calls(env):
-        assert args.get("telephone_no") == NATIONAL
+    assert env.hub.tool_calls == [], "no login on the gateway, so the hub is not asked"
     expect_translation(body["reply"], "customer.reauth_needed", language)
 
 
@@ -463,6 +500,12 @@ def dead_hub(env, monkeypatch):
             port = listener.getsockname()[1]
         client = env.hub_module.HubClient(f"http://127.0.0.1:{port}", "X-API-Key", HUB_KEY, 0.6, 0, 300.0)
         env.hub_module.set_hub(client)
+        # The customer's pooled connection cannot answer either.
+        def _silent(*args, **kwargs):
+            raise TimeoutError("hub down")
+
+        for key in env.pool.keys():
+            env.pool.get(key).call = _silent
         monkeypatch.setattr(config, "CUSTOMER_TOOLS_BUDGET_SECONDS", 1.5)
         _clear_customer_caches()
 
@@ -532,11 +575,13 @@ def test_secret_looking_keys_from_the_hub_never_reach_the_model(env, verified_co
         "password": "SECRET-PASSWORD-ccc333",
         "otp": "SECRET-OTP-ddd444",
     }
-    original = env.hub_module.HubClient.call_tool_output  # the spy of `env`
-    ToolOutput = env.hub_module.ToolOutput
+    from mcp_gateway import session as session_module
 
-    async def leaky(self, name, arguments, *args, **kwargs):
-        out = await original(self, name, arguments, *args, **kwargs)
+    original = session_module.HubSession.call  # the spy of `env`
+    ToolOutput = session_module.CallOutput
+
+    def leaky(self, name, arguments, *args, **kwargs):
+        out = original(self, name, arguments, *args, **kwargs)
         try:
             body = json.loads(out.text)
         except ValueError:
@@ -546,7 +591,7 @@ def test_secret_looking_keys_from_the_hub_never_reach_the_model(env, verified_co
         body = {**body, **secrets, "customer": {"refresh_token": secrets["refresh_token"]}}
         return ToolOutput(text=json.dumps(body), structured=body)
 
-    monkeypatch.setattr(env.hub_module.HubClient, "call_tool_output", leaky)
+    monkeypatch.setattr(session_module.HubSession, "call", leaky)
     body = post_chat(env, QUESTIONS["balance"]["en"], "en", verified_cookie)
     assert body["mode"].endswith(SUFFIX), "the data itself should still reach the model"
     prompt = local_prompt_text(env)

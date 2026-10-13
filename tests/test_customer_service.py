@@ -40,6 +40,9 @@ def mods():
         hub_tools=require_module("mcp_client.tools"),
         mock=require_module("mcp_client.mock_hub"),
         access=require_module("access"),
+        gateway=require_module("mcp_gateway.gateway"),
+        pool=require_module("mcp_gateway.pool"),
+        session_dead=require_module("mcp_gateway.session").SessionDead,
     ))
 
 
@@ -54,17 +57,30 @@ def mock_hub(mods):
 @pytest.fixture
 def hub(mods, mock_hub, monkeypatch):
     mock_hub.authenticated.clear()
-    mock_hub.authenticated.update({FIBRE, LTE})
+    mock_hub.connection_auth.clear()
     mock_hub.customer_tool_errors.clear()
     mock_hub.customer_tool_delays.clear()
     mock_hub.customer_payloads.clear()
-    mock_hub.reset_counters()
+    mock_hub.otp_customers[FIBRE] = {"name": "Nimal Perera", "masked": "x"}
+    mock_hub.otp_customers[LTE] = {"name": "Kamala", "masked": "y"}
     mods.service.clear_cache()
     monkeypatch.setattr(config, "CUSTOMER_TOOLS_ENABLED", True)
     monkeypatch.setattr(config, "CUSTOMER_TOOLS_BUDGET_SECONDS", 5.0)
     monkeypatch.setattr(config, "CUSTOMER_TOOLS_MAX_CHARS", 6000)
+    monkeypatch.setattr(config, "STATE_CHANGING_TOOLS_ENABLED", False)
     mods.client.set_hub(mods.client.HubClient(mock_hub.url, "X-API-Key", KEY, 3.0, 0, 30.0))
+    pool = mods.pool.SessionPool(sweep=False)
+    mods.pool.set_pool(pool)
+    mods.gateway._service_types.clear()
+    # Real per connection logins: the gateway keeps each customer's connection.
+    for number in (FIBRE, LTE):
+        start = mods.gateway.begin_login(number, 2)
+        assert start.ok, start.reason
+        assert mods.gateway.finish_login(number, start.hub_session_id, mock_hub.otp_code).ok
+    mock_hub.reset_counters()
     yield mock_hub
+    pool.close_all()
+    mods.pool.set_pool(None)
     mods.client.set_hub(None)
 
 
@@ -76,6 +92,19 @@ def fibre(mods):
 @pytest.fixture
 def lte(mods):
     return mods.access.AccessContext.verified(2, "Kamala Silva", LTE_E164)
+
+
+def kill_connections(mods):
+    """The hub connections of every pooled customer die (hub restart, network)."""
+    pool = mods.pool.get_pool()
+
+    def dead(*args, **kwargs):
+        raise mods.session_dead("connection lost")
+
+    for key in pool.keys():
+        session = pool.get(key)
+        if session is not None:
+            session.call = dead
 
 
 def called(hub):
@@ -226,7 +255,7 @@ def test_postpaid_fibre_balance(mods, hub, fibre):
     assert out.tools == ("show_gb_balance",)
     assert "[show_gb_balance]" in out.context and "42.5" in out.context
     assert called(hub) == ["show_service_detail", "show_gb_balance"]  # the probe, then the tool
-    assert set(out.timings_ms) >= {"show_gb_balance", "show_service_detail"}
+    assert set(out.timings_ms) >= {"show_gb_balance"}
 
 
 def test_postpaid_bill_uses_bill_tools(mods, hub, fibre):
@@ -249,7 +278,8 @@ def test_lte_prepaid_balance_and_reload_history(mods, hub, lte):
 def test_service_detail_answers_the_account_topic_without_a_second_call(mods, hub, fibre):
     out = mods.cs.fetch("What is my current package", "en", fibre)
     assert out.tools == ("show_service_detail",)
-    assert called(hub).count("show_service_detail") == 1
+    # The gateway reads the service type once (cached), then the topic call itself.
+    assert called(hub).count("show_service_detail") == 2
 
 
 def test_faults_need_no_probe(mods, hub, fibre):
@@ -269,6 +299,7 @@ def test_package_information_uses_empty_package_name(mods, hub, fibre):
 def test_product_type_is_cached_for_ten_minutes(mods, hub, fibre, monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(mods.service, "_now", lambda: clock[0])
+    monkeypatch.setattr(mods.gateway, "_clock", lambda: clock[0])
     mods.cs.fetch("What is my data balance?", "en", fibre)
     mods.cs.fetch("What is my data balance?", "en", fibre)
     assert called(hub).count("show_service_detail") == 1
@@ -277,12 +308,12 @@ def test_product_type_is_cached_for_ten_minutes(mods, hub, fibre, monkeypatch):
     assert called(hub).count("show_service_detail") == 2
 
 
-def test_unknown_product_tries_postpaid_then_lte(mods, hub, lte):
+def test_unknown_service_type_gets_no_product_specific_tool(mods, hub, lte):
+    # The gateway offers only the common tools to a service type it cannot read.
     hub.customer_payloads["show_service_detail"] = "Service is fine"  # no product words
     out = mods.cs.fetch("What is my data balance?", "en", lte)
-    assert out.kind == "data" and out.product == "lte_prepaid"
-    names = called(hub)
-    assert names.index("show_gb_balance") < names.index("show_lte_wallet_detail")
+    assert out.kind == "unavailable"
+    assert set(called(hub)) <= {"show_service_detail"}
 
 
 def test_product_detection_from_text(mods):
@@ -325,23 +356,24 @@ def test_a_model_chosen_number_in_the_call_is_replaced_by_the_verified_one(mods,
 
 
 def test_not_authenticated_on_the_hub_is_reauth(mods, hub, fibre):
-    hub.authenticated.discard(FIBRE)
+    mods.gateway.drop_session(fibre)  # the pooled login is gone
     out = mods.cs.fetch("What is my data balance?", "si", fibre)
     assert out.kind == "reauth" and out.context == ""
     assert out.canned == mods.cs.canned("reauth_needed", "si")
-    assert hub.tool_calls  # it did ask the hub
+    assert hub.tool_calls == []  # no login, so the hub is not asked
 
 
-def test_the_otp_tools_of_the_mock_sign_a_number_in(mods, hub, fibre):
-    hub.authenticated.discard(FIBRE)
-    hub.otp_customers[FIBRE] = {"name": "Nimal Perera", "masked": "07X"}
+def test_a_login_on_another_connection_does_not_help(mods, hub, fibre):
+    """Like the real hub: verify on one connection does not sign in another, and the
+    gateway only ever uses the customer's own pooled connection."""
+    mods.gateway.drop_session(fibre)
     assert mods.cs.fetch("What is my bill?", "en", fibre).kind == "reauth"
     sent = json.loads(mods.hub_tools.call_tool_sync("validate_customer_and_send_otp", {"telephone_no": FIBRE}).text)
     mods.hub_tools.call_tool_sync(
         "verify_otp_and_authenticate", {"telephone_no": FIBRE, "session_id": sent["session_id"], "otp_value": hub.otp_code}
     )
     mods.service.clear_cache()
-    assert mods.cs.fetch("What is my bill?", "en", fibre).kind == "data"
+    assert mods.cs.fetch("What is my bill?", "en", fibre).kind == "reauth"
 
 
 @pytest.mark.parametrize(
@@ -373,20 +405,18 @@ def test_an_error_inside_a_successful_body_is_classified(mods, hub, fibre):
 
 
 def test_hub_down_is_unavailable(mods, hub, fibre):
-    mods.client.set_hub(mods.client.HubClient("http://127.0.0.1:1", "X-API-Key", KEY, 1.0, 0, 30.0))
-    out = mods.cs.fetch("What is my data balance?", "en", fibre)
+    kill_connections(mods)
+    out = mods.cs.fetch("I have a fault", "en", fibre)
     assert out.kind == "unavailable"
     assert out.canned == mods.cs.canned("unavailable", "en")
     assert "1212" in out.canned and "0113121212" in out.canned and "1222" in out.canned
 
 
-def test_open_breaker_is_unavailable_without_traffic(mods, hub, fibre):
-    client = mods.client.HubClient("http://127.0.0.1:1", "X-API-Key", KEY, 1.0, 0, 60.0)
-    mods.client.set_hub(client)
-    assert mods.cs.fetch("What is my data balance?", "en", fibre).kind == "unavailable"
-    assert client.status()["breaker_open"]
-    out = mods.cs.fetch("I have a fault", "en", fibre)
-    assert out.kind == "unavailable"
+def test_a_lost_connection_is_unavailable_then_needs_a_new_login(mods, hub, fibre):
+    kill_connections(mods)
+    assert mods.cs.fetch("I have a fault", "en", fibre).kind == "unavailable"
+    hub.reset_counters()
+    assert mods.cs.fetch("What is my bill?", "en", fibre).kind == "reauth"
     assert hub.requests == 0
 
 
@@ -558,7 +588,7 @@ def test_no_customer_data_in_stdout_or_logs(mods, hub, fibre, lte, capsys, caplo
         mods.service.clear_cache()
         out = mods.cs.fetch(text, "en", ctx)
         assert out.kind == "data"
-    hub.authenticated.clear()
+    mods.gateway.drop_session(fibre)
     assert mods.cs.fetch("What is my data balance?", "en", fibre).kind == "reauth"
     captured_text.append(capsys.readouterr().out)
     captured_text.append(caplog.text)

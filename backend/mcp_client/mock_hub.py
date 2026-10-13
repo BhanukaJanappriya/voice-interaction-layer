@@ -34,7 +34,7 @@ import uuid
 from typing import Any, Optional
 
 import uvicorn
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -45,6 +45,8 @@ DEFAULT_KEY = "mock-hub-key-0123456789"
 FIBRE_NUMBER = "0112345678"  # postpaid fibre
 LTE_NUMBER = "0712345670"  # LTE prepaid
 NOT_AUTHENTICATED = "Customer not authenticated. Call validate_customer_and_send_otp first."
+NO_ACTIVE_SESSION = "No active session for {number}. Ask the customer to authenticate with validate_customer_and_send_otp."
+OTP_CHANNELS = {1: "sms", 2: "email", 3: "voice"}
 
 
 class _Gate:
@@ -148,7 +150,12 @@ class MockHub:
         # says it behaves; the OTP tools above add a number when verify succeeds.
         # The response shapes are a guess (unverified against the real hub).
         self.customer_tools = customer_tools
+        # Numbers that any connection may use (a shortcut for tests that do not
+        # care about login). The real hub ties a login to ONE connection, and so
+        # does this mock: verify adds the number to connection_auth only.
         self.authenticated: set[str] = set()
+        self.connection_auth: dict[int, tuple[Any, set[str]]] = {}  # id(server session) -> (session, numbers)
+        self.latencies: dict[str, Any] = {"search_knowledgebase_tool": {"calls": 3, "avg_ms": 1200.0}}
         self.customer_products: dict[str, str] = {FIBRE_NUMBER: "postpaid", LTE_NUMBER: "lte_prepaid"}
         self.customer_tool_errors: dict[str, str] = {}  # tool name -> error text to raise
         self.customer_tool_delays: dict[str, float] = {}  # tool name -> seconds to wait
@@ -182,9 +189,13 @@ class MockHub:
             @mcp.tool(name="search_knowledgebase_tool", description="Search the SLT knowledge base.")
             async def search_knowledgebase_tool(query: str, top_k: int = 3) -> str:
                 record("search_knowledgebase_tool", query=query, top_k=top_k)
+                if hub.customer_tools:
+                    return json.dumps(
+                        {"query": query, "chunks": [{"content": hub.search_text, "score": 0.91}], "count": 1}
+                    )
                 return hub.search_text
 
-        if allowed("purchase_extra_gb"):
+        if allowed("purchase_extra_gb") and not hub.customer_tools:
 
             @mcp.tool(name="purchase_extra_gb", description="Buys extra GB (must never be called by the assistant).")
             async def purchase_extra_gb(telephone_no: str) -> str:
@@ -201,7 +212,9 @@ class MockHub:
         if allowed("validate_customer_and_send_otp"):
 
             @mcp.tool(name="validate_customer_and_send_otp", description="Checks the customer and sends an OTP.")
-            async def validate_customer_and_send_otp(telephone_no: str, otp_media: int = 2) -> str:
+            async def validate_customer_and_send_otp(telephone_no: str, ctx: Context, otp_media: int = 2) -> str:
+                if hub.customer_tools:
+                    return hub._real_validate(record, telephone_no, otp_media)
                 record("validate_customer_and_send_otp", telephone_no=telephone_no, otp_media=otp_media)
                 customer = hub.otp_customers.get(telephone_no)
                 if customer is None:
@@ -217,7 +230,9 @@ class MockHub:
         if allowed("verify_otp_and_authenticate"):
 
             @mcp.tool(name="verify_otp_and_authenticate", description="Verifies the OTP.")
-            async def verify_otp_and_authenticate(telephone_no: str, session_id: str, otp_value: str) -> str:
+            async def verify_otp_and_authenticate(telephone_no: str, session_id: str, otp_value: str, ctx: Context) -> str:
+                if hub.customer_tools:
+                    return hub._real_verify(record, ctx, telephone_no, session_id, otp_value)
                 record("verify_otp_and_authenticate", telephone_no=telephone_no, session_id=session_id, otp_value=otp_value)
                 session = hub._otp_sessions.get(session_id)
                 if session is None or session["phone"] != telephone_no or otp_value != hub.otp_code:
@@ -298,7 +313,55 @@ class MockHub:
             digits = "0" + digits[2:]
         return digits
 
-    def _customer_reply(self, name: str, telephone_no: str, product: Optional[str], build) -> str:
+    # The real hub's login belongs to one MCP connection (measured live): the
+    # verify call on connection A authenticates tools on A only.
+
+    def _connection_numbers(self, ctx: Context) -> set:
+        # This SDK builds a new ServerSession wrapper per request; the Connection
+        # object under it is the one that lives as long as the MCP connection.
+        session = getattr(ctx.session, "_connection", None) or ctx.session
+        with self._lock:
+            entry = self.connection_auth.get(id(session))
+            if entry is None or entry[0] is not session:
+                entry = (session, set())  # the session is kept so its id is never reused
+                self.connection_auth[id(session)] = entry
+            return entry[1]
+
+    def _real_validate(self, record, telephone_no: str, otp_media: int) -> str:
+        channel = OTP_CHANNELS.get(otp_media, "email")
+        record("validate_customer_and_send_otp", telephone_no=telephone_no, otp_media=otp_media, channel=channel)
+        session_id = uuid.uuid4().hex[:16]
+        customer = self.otp_customers.get(telephone_no)
+        if customer is None:
+            return json.dumps({
+                "success": False,
+                "error": "Customer validation failed: {'status': 'error', 'message': 'Customer not found'}",
+                "session_id": session_id})
+        with self._lock:
+            self._otp_sessions[session_id] = {"phone": telephone_no, "tries": 0}
+            self.sms_outbox.append(
+                {"to": telephone_no, "code": self.otp_code, "session_id": session_id, "channel": channel})
+        contact = (
+            "{'mobile' : '%s','email' : '%s','accountCategory' : 'Individual'}"
+            % (customer.get("masked_mobile", "XXXXXX4567"), customer.get("masked_email", "XXXXXXXXXXth22@gmail.com"))
+        )
+        return json.dumps({"success": True, "session_id": session_id, "contact_info": contact,
+                           "otp_status": "OTP send success"})
+
+    def _real_verify(self, record, ctx: Context, telephone_no: str, session_id: str, otp_value: str) -> str:
+        record("verify_otp_and_authenticate", telephone_no=telephone_no, session_id=session_id, otp_value=otp_value)
+        with self._lock:
+            session = self._otp_sessions.get(session_id)
+        if session is None or session["phone"] != telephone_no or otp_value != self.otp_code:
+            return json.dumps({"success": False, "error": "OTP verification failed: invalid or expired code"})
+        customer = self.otp_customers.get(telephone_no, {})
+        self._connection_numbers(ctx).add(self._national(telephone_no))
+        return json.dumps({
+            "success": True, "subscriber_id": "SUB-0001", "account_number": "ACC-0001",
+            "subscriber_package": customer.get("package", "Fibre Unlimited 60"),
+            "privileges": "view balance, view bills", "note": "Authenticated; use the other tools with telephone_no."})
+
+    def _customer_reply(self, name: str, telephone_no: str, product: Optional[str], build, ctx: Context) -> str:
         """Common path of every fake customer tool: authentication, forced
         errors, product type, then the JSON text. product is 'postpaid',
         'lte_prepaid' or None for tools that answer for both kinds."""
@@ -308,7 +371,9 @@ class MockHub:
             forced = self.customer_tool_errors.get(name)
             raw = self.customer_payloads.get(name)
         if not known:
-            raise ToolError(NOT_AUTHENTICATED)
+            known = number in self._connection_numbers(ctx)
+        if not known:
+            return json.dumps({"success": False, "error": NO_ACTIVE_SESSION.format(number=number)})
         if forced:
             raise ToolError(forced)
         actual = self.customer_products.get(number, "postpaid")
@@ -325,12 +390,12 @@ class MockHub:
             if not allowed(name):
                 return
 
-            async def tool(telephone_no: str) -> str:
+            async def tool(telephone_no: str, ctx: Context) -> str:
                 record(name, telephone_no=telephone_no)
                 delay = hub.customer_tool_delays.get(name)
                 if delay:
                     await asyncio.sleep(delay)
-                return hub._customer_reply(name, telephone_no, product, build)
+                return hub._customer_reply(name, telephone_no, product, build, ctx)
 
             mcp.tool(name=name, description=description)(tool)
 
@@ -376,9 +441,9 @@ class MockHub:
             if allowed(name):
 
                 def make(tool_name: str):
-                    async def tool(telephone_no: str, package_name: str = "") -> str:
+                    async def tool(telephone_no: str, ctx: Context, package_name: str = "") -> str:
                         record(tool_name, telephone_no=telephone_no, package_name=package_name)
-                        return hub._customer_reply(tool_name, telephone_no, pay, packages)
+                        return hub._customer_reply(tool_name, telephone_no, pay, packages, ctx)
 
                     return tool
 
@@ -387,31 +452,51 @@ class MockHub:
         if allowed("show_reload_history"):
 
             @mcp.tool(name="show_reload_history", description="Reload history.")
-            async def show_reload_history(telephone_no: str, from_date: str = "", to_date: str = "") -> str:
+            async def show_reload_history(telephone_no: str, ctx: Context, from_date: str = "", to_date: str = "") -> str:
                 record("show_reload_history", telephone_no=telephone_no, from_date=from_date, to_date=to_date)
                 return hub._customer_reply("show_reload_history", telephone_no, lte, lambda n, p: {
-                    "status": "success", "reloads": [{"date": "2026-10-01", "amount": 500.0, "channel": "App"}]})
+                    "status": "success", "reloads": [{"date": "2026-10-01", "amount": 500.0, "channel": "App"}]}, ctx)
 
         # Tools that change things: registered so a test can prove they are never called.
-        for name in ("add_vas_data_bundle", "subscribe_lte_prepaid_package"):
+        changing = (
+            ("purchase_extra_gb", {"success": True, "message": "Extra GB purchase submitted"}),
+            ("add_vas_data_bundle", {"success": True, "message": "VAS bundle added"}),
+            ("subscribe_lte_prepaid_package", {"success": True, "message": "Package subscribed"}),
+        )
+        for name, reply in changing:
             if allowed(name):
 
-                def make_change(tool_name: str):
-                    async def tool(telephone_no: str, package_id: int = 0) -> str:
+                def make_change(tool_name: str, body: dict):
+                    async def tool(telephone_no: str, ctx: Context, package_id: int = 0) -> str:
                         record(tool_name, telephone_no=telephone_no, package_id=package_id)
-                        return "changed"
+                        return hub._customer_reply(tool_name, telephone_no, None, lambda n, p: body, ctx)
 
                     return tool
 
                 mcp.tool(name=name, description="Changes the account (must never be called by the assistant).")(
-                    make_change(name)
+                    make_change(name, reply)
                 )
         if allowed("log_fault"):
 
             @mcp.tool(name="log_fault", description="Opens a fault ticket (must never be called by the assistant).")
-            async def log_fault(telephone_no: str, service_id: str = "") -> str:
+            async def log_fault(telephone_no: str, ctx: Context, service_id: str = "") -> str:
                 record("log_fault", telephone_no=telephone_no, service_id=service_id)
-                return "logged"
+                return hub._customer_reply(
+                    "log_fault", telephone_no, None, lambda n, p: {"success": True, "faultId": "F-2002"}, ctx)
+
+        if allowed("compare_package"):
+
+            @mcp.tool(name="compare_package", description="Compares two packages.")
+            async def compare_package(current_package_name: str, current_price: float, top_k: int = 3) -> str:
+                record("compare_package", current_package_name=current_package_name, current_price=current_price, top_k=top_k)
+                return json.dumps({"success": True, "current": current_package_name, "alternatives": [{"name": "Unlimited Home", "price": 5900}]})
+
+        if allowed("get_function_latencies"):
+
+            @mcp.tool(name="get_function_latencies", description="Latency statistics of the hub tools.")
+            async def get_function_latencies() -> str:
+                record("get_function_latencies")
+                return json.dumps(hub.latencies)
 
         if allowed("authenticate_with_token"):
 

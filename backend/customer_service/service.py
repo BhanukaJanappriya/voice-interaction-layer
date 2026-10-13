@@ -8,6 +8,10 @@ CustomerOutcome whose kind tells the caller what to do:
     reauth       the hub says the customer is not signed in: answer with canned
     unavailable  hub down, breaker open, timeout, nothing answered: answer with canned
 
+Every call goes through mcp_gateway.call: the hub ties a login to one pooled
+connection per verified customer and the gateway owns it, forces telephone_no,
+filters by tier and service type, and maps "No active session" to reauth.
+
 Privacy: only tool names, outcomes and milliseconds are ever printed. Customer
 text, numbers and payloads are never logged. Only tools.ALLOWED_TOOLS are called,
 and the allow list is checked again right before each call.
@@ -24,7 +28,7 @@ from typing import Any, Optional
 
 import config
 from access.tool_gate import normalize_phone
-from mcp_client import tools as hub_tools
+import mcp_gateway
 from mcp_client.errors import HubAuthError, HubBreakerOpen, HubToolError, HubUnavailable
 
 from . import intent as intent_module
@@ -111,6 +115,17 @@ def product_from(output: Any) -> Optional[str]:
 # Failure classification
 
 
+def _gateway_product(access) -> Optional[str]:
+    """postpaid, lte_prepaid, None (unknown) or "reauth" (no hub login)."""
+    try:
+        if not mcp_gateway.has_session(access):
+            return "reauth"
+        found = mcp_gateway.service_type(access)
+    except Exception:  # noqa: BLE001
+        return None
+    return {"postpaid": POSTPAID, "lte_prepaid": LTE_PREPAID}.get(found)
+
+
 def classify_failure(exc: BaseException) -> tuple:
     """(status, detail) of an exception from a hub call."""
     from access import AccessDenied
@@ -142,12 +157,26 @@ def _one(call: ToolCall, access, number: str, deadline: float) -> _Result:
         if remaining <= 0.05:
             return _Result(call.name, "unavailable", "timeout", ms=0.0)
         arguments = dict(call.arguments)
-        # The access gate requires the verified customer's own number here and
-        # rewrites it to the national form; no other number is ever sent.
-        arguments["telephone_no"] = number
-        output = hub_tools.call_tool_sync(call.name, arguments, remaining, access=access)
-        message = render.payload_error(render.extract(output))
+        # The gateway forces the verified customer's own number into the call;
+        # no other number is ever sent.
+        arguments.pop("telephone_no", None)
+        result = mcp_gateway.call(call.name, arguments, access, budget=remaining)
         ms = (time.perf_counter() - started) * 1000.0
+        if result.kind == "reauth":
+            return _Result(call.name, "reauth", ms=ms)
+        if result.kind in ("unavailable", "timeout"):
+            return _Result(call.name, "unavailable", "timeout" if result.kind == "timeout" else "", ms=ms)
+        if result.kind == "refused":
+            if result.reason == "service_type":
+                return _Result(call.name, "error", "not_applicable", ms=ms)
+            return _Result(call.name, "denied", ms=ms)
+        if result.kind == "error":
+            message = result.text or ""
+            if _AUTH_ERROR.search(message):
+                return _Result(call.name, "reauth", ms=ms)
+            return _Result(call.name, "error", "not_applicable" if _NOT_APPLICABLE.search(message) else "", ms=ms)
+        output = result.text
+        message = render.payload_error(render.extract(output))
         if message is None:
             return _Result(call.name, "ok", output=output, ms=ms)
         if _AUTH_ERROR.search(message):
@@ -175,6 +204,12 @@ def _run(calls: list, access, number: str, deadline: float) -> list:
             future.cancel()
             results.append(_Result(call.name, "unavailable", "timeout"))
     return results
+
+
+def _limited(topics, product, max_calls: Optional[int]) -> list:
+    """The calls for the topics, cut to the first max_calls (topic order)."""
+    calls = calls_for(topics, product)
+    return calls if max_calls is None else calls[: max(int(max_calls), 0)]
 
 
 def plan(text: str, language: Optional[str], access) -> list:
@@ -205,7 +240,7 @@ def _outcome(kind: str, language, found, results, product, started: float) -> Cu
     return out
 
 
-def _fetch(text: str, language, access) -> CustomerOutcome:
+def _fetch(text: str, language, access, max_calls: Optional[int] = None) -> CustomerOutcome:
     started = time.perf_counter()
     if not getattr(config, "CUSTOMER_TOOLS_ENABLED", True):
         return CustomerOutcome()
@@ -224,21 +259,20 @@ def _fetch(text: str, language, access) -> CustomerOutcome:
     results: list = []
 
     # Learn the product type first, unless both families need the same tools.
+    # The gateway reads it once from show_service_detail on the customer's own
+    # connection and caches it, so the same answer serves the tool filter.
     postpaid_names = [c.name for c in calls_for(found.topics, POSTPAID)]
     lte_names = [c.name for c in calls_for(found.topics, LTE_PREPAID)]
     probed: dict = {}
     if product is None and postpaid_names != lte_names:
-        probe = _run([ToolCall("show_service_detail", {}, "account")], access, number, deadline)[0]
-        if probe.status in ("reauth", "unavailable"):
-            return _outcome(probe.status, language, found, [probe], None, started)
-        if probe.status == "ok":
-            product = product_from(probe.output)
-            if product:
-                _remember_product(number, product)
-        probed[probe.name] = probe
-        results.append(probe)
+        learned = _gateway_product(access)
+        if learned == "reauth":
+            return _outcome("reauth", language, found, [_Result("show_service_detail", "reauth")], None, started)
+        if learned:
+            product = learned
+            _remember_product(number, product)
 
-    calls = [c for c in calls_for(found.topics, product) if c.name not in probed]
+    calls = [c for c in _limited(found.topics, product, max_calls) if c.name not in probed]
     results.extend(_run(calls, access, number, deadline))
 
     # Unknown product: the postpaid set was tried, try the LTE set once if every call said "not applicable".
@@ -253,7 +287,7 @@ def _fetch(text: str, language, access) -> CustomerOutcome:
                 product = LTE_PREPAID
                 _remember_product(number, product)
 
-    answered = [r for r in results if r.status == "ok" and r.name in {c.name for c in calls_for(found.topics, product)}]
+    answered = [r for r in results if r.status == "ok" and r.name in {c.name for c in _limited(found.topics, product, max_calls)}]
     if not answered:
         statuses = {r.status for r in results}
         if "reauth" in statuses:
@@ -262,7 +296,7 @@ def _fetch(text: str, language, access) -> CustomerOutcome:
             return _outcome("none", language, found, results, product, started)
         return _outcome("unavailable", language, found, results, product, started)
 
-    ordered = {c.name: i for i, c in enumerate(calls_for(found.topics, product))}
+    ordered = {c.name: i for i, c in enumerate(_limited(found.topics, product, max_calls))}
     answered.sort(key=lambda r: ordered.get(r.name, 99))
     blocks = [render.block(r.name, r.output) for r in answered]
     out = _outcome("data", language, found, results, product, started)
@@ -271,10 +305,11 @@ def _fetch(text: str, language, access) -> CustomerOutcome:
     return out
 
 
-def fetch(text: str, language: Optional[str], access) -> CustomerOutcome:
-    """Blocking, never raises. See the module docstring for the kinds."""
+def fetch(text: str, language: Optional[str], access, max_calls: Optional[int] = None) -> CustomerOutcome:
+    """Blocking, never raises. See the module docstring for the kinds.
+    max_calls caps the number of topic tools asked in one turn."""
     try:
-        return _fetch(text, language, access)
+        return _fetch(text, language, access, max_calls)
     except Exception as exc:  # noqa: BLE001 - an internal bug must not break the chat
         print(f"Customer data: internal error {type(exc).__name__}")
         return CustomerOutcome(
