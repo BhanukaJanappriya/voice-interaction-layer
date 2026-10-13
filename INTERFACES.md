@@ -610,3 +610,45 @@ GET /health: customer_service {enabled, data_to_cloud_llm, data_source}, verific
 config: CUSTOMER_TOOLS_ENABLED, CUSTOMER_DATA_TO_CLOUD_LLM, CUSTOMER_TOOLS_BUDGET_SECONDS,
     CUSTOMER_TOOLS_MAX_CHARS, VERIFY_OTP_BACKEND
 i18n: verify.neutral_name (backend), verify.step2.sms_generic and verify.step3.subtitle_generic (frontend)
+
+
+Additions for the hub as the only source (2026-10-13). Nothing above changed except where noted.
+
+config: ANSWER_SOURCE (mcp_hub default | any other value keeps the earlier behaviour),
+    TOOL_ACCESS_PATH, HUB_SESSION_IDLE_SECONDS, HUB_SESSION_MAX, EXPOSE_LATENCY_TOOL, KB_MIN_SCORE,
+    KB_MAX_CHARS, STATE_CHANGING_TOOLS_ENABLED (false), CONFIRMATION_TTL_SECONDS (60)
+
+mcp_gateway
+    call(name, arguments, access, *, budget=None, confirmed=False) -> GatewayResult   never raises
+    GatewayResult(kind ok|error|reauth|unavailable|refused|timeout, text, data, ms, tool, reason, service_type)
+    begin_login(phone_national, otp_media 1|2|3) -> LoginStart(ok, hub_session_id, masked_mobile, masked_email, reason)
+    finish_login(phone_national, hub_session_id, code) -> LoginResult(ok, reason, name, subscriber_present)
+    end_login(phone), drop_session(access), has_session(access), service_type(access)
+    tool_schemas(access, service_type=None, include_state_changing=False), status(), latencies()
+    access_matrix.load()/reload(), audit.recent()
+
+tool_agent
+    prepare(text, language, access, user_name=None, on_status=None) -> TurnPlan   never raises
+    TurnPlan(kind pass|canned|grounded, canned, context, clause, private, mode_suffix, status_key,
+             tools, timings {tool_ms}, expired)
+    schemas_for(access), stats(), for_speech(text, language), shorten_for_voice(items, limit)
+
+confirmations
+    propose, pending_for(access), confirm(access, token), cancel(access, token),
+    intercept(access, text, language), start(access, text, language)
+    HTTP: GET /confirm/pending, POST /confirm/{token}/accept, POST /confirm/{token}/cancel
+
+agent.Orchestrator: respond and respond_stream take status_cb(key); last_expired, last_timings
+    {tool_ms, llm_ms}; last_mode may be "SLT hub (fixed reply)" or end with " + SLT hub" or
+    " + SLT account data"
+POST /chat: the response keeps {reply, mode} and adds, only when they have a value,
+    confirmation {id, tool, title, lines[{label,value}], expires_in, state}, expired true, timings
+/ws/voice: {"type":"status","state":"thinking","detail":"Checking your balance"} (detail optional),
+    {"type":"confirmation","confirmation":{...}}, agent_response may carry timings and expired
+POST /verify/otp/send: method sms|email; masked is the hub's mask for that channel (a same shaped
+    made up mask for an unknown number)
+GET /verify/session: hub tokens add hub_session and expired
+GET /health: answers {source, state_changing_tools, gateway, tool_agent, tool_latency_classes}
+GET /admin/api/hub (admin): gateway status, latency classes, tool agent stats, recent calls
+frontend: window.SLTConfirm {show, hide, resolve, setStatus}; events slt:confirmation-result,
+    slt:confirmation-closed

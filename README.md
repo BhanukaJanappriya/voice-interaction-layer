@@ -726,3 +726,48 @@ apply on top: 120 s, 3 attempts, single use, 30 s before a resend. The default i
 `local` because hub mode sends a real SMS to a real customer on every run and
 cannot be tried with the fake test customers. To try it, set
 `VERIFY_OTP_BACKEND=hub`, restart, and use a number you own.
+
+## The MCP hub as the only source of SLT answers
+
+Added 2026-10-13. Design and decisions: docs/MCP_INTEGRATION_PLAN.md. Tool facts
+measured on the live hub: docs/MCP_TOOLS.md.
+
+With `ANSWER_SOURCE=mcp_hub` (the default) every SLT fact in an answer comes from a
+hub tool result. The old local knowledge base, a registered external agent and the
+model's own knowledge are not used for SLT questions (greetings, thanks, goodbyes and
+clarifying questions are still answered normally). If the hub returns nothing relevant
+or cannot be reached, the reply is a fixed translated text with the official numbers
+(1212, SMS 0113121212, prepaid 1222), never a guess. `ANSWER_SOURCE=local_rag` brings
+back the earlier behaviour; the old code is kept behind that flag.
+
+Who may use which tool is one file, `config/tool_access.yaml` (edit and restart):
+
+| Session | Tools |
+|---|---|
+| guest (new customer, or not verified) | search_knowledgebase_tool |
+| signing in (wizard only, never the model) | validate_customer_and_send_otp, verify_otp_and_authenticate |
+| verified | the customer tools, narrowed by service type (postpaid and fibre, or LTE prepaid) |
+| diagnostic | get_function_latencies, on the admin page and /health |
+| never | authenticate_with_token, refresh_customer_token |
+
+Every call goes through `backend/mcp_gateway`, which checks the session's tier, forces the
+telephone number of the verified customer (the model never supplies it), applies a time
+budget, never retries a call that changes an account, and writes an audit line (tool,
+outcome, milliseconds, a hashed session id; no numbers, arguments or results).
+
+**The hub's login belongs to one open connection** (measured on the live hub). So each
+verified customer keeps one connection, used for the code check and every later tool call,
+closed after `HUB_SESSION_IDLE_SECONDS` of silence, on logout, and when the server restarts
+(then the customer verifies again). The wizard offers SMS or email as the hub supports
+(`otp_media` 1 and 2); the masked contact is shown after the code is sent, because the hub
+only returns it then.
+
+Buying an extra GB package, adding a data bundle, subscribing an LTE prepaid package and
+logging a fault are built but **switched off** (`STATE_CHANGING_TOOLS_ENABLED=false`). When
+on, the assistant states exactly what will happen from the hub's own data, shows a
+confirmation window (or accepts a clear spoken yes in English, Sinhala or Tamil), and runs the
+call once after confirmation, within 60 seconds, without a retry. Anything unclear cancels.
+
+Customer data goes to the local Llama model only (`CUSTOMER_DATA_TO_CLOUD_LLM=false`).
+`/health` shows `answers` (source, gateway, tool time per turn, the hub's latency classes);
+the admin API has `GET /admin/api/hub`.

@@ -808,3 +808,56 @@ keywords decide what is an account question: for example "show my last payments"
 (plural) is not matched and goes to the model without data. A hub answer that is slow
 beyond CUSTOMER_TOOLS_BUDGET_SECONDS (8 s) gives the fixed "unavailable" text. Customer
 data is sent to Gemini and LiveKit only if CUSTOMER_DATA_TO_CLOUD_LLM=true.
+
+## The hub as the only source (2026-10-13)
+
+**What was tried live.** One real sign in: the owner's own fixed line, code by SMS. It
+showed that the login belongs to one connection, that the send result carries both masked
+contacts, and that the verify result has no token. Then `show_service_detail` on that line
+answered with an upstream `405 Method Not Allowed` from the hub's own backend, so **no customer
+read tool has been seen working on the real hub.** Every parser for customer tool results is
+written against the mock and the descriptions. The mock is built from the real schemas, but
+its JSON bodies are assumptions.
+
+**Never run live:** buying, adding a bundle, subscribing and logging a fault. They are off by
+default. Switch `STATE_CHANGING_TOOLS_ENABLED` on only for a number you own, with the owner
+watching, and expect that the parsing of the package lists (ids, names, prices) may need work
+once the real shapes are seen. The hub has no idempotency key, so duplicate protection is our
+own (one token, one run, no retry).
+
+**Restarts and scale.** The logins live in the server's memory as open connections. A restart,
+a crash, a second worker process or the idle limit logs customers out; they verify again. One
+process only. At most `HUB_SESSION_MAX` customers are held at once (the least recently used is
+closed). A customer's calls are one after another on their one connection, so the "parallel"
+calls of a turn are sequential and the time budget cuts slow ones off.
+
+**What stops working under `ANSWER_SOURCE=mcp_hub`.** The local knowledge base and a registered
+external chat agent are not used for assistant answers (the admin portal still lets you register
+one; it is ignored for SLT questions). The separate MCP server (`/mcp`) that other programs use
+still serves the local knowledge base. Switch the flag to `local_rag` for the earlier behaviour.
+
+**Privacy.** Customer data stays on the local Llama model (owner decision), so the cloud tiers
+are skipped on those turns. The brief's native function calling for Gemini and LiveKit
+Inference is therefore not used for customer tools; guests have one tool, so the answer is
+fetched before the model runs for every tier, which also means a model can never ask for a
+tool it should not have. Knowledge base text from the hub (not customer data) does go to the
+cloud tiers. A person who says their number out loud has it in the transcript like any other
+speech. The hub receives the user's words as the knowledge base query.
+
+**Wizard.** The mask for an unknown number is made up with the same shape; a real number
+whose hub answer has no usable mask shows the generic sentence instead, which is a small
+difference an attacker could notice. The hub may allow fewer tries or less time than our
+120 seconds and 3 attempts; the hub wins. SMS and email only; the voice call option
+(`otp_media` 3) exists in the gateway and is not offered. Sinhala and Tamil texts of this
+batch are machine written and need a native reader.
+
+**Answers.** A not-found answer depends on `KB_MIN_SCORE` (0.25, a guess from one observed score of
+0.44), so a low value lets weak matches through and a high one says "not found" too often.
+`show_daily_usage` is called only when the customer names a day number. `compare_package` is
+called only when the current package name and price can be read from earlier tool results.
+`get_function_latencies` is a fixed classification from the hub, not live timing. Measured
+timing per turn is `timings {tool_ms, llm_ms}` in the reply and in `/health`.
+
+**Voice yes.** The spoken yes or no (English, Sinhala, Singlish, Tamil) is a word list. A reply
+with extra words, a question or a negation cancels, on purpose. The speech wording of amounts is
+text rewriting, not a check of how each text to speech voice reads it.

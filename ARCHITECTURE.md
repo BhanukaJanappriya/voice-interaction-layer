@@ -555,3 +555,33 @@ challenge row; verify applies our 120 s, 3 attempt and single use rules first an
 then calls verify_otp_and_authenticate; the cookie then carries amr ["otp","hub"].
 An unknown number gets a decoy challenge with the same response, and the decoy
 still asks the hub at verify so timing does not tell which numbers exist.
+
+## The hub as the only source (2026-10-13)
+
+```
+text or speech -> access guard (guest account questions: fixed dial text, no hub call)
+   -> tool_agent.prepare            ANSWER_SOURCE=mcp_hub
+        confirmations.intercept     a pending action: clear yes runs it, anything else cancels
+        confirmations.start         buy / add / subscribe / fault: build a pending action
+        small talk                  no tool, model told not to state SLT facts
+        guest, SLT question         search_knowledgebase_tool through the gateway
+        verified account question   read only customer tools through the gateway (max 4 calls)
+      -> TurnPlan: canned | grounded | pass
+   canned    -> fixed translated text, no model (not found, hub down, session ended, blocked)
+   grounded  -> data and rules go into the message; customer data marks the turn private,
+                so only the local Llama tier may answer
+   -> reply (the spoken wording spells out Rs. and GB; the transcript keeps the written text)
+
+mcp_gateway.call(tool, arguments, access)
+   matrix (config/tool_access.yaml)  tier, service type, state changing, never
+   -> forced telephone_no            from the verified session, not from the model
+   -> public tool                    short lived shared connection, one retry on a transport error
+   -> customer tool                  the customer's own pooled connection, no retry
+   -> "No active session" answer     reauth: the pooled connection is dropped, the customer is
+                                     told their session ended and offered the wizard again
+```
+
+The pool holds one MCP connection per verified customer. `begin_login` opens it and sends the
+code, `finish_login` verifies on the same connection and keeps it, `drop_session` closes it.
+`access_from_request` treats a token marked "hub" whose connection is gone as a guest with
+`session_expired`, so the downgrade is decided on the server for every request.

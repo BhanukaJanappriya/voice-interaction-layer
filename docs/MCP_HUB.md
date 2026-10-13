@@ -226,3 +226,18 @@ What to ask the hub administrator, now that this is built: (1) the exact respons
 each read only tool for one test number, (2) what otp_media values mean and the format
 of telephone_no, (3) how "not signed in" and "not a customer" are reported, (4) a test
 number whose code goes to a phone you control, so this can be tried live.
+
+
+## 8. The gateway and the hub as the only source (2026-10-13)
+
+The assistant's calls now go through `backend/mcp_gateway` (see docs/MCP_INTEGRATION_PLAN.md
+and docs/MCP_TOOLS.md). Two facts from the live hub drive the design: the login belongs to one
+open connection (so the gateway holds one per verified customer), and `otp_media` is 1 SMS,
+2 email, 3 voice (so the wizard sends the channel the customer picked, not the default).
+
+To ask the hub administrator: (1) why `show_service_detail` answers `405 Method Not Allowed`
+for a working line and whether the other customer tools work for that line; (2) the real
+response of each read tool and of the package lists; (3) whether an idempotency key or a
+duplicate guard exists for purchases and fault logging; (4) the hub's own OTP expiry and
+attempt limits; (5) the format of `from_date` and `to_date` for `show_reload_history` and the
+allowed `package_type` values.
