@@ -1,0 +1,136 @@
+/* Confirmation modal. It reuses the existing look: the .card surface, the
+   .slt-v-title and .slt-v-btn rules of the verification wizard, and the same
+   overlay colors. Only layout for the detail list and the status line is new.
+   Dark mode follows style.css, which already redefines the card, text and
+   border colors for both the media query and the theme attribute. */
+
+.slt-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px 12px;
+  overflow-y: auto;
+  background: rgba(15, 28, 38, 0.55);
+  font-family: inherit;
+  color: var(--text);
+}
+
+.slt-confirm-card {
+  width: 100%;
+  max-width: 440px;
+  margin: auto;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.slt-confirm-hint {
+  margin: 0;
+  text-align: center;
+  color: var(--text-dim, #64748b);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.slt-confirm-lines {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--card-border, #e3ecf5);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.slt-confirm-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.slt-confirm-row dt {
+  margin: 0;
+  color: var(--text-dim, #64748b);
+  font-size: 0.85rem;
+}
+
+.slt-confirm-row dd {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-align: right;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.slt-confirm-timer {
+  margin: 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-dim, #64748b);
+  font-variant-numeric: tabular-nums;
+}
+
+.slt-confirm-result {
+  margin: 0;
+  text-align: center;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.slt-confirm-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-width: 0;
+}
+
+.slt-confirm-card .hidden,
+.slt-confirm-status.hidden { display: none; }
+
+/* The status line floats above the bottom bar, out of the app's own layout. */
+.slt-confirm-status {
+  position: fixed;
+  left: 50%;
+  bottom: 150px;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: calc(100vw - 32px);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--card, #fff);
+  color: var(--text, #1f2d3d);
+  border: 1px solid var(--card-border, #e3ecf5);
+  box-shadow: var(--shadow, 0 4px 14px rgba(15, 28, 38, 0.12));
+  font-size: 0.85rem;
+  text-align: center;
+  pointer-events: none;
+}
+
+.slt-confirm-card[aria-busy="true"] .slt-confirm-actions { opacity: 0.7; }
+
+[dir="rtl"] .slt-confirm-card { text-align: right; }
+
+@media (max-width: 380px) {
+  .slt-confirm-card { padding: 20px 14px; }
+  .slt-confirm-row dd { text-align: left; flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slt-confirm-overlay,
+  .slt-confirm-card { animation: none !important; transition: none !important; }
+}
