@@ -35,9 +35,16 @@ from typing import Any, Optional
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 DEFAULT_KEY = "mock-hub-key-0123456789"
+
+# Fake customers of the customer_tools mode, national form like the hub's
+# documentation. One product type per number.
+FIBRE_NUMBER = "0112345678"  # postpaid fibre
+LTE_NUMBER = "0712345670"  # LTE prepaid
+NOT_AUTHENTICATED = "Customer not authenticated. Call validate_customer_and_send_otp first."
 
 
 class _Gate:
@@ -104,6 +111,7 @@ class MockHub:
         auth_header: str = "X-API-Key",
         json_response: bool = False,
         tools: Optional[list[str]] = None,
+        customer_tools: bool = False,
     ):
         if mode not in ("streamable", "sse"):
             raise ValueError("mode must be 'streamable' or 'sse'")
@@ -134,6 +142,17 @@ class MockHub:
         self.otp_code = "123456"
         self.sms_outbox: list[dict] = []
         self._otp_sessions: dict[str, dict] = {}
+        # Customer tools (read only plus decoys for the changing ones), off by
+        # default so older tests see the older tool set. A customer tool for a
+        # number outside `authenticated` is an error result, like the real hub
+        # says it behaves; the OTP tools above add a number when verify succeeds.
+        # The response shapes are a guess (unverified against the real hub).
+        self.customer_tools = customer_tools
+        self.authenticated: set[str] = set()
+        self.customer_products: dict[str, str] = {FIBRE_NUMBER: "postpaid", LTE_NUMBER: "lte_prepaid"}
+        self.customer_tool_errors: dict[str, str] = {}  # tool name -> error text to raise
+        self.customer_tool_delays: dict[str, float] = {}  # tool name -> seconds to wait
+        self.customer_payloads: dict[str, str] = {}  # tool name -> raw reply text instead of the fake JSON
         # Counters.
         self.requests = 0
         self.auth_failures = 0
@@ -172,7 +191,7 @@ class MockHub:
                 record("purchase_extra_gb", telephone_no=telephone_no)
                 return "purchased"
 
-        if allowed("show_gb_balance"):
+        if allowed("show_gb_balance") and not hub.customer_tools:
 
             @mcp.tool(name="show_gb_balance", description="Customer data balance.")
             async def show_gb_balance(telephone_no: str) -> str:
@@ -204,6 +223,8 @@ class MockHub:
                 if session is None or session["phone"] != telephone_no or otp_value != hub.otp_code:
                     return json.dumps({"status": "error", "authenticated": False})
                 customer = hub.otp_customers.get(telephone_no, {})
+                with hub._lock:
+                    hub.authenticated.add(telephone_no)
                 return json.dumps(
                     {"status": "success", "authenticated": True, "access_token": "hub-token-not-used",
                      "customer_name": customer.get("name")}
@@ -263,7 +284,141 @@ class MockHub:
                     return json.dumps({"found": True, "customer": hub.customer})
                 return "Customer: " + hub.customer["display_name"]
 
+        if hub.customer_tools:
+            hub._register_customer_tools(mcp, allowed, record)
+
         return mcp
+
+    # Customer tools
+
+    @staticmethod
+    def _national(value: str) -> str:
+        digits = "".join(ch for ch in str(value) if ch.isdigit())
+        if digits.startswith("94") and len(digits) == 11:
+            digits = "0" + digits[2:]
+        return digits
+
+    def _customer_reply(self, name: str, telephone_no: str, product: Optional[str], build) -> str:
+        """Common path of every fake customer tool: authentication, forced
+        errors, product type, then the JSON text. product is 'postpaid',
+        'lte_prepaid' or None for tools that answer for both kinds."""
+        number = self._national(telephone_no)
+        with self._lock:
+            known = number in self.authenticated
+            forced = self.customer_tool_errors.get(name)
+            raw = self.customer_payloads.get(name)
+        if not known:
+            raise ToolError(NOT_AUTHENTICATED)
+        if forced:
+            raise ToolError(forced)
+        actual = self.customer_products.get(number, "postpaid")
+        if product is not None and actual != product:
+            kind = "an LTE prepaid" if product == "lte_prepaid" else "a postpaid or fixed"
+            raise ToolError(f"Not applicable: this service is not {kind} connection")
+        return raw if raw is not None else json.dumps(build(number, actual))
+
+    def _register_customer_tools(self, mcp: MCPServer, allowed, record) -> None:
+        hub = self
+        pay, lte = "postpaid", "lte_prepaid"
+
+        def simple(name: str, product: Optional[str], build, description: str) -> None:
+            if not allowed(name):
+                return
+
+            async def tool(telephone_no: str) -> str:
+                record(name, telephone_no=telephone_no)
+                delay = hub.customer_tool_delays.get(name)
+                if delay:
+                    await asyncio.sleep(delay)
+                return hub._customer_reply(name, telephone_no, product, build)
+
+            mcp.tool(name=name, description=description)(tool)
+
+        simple("show_gb_balance", pay, lambda n, p: {
+            "status": "success", "remainingGB": 42.5, "usedGB": 17.5, "totalGB": 60,
+            "packageName": "Fibre Unlimited 60", "validTill": "2026-10-31"}, "Data balance and usage summary.")
+        simple("show_bill_history", pay, lambda n, p: {
+            "status": "success", "billAmount": 4250.75, "dueDate": "2026-10-25",
+            "history": [{"month": "2026-09", "billAmount": 4100.0}, {"month": "2026-08", "billAmount": 3980.5},
+                        {"month": "2026-07", "billAmount": 4020.0}]}, "Last bill and history.")
+        simple("show_last_payment", pay, lambda n, p: {
+            "status": "success", "paymentAmount": 4100.0, "paymentDate": "2026-09-27", "channel": "Online"},
+            "Last payment.")
+        simple("show_service_detail", None, lambda n, p: (
+            {"status": "success", "serviceType": "LTE", "accountType": "Prepaid", "serviceStatus": "Active",
+             "package": "LTE Prepaid Super"} if p == lte else
+            {"status": "success", "serviceType": "Fibre", "accountType": "Postpaid", "serviceStatus": "Active",
+             "package": "Fibre Unlimited 60", "speed": "100 Mbps"}), "Service details.")
+        simple("show_fault_list", None, lambda n, p: {"status": "success", "faults": [
+            {"faultId": "F-1001", "status": "Closed", "nature": "No internet", "loggedOn": "2026-09-02"}]}, "Faults.")
+        simple("show_lte_subscriber_status", lte, lambda n, p: {
+            "status": "success", "subscriberStatus": "Active", "activatedOn": "2025-03-14"}, "LTE subscriber status.")
+        simple("show_lte_wallet_detail", lte, lambda n, p: {
+            "status": "success", "walletBalance": 350.0, "currency": "LKR", "expiresOn": "2026-11-20"}, "LTE wallet.")
+        simple("show_lte_purchased_packages", lte, lambda n, p: {"status": "success", "packages": [
+            {"name": "Daily 5GB", "remainingGB": 2.1, "usedGB": 2.9, "expiresOn": "2026-10-14"}]}, "LTE packages.")
+        simple("show_lte_prepaid_package_list", lte, lambda n, p: {"status": "success", "packages": []},
+               "LTE package list (never used by the assistant).")
+        simple("show_daily_usage", pay, lambda n, p: {"status": "success", "days": []},
+               "Daily usage (never used by the assistant).")
+        simple("refresh_customer_token", None, lambda n, p: {"status": "success"},
+               "Refresh token (never used by the assistant).")
+
+        def packages(n, p):
+            return {"status": "success", "packages": [
+                {"packageId": 11, "name": "Extra 10GB", "price": 490.0},
+                {"packageId": 12, "name": "Extra 25GB", "price": 990.0}]}
+
+        for name, description in (
+            ("show_extra_gb_packages", "Extra GB packages."),
+            ("show_vas_data_bundle_packages", "VAS data bundles."),
+        ):
+            if allowed(name):
+
+                def make(tool_name: str):
+                    async def tool(telephone_no: str, package_name: str = "") -> str:
+                        record(tool_name, telephone_no=telephone_no, package_name=package_name)
+                        return hub._customer_reply(tool_name, telephone_no, pay, packages)
+
+                    return tool
+
+                mcp.tool(name=name, description=description)(make(name))
+
+        if allowed("show_reload_history"):
+
+            @mcp.tool(name="show_reload_history", description="Reload history.")
+            async def show_reload_history(telephone_no: str, from_date: str = "", to_date: str = "") -> str:
+                record("show_reload_history", telephone_no=telephone_no, from_date=from_date, to_date=to_date)
+                return hub._customer_reply("show_reload_history", telephone_no, lte, lambda n, p: {
+                    "status": "success", "reloads": [{"date": "2026-10-01", "amount": 500.0, "channel": "App"}]})
+
+        # Tools that change things: registered so a test can prove they are never called.
+        for name in ("add_vas_data_bundle", "subscribe_lte_prepaid_package"):
+            if allowed(name):
+
+                def make_change(tool_name: str):
+                    async def tool(telephone_no: str, package_id: int = 0) -> str:
+                        record(tool_name, telephone_no=telephone_no, package_id=package_id)
+                        return "changed"
+
+                    return tool
+
+                mcp.tool(name=name, description="Changes the account (must never be called by the assistant).")(
+                    make_change(name)
+                )
+        if allowed("log_fault"):
+
+            @mcp.tool(name="log_fault", description="Opens a fault ticket (must never be called by the assistant).")
+            async def log_fault(telephone_no: str, service_id: str = "") -> str:
+                record("log_fault", telephone_no=telephone_no, service_id=service_id)
+                return "logged"
+
+        if allowed("authenticate_with_token"):
+
+            @mcp.tool(name="authenticate_with_token", description="Seeds a session (must never be called by the assistant).")
+            async def authenticate_with_token(telephone_no: str, access_token: str = "") -> str:
+                record("authenticate_with_token", telephone_no=telephone_no)
+                return "ok"
 
     # Lifecycle
 

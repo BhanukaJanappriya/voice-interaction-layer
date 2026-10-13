@@ -286,14 +286,23 @@ def compose_tool_callbacks(*callbacks: Optional[Callable[[str], Optional[str]]])
     return composed
 
 
-def call_tool_sync(name: str, arguments: dict, budget: Optional[float] = None):
-    """Blocking call of one hub tool from any thread (used by the OTP hub
-    backend). Returns client.ToolOutput; raises the typed HubError family
-    (and TimeoutError past the budget). Not subject to the allow and deny
-    lists above: callers are code in this repository, not the model."""
+def call_tool_sync(name: str, arguments: dict, budget: Optional[float] = None, access=None):
+    """Blocking call of one hub tool from any thread. Returns
+    client.ToolOutput; raises the typed HubError family (and TimeoutError past
+    the budget) and access.AccessDenied. Not subject to the allow and deny
+    lists above.
+
+    Without access this is the repository's own login flow (the hub OTP backend)
+    and is trusted. With access (an access.AccessContext) it is a request made
+    on behalf of a user and goes through the access gate first: a customer tool
+    needs a verified session and its telephone_no is forced to the verified
+    number."""
     budget = _budget() if budget is None else budget
     hub = get_hub()
-    return _runner.run(hub.call_tool_output(name, arguments, budget=budget, trusted=True), timeout=budget + 1.0)
+    return _runner.run(
+        hub.call_tool_output(name, arguments, budget=budget, access=access, trusted=access is None),
+        timeout=budget + 1.0,
+    )
 
 
 # Customer lookup

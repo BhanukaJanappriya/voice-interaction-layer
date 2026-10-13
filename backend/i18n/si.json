@@ -1,10 +1,4 @@
 {
-  "_meta": {
-    "language": "si",
-    "machine_written": true,
-    "needs_native_review": true,
-    "note": "Machine written, needs native speaker review before production use."
-  },
   "verify.errors.generic": "යම් දෝෂයක් සිදු විය. කරුණාකර නැවත උත්සාහ කරන්න.",
   "verify.errors.invalid_details": "ඔබේ විස්තර තහවුරු කළ නොහැකි විය. කරුණාකර නම සහ දුරකථන අංකය පරීක්ෂා කර නැවත උත්සාහ කරන්න.",
   "verify.errors.phone_format": "කරුණාකර වලංගු ශ්‍රී ලාංකික දුරකථන අංකයක් ඇතුළත් කරන්න.",
@@ -21,5 +15,15 @@
   "llm.safety_blocked": "සමාවන්න, ඒ ඉල්ලීමට මට උදව් කළ නොහැක. කරුණාකර SLT-MOBITEL ගැන වෙනත් දෙයක් අසන්න.",
   "otp.sms_body": "SLT-MOBITEL: ඔබේ තහවුරු කිරීමේ කේතය {code} වේ. එය විනාඩි {minutes}ක් වලංගුයි. කිසිවෙකු සමඟ බෙදා නොගන්න.",
   "otp.email_subject": "ඔබේ SLT-MOBITEL තහවුරු කිරීමේ කේතය",
-  "otp.email_body": "ආයුබෝවන්,\n\nඔබේ SLT-MOBITEL තහවුරු කිරීමේ කේතය {code} වේ. එය විනාඩි {minutes}ක් වලංගුයි.\n\nමෙම කේතය කිසිවෙකු සමඟ බෙදා නොගන්න. SLT-MOBITEL ඔබෙන් කිසිවිටෙක එය ඉල්ලන්නේ නැත.\n\nඔබ මෙම කේතය ඉල්ලා නොතිබුණේ නම්, මෙම විද්‍යුත් තැපෑල නොසලකා හරින්න."
+  "otp.email_body": "ආයුබෝවන්,\n\nඔබේ SLT-MOBITEL තහවුරු කිරීමේ කේතය {code} වේ. එය විනාඩි {minutes}ක් වලංගුයි.\n\nමෙම කේතය කිසිවෙකු සමඟ බෙදා නොගන්න. SLT-MOBITEL ඔබෙන් කිසිවිටෙක එය ඉල්ලන්නේ නැත.\n\nඔබ මෙම කේතය ඉල්ලා නොතිබුණේ නම්, මෙම විද්‍යුත් තැපෑල නොසලකා හරින්න.",
+  "customer.reauth_needed": "ඔබගේ ගිණුම් විස්තර පෙන්වීමට ඔබ නැවත තහවුරු විය යුතුයි. කරුණාකර එක් වරක් භාවිත කරන කේතයකින් නැවත තහවුරු වී, ඉන්පසු නැවත මගෙන් අසන්න.",
+  "customer.unavailable": "ඔබගේ ගිණුම් විස්තර දැන් ලබා ගත නොහැක. කරුණාකර පසුව නැවත උත්සාහ කරන්න, නැතහොත් SLT වෙත කෙළින්ම අමතන්න: {hotline} (SLT දුරකථනවලින් නොමිලේ) අමතන්න, {sms} වෙත SMS එවන්න, නැතහොත් පෙර ගෙවුම් සඳහා {prepaid} අමතන්න.",
+  "customer.changes_not_supported": "මෙහිදී මට ගිණුමේ තොරතුරු පෙන්විය හැක්කේ පමණි, වෙනස්කම් කළ නොහැක. මිලදී ගැනීමට, සක්‍රීය කිරීමට, වෙනස් කිරීමට හෝ අවලංගු කිරීමට කරුණාකර {hotline} (SLT දුරකථනවලින් නොමිලේ) අමතන්න, {sms} වෙත SMS එවන්න, නැතහොත් පෙර ගෙවුම් සඳහා {prepaid} අමතන්න.",
+  "verify.neutral_name": "පාරිභෝගික",
+  "_meta": {
+    "language": "si",
+    "machine_written": true,
+    "needs_native_review": true,
+    "note": "Machine written, needs native speaker review before production use."
+  }
 }
