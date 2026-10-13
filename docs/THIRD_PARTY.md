@@ -132,3 +132,13 @@ Feather licence (for the seven derived icons):
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
+
+## SLT site icons (2026-10-13)
+
+| Asset | Source | Licence | Shipped |
+|---|---|---|---|
+| `frontend/favicon.ico` (48 px), `frontend/assets/icons/slt-favicon-96.png`, `frontend/assets/icons/slt-apple-touch-icon.png` (180 px) | https://www.slt.lk/favicon.ico, /favicon-96x96.png and /apple-touch-icon.png, the icons that slt.lk itself declares in its page head, downloaded 2026-10-13 | SLT's own logo mark (a trademark of the company), used on SLT's own assistant; not a free licence for anyone else | Yes |
+
+The `favicon.svg` on slt.lk was not used: it is a bitmap wrapped in SVG, not a vector.
+The web app manifest icons (`icon-192.png`, `icon-512.png`, `icon-512-maskable.png`) are
+still cut from the logo already in the repository.
