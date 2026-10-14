@@ -137,11 +137,20 @@ VOICE_RULES = (
 )
 
 
+def contact_rule() -> str:
+    dial = _dial()
+    return (
+        f"The only contact details you may give are: {dial['hotline']} (hotline), SMS {dial['sms']} and "
+        f"{dial['prepaid']} (prepaid). Never write any other telephone number, web address, e-mail address or "
+        "app name unless it appears in the excerpts."
+    )
+
+
 def guest_grounded_clause(language: Optional[str]) -> str:
     return (
         "Answer ONLY from the SLT excerpts below. Copy numbers, prices, package names and dates exactly as written. "
         "If the excerpts do not contain the answer, say so plainly and do not guess. "
-        + VOICE_RULES + f" Reply in {language_name(language)}."
+        + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
     )
 
 
@@ -150,7 +159,7 @@ def no_facts_clause(language: Optional[str]) -> str:
         "This message is conversation, not an SLT question. Do NOT state any SLT specific facts from your own "
         "knowledge: no packages, prices, services, coverage, contact details or account data. If the user wants SLT "
         "information, ask what they would like to know so it can be looked up. "
-        + VOICE_RULES + f" Reply in {language_name(language)}."
+        + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
     )
 
 
@@ -160,6 +169,7 @@ def customer_clause(language: Optional[str], missing: str = "") -> str:
         "Answer only from that block. If the figure asked for is not in it, say you do not have it and do not guess "
         "or invent amounts, dates, balances or statuses.",
         "Never read out or repeat the telephone number, account numbers, tokens or codes.",
+        contact_rule(),
         "You can only read account information. You cannot buy, activate, change, add, subscribe or cancel anything.",
         VOICE_RULES,
     ]

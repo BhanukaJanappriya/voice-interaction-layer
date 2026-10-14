@@ -125,6 +125,7 @@ from stt import warm_up as warm_up_stt
 from tts import SentenceChunker, speak_stream, speak_text
 from tts import precache as precache_speech
 from tts import warm_up as warm_up_tts
+from tts import status as speech_status
 from vad import SAMPLE_RATE, VoiceActivityDetector
 from voicekit.api import create_router as create_voicekit_router
 from voicekit.settings import VoicekitSettings
@@ -183,12 +184,15 @@ def _warm_up():
         orchestrator.warm_up()
     except Exception as exc:
         print(f"Warm up: agent failed ({exc}).")
-    try:
-        # Loads the index and the embedding model, so the first question's
-        # retrieval is as fast as every later one.
-        retriever.warm_up()
-    except Exception as exc:
-        print(f"Warm up: knowledge retriever failed ({exc}).")
+    if _hub_only():
+        print("Warm up: the local knowledge base is not loaded, the MCP hub is the only source of SLT answers.")
+    else:
+        try:
+            # Loads the index and the embedding model, so the first question's
+            # retrieval is as fast as every later one.
+            retriever.warm_up()
+        except Exception as exc:
+            print(f"Warm up: knowledge retriever failed ({exc}).")
     try:
         warm_up_mcp_hub()
     except Exception as exc:
@@ -302,6 +306,9 @@ app.include_router(admin_router)
 from confirmations.routes import router as confirm_router  # noqa: E402  (confirm modal endpoints, /confirm)
 
 app.include_router(confirm_router)
+from feedback import routes as feedback_routes  # noqa: E402  (five star rating, /feedback)
+
+app.include_router(feedback_routes.router)
 
 # Additive routers: the LiveKit token endpoint (/api/livekit) and voicekit,
 # the reusable text to speech API (/api/tts/stream, /ws/tts), which refuses
@@ -325,7 +332,33 @@ if config.VOICEKIT_ENABLED:
     )
 
 
+def _hub_only() -> bool:
+    """True when the MCP hub is the only source of SLT answers. The scraped
+    local knowledge base is then neither loaded nor read."""
+    return config.ANSWER_SOURCE == "mcp_hub"
+
+
 def _mcp_search(query: str, top_k: int) -> list[dict]:
+    if _hub_only():
+        # Other programs that ask this server for knowledge get the hub's own
+        # knowledge base, not the scraped copy.
+        import json as _json
+
+        import mcp_gateway
+
+        result = mcp_gateway.call("search_knowledgebase_tool", {"query": query, "top_k": top_k}, None)
+        chunks = (result.data or {}).get("chunks") if result.ok and isinstance(result.data, dict) else None
+        return [
+            {
+                "text": str(chunk.get("content", "")),
+                "score": float(chunk.get("score", 0.0) or 0.0),
+                "source_url": None,
+                "retrieved_at": None,
+                "title": "SLT MCP hub knowledge base",
+            }
+            for chunk in (chunks or [])
+            if isinstance(chunk, dict)
+        ]
     return [
         {
             "text": chunk.text,
@@ -343,7 +376,13 @@ def _mcp_ask(question: str, language: Optional[str]) -> tuple[str, str]:
     return reply, mcp_orchestrator.last_mode
 
 
-mcp_handle = mount_mcp(app, _mcp_search, retriever.get_package_details, _mcp_ask)
+def _mcp_package_details(name: str) -> list:
+    # Structured package records exist only in the scraped knowledge base, which
+    # is not used when the hub is the only source; search_knowledge has the text.
+    return [] if _hub_only() else retriever.get_package_details(name)
+
+
+mcp_handle = mount_mcp(app, _mcp_search, _mcp_package_details, _mcp_ask)
 
 # vad.py's calibrated noise floor plus WebRTC VAD's frame classification
 # reject most non-speech audio before it ever reaches transcription, but
@@ -1096,13 +1135,19 @@ async def health():
         "answers": await asyncio.to_thread(_answers_status),
         "cloud_speech_configured": config.cloud_speech_configured(),
         "cloud_speech_provider": config.CLOUD_SPEECH_PROVIDER,
+        # Which voice engine spoke last and why a better one was skipped.
+        "speech_engine": speech_status(),
         "supported_languages": config.SUPPORTED_LANGUAGES,
         # The single app's other parts: database migration state, the
         # knowledge index (loaded, size, build date, last retrieval time),
         # which external chat agent is answering (None means the built in
         # assistant), and the MCP server.
         "database": await asyncio.to_thread(database_status),
-        "knowledge": retriever.status(),
+        "knowledge": (
+            {"enabled": False, "reason": "ANSWER_SOURCE=mcp_hub, the MCP hub is the only source"}
+            if _hub_only()
+            else retriever.status()
+        ),
         "external_agent": admin_service.active_agent_summary(),
         "mcp": mcp_handle.status(),
         "mcp_hub": mcp_hub_status(),

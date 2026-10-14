@@ -130,6 +130,21 @@ const SCREEN_IDS = ["language", "select", "user", "voice", "chat"];
 const SCREEN_FADE_MS = 120;
 let navToken = 0;
 
+// Five star rating (frontend/ui/rating): asked once when a chat or voice
+// session ends, and only if the visitor actually took part in it.
+const sessionTurns = { chat: 0, voice: 0 };
+
+function askForRating(channel) {
+  const turns = sessionTurns[channel] || 0;
+  sessionTurns[channel] = 0;
+  if (!window.SLTRating || turns < 1) return;
+  try {
+    SLTRating.ask({ channel: channel, language: selectedLanguage || "en", turns: turns });
+  } catch (err) {
+    /* the rating is optional; never block leaving the session */
+  }
+}
+
 function navigateTo(screenName) {
   if (!SCREEN_IDS.includes(screenName)) screenName = "language";
   window.location.hash = screenName;
@@ -813,6 +828,7 @@ function handleServerMessage(event) {
       break;
     case "final_transcript":
       finalizePartial(payload.text);
+      sessionTurns.voice += 1;
       break;
     case "agent_response_chunk":
       updateStreamingReply(payload.text);
@@ -1176,6 +1192,13 @@ function endVoiceChat() {
   stopConversation();
   greetingsGiven.voice = false;
   navigateTo("select");
+  askForRating("voice");
+}
+
+// Leaving the text chat through its back link ends that chat.
+const chatBackLink = document.querySelector("#screen-chat .back-link");
+if (chatBackLink) {
+  chatBackLink.addEventListener("click", () => askForRating("chat"));
 }
 
 if (endChatButton) {
@@ -1205,6 +1228,8 @@ if (logoutButton) {
       /* localStorage unavailable; nothing to clear */
     }
     navigateTo("language");
+    askForRating("chat");
+    askForRating("voice");
   });
 }
 
@@ -1324,6 +1349,7 @@ if (chatForm) {
     if (!text) return;
 
     addBubble("user", text, null, chatTranscript);
+    sessionTurns.chat += 1;
     chatInput.value = "";
     chatInput.disabled = true;
 

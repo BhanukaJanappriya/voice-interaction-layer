@@ -246,7 +246,7 @@ MCP_HUB_URL = os.environ.get("MCP_HUB_URL", "https://mcphub.sltdigitallab.lk").s
 MCP_HUB_AUTH_HEADER = os.environ.get("MCP_HUB_AUTH_HEADER", "X-API-Key").strip()
 MCP_HUB_API_KEY = os.environ.get("MCP_HUB_API_KEY", "").strip()
 MCP_HUB_ENABLED = _env_bool("MCP_HUB_ENABLED", True)
-MCP_HUB_TIMEOUT_SECONDS = _env_float("MCP_HUB_TIMEOUT_SECONDS", 8.0)
+MCP_HUB_TIMEOUT_SECONDS = _env_float("MCP_HUB_TIMEOUT_SECONDS", 10.0)
 MCP_HUB_RETRIES = _env_int("MCP_HUB_RETRIES", 2)
 # The longest a spoken reply waits for the hub's notes. Measured against the
 # real hub, a knowledge search takes 3 to 7 seconds, far over the first word
@@ -259,7 +259,11 @@ MCP_HUB_CONTEXT_BUDGET_SECONDS = _env_float("MCP_HUB_CONTEXT_BUDGET_SECONDS", 1.
 MCP_HUB_IN_REPLIES = _env_bool("MCP_HUB_IN_REPLIES", False)
 # After a failed hub call, skip the hub for this long (same idea as the
 # 5 minute cloud LLM breaker in agent.py).
-MCP_HUB_BREAKER_SECONDS = _env_int("MCP_HUB_BREAKER_SECONDS", 300)
+# When the hub is the only source of answers one slow reply must not silence it for
+# five minutes, so the pause after a failure is short in that mode.
+MCP_HUB_BREAKER_SECONDS = _env_int(
+    "MCP_HUB_BREAKER_SECONDS", 20 if os.environ.get("ANSWER_SOURCE", "mcp_hub").strip().lower() == "mcp_hub" else 300
+)
 # Comma separated names of hub tools offered to the Orchestrator. Empty
 # means every tool that takes one required text argument.
 MCP_HUB_TOOLS = [t.strip() for t in os.environ.get("MCP_HUB_TOOLS", "").split(",") if t.strip()]
@@ -353,9 +357,14 @@ HUB_SESSION_IDLE_SECONDS = _env_int("HUB_SESSION_IDLE_SECONDS", 900)
 HUB_SESSION_MAX = _env_int("HUB_SESSION_MAX", 50)
 EXPOSE_LATENCY_TOOL = _env_bool("EXPOSE_LATENCY_TOOL", False)
 # Knowledge base chunks below this score are treated as "not found" (the hub's
-# own scores run 0 to 1; a clear hit was seen at 0.44).
-KB_MIN_SCORE = _env_float("KB_MIN_SCORE", 0.25)
+# own scores run 0 to 1: measured on the live hub, relevant questions scored 0.42 to
+# 0.74 and unrelated ones (cricket, weather) 0.36 to 0.37).
+KB_MIN_SCORE = _env_float("KB_MIN_SCORE", 0.40)
 KB_MAX_CHARS = _env_int("KB_MAX_CHARS", 4000)
+
+# The five star rating asked when a chat or voice session ends (POST /feedback/rating).
+RATING_ENABLED = _env_bool("RATING_ENABLED", True)
+RATING_RATE_LIMIT_PER_HOUR = _env_int("RATING_RATE_LIMIT_PER_HOUR", 30)
 # Buying, subscribing and logging a fault. Off until the owner has approved a
 # live test; when on, each one still needs a confirmed pending action.
 STATE_CHANGING_TOOLS_ENABLED = _env_bool("STATE_CHANGING_TOOLS_ENABLED", False)

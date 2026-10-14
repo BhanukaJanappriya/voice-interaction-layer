@@ -160,6 +160,67 @@
       </div>
     </div>
 
+    <!-- Customer ratings -->
+    <div class="card admin-card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Customer ratings</h2>
+          <p class="card-subtitle">Five star ratings given at the end of a chat or voice session, last 30 days. No names, numbers or comments are stored.</p>
+        </div>
+        <button id="ratings-refresh" class="icon-button" type="button" aria-label="Refresh ratings">
+          <svg class="icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
+      </div>
+      <p id="ratings-message" class="form-message hidden" role="status"></p>
+      <p id="ratings-summary" class="card-subtitle"></p>
+      <div class="table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th scope="col">Stars</th>
+              <th scope="col">Ratings</th>
+            </tr>
+          </thead>
+          <tbody id="ratings-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- MCP hub -->
+    <div class="card admin-card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">MCP hub</h2>
+          <p class="card-subtitle">The hub is the only source of SLT answers. Open customer connections, time spent in tools per turn, and the hub's own latency class for each tool (a fixed label, not a measurement).</p>
+        </div>
+        <button id="hub-refresh" class="icon-button" type="button" aria-label="Refresh hub status">
+          <svg class="icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
+      </div>
+      <p id="hub-message" class="form-message hidden" role="status"></p>
+      <p id="hub-summary" class="card-subtitle"></p>
+      <div class="table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th scope="col">Tool</th>
+              <th scope="col">Latency class</th>
+              <th scope="col">Average here</th>
+            </tr>
+          </thead>
+          <tbody id="hub-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Audit -->
     <div class="card admin-card">
       <div class="card-header">

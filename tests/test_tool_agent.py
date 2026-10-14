@@ -561,3 +561,65 @@ def test_schemas_for_a_customer_hide_the_number_and_state_changing_tools(signed_
 def test_schemas_for_is_empty_when_the_hub_is_down(hub):
     hub_client.set_hub(hub_client.HubClient("http://127.0.0.1:1", "X-API-Key", KEY, 1.0, 0, 30.0))
     assert tool_agent.schemas_for(GUEST) == []
+
+
+# ---------------------------------------------------------------------------
+# Contact details the model adds from memory are removed (tool_agent.scrub)
+# ---------------------------------------------------------------------------
+
+OFFICIAL = ["1212", "0113121212", "1222"]
+DIAL_LINE = "Please dial 1212, send an SMS to 0113121212 or dial 1222."
+
+
+def _stream(pieces, context="", dial=DIAL_LINE):
+    from tool_agent import scrub
+
+    return "".join(scrub.filter_stream(iter(pieces), context, OFFICIAL, dial))
+
+
+def test_an_invented_hotline_and_website_are_removed_and_the_official_options_added():
+    reply = "I do not have that price. Call our hotline 1717 for help. Visit www.sltmobitel.lk for more."
+    out = _stream([reply[:20], reply[20:60], reply[60:]])
+    assert "1717" not in out and "sltmobitel" not in out
+    assert out.startswith("I do not have that price.")
+    assert out.endswith(DIAL_LINE)
+
+
+def test_official_numbers_prices_and_hub_urls_are_left_alone():
+    context = "Fiber Starter 2,690 Rs. See https://myslt.slt.lk/promo for the offer. Call 0112345678."
+    reply = "Fiber Starter costs Rs. 2,690 monthly. Dial 1212 any time. Details at https://myslt.slt.lk/promo. Call 0112345678."
+    out = _stream(list(reply), context)
+    assert out == reply or out.split() == reply.split()
+    assert DIAL_LINE not in out
+
+
+def test_a_long_telephone_number_not_from_the_hub_is_removed():
+    out = _stream(["You can phone +94 11 777 8899 now. The price is 2,690."])
+    assert "777" not in out and "2,690" in out
+
+
+def test_sinhala_and_tamil_sentences_with_a_made_up_hotline_are_dropped():
+    out = _stream(["පැකේජය නැත. ඇමතුම 1717 අමතන්න. ", "தகவல் இல்லை. ஹாட்லைன் 1717 அழைக்கவும்."])
+    assert "1717" not in out and out.endswith(DIAL_LINE)
+
+
+def test_nothing_is_added_when_nothing_was_dropped():
+    assert _stream(["Hello! How can I help?"]) == "Hello! How can I help?"
+
+
+def test_sinhala_and_tamil_questions_get_english_topic_words_for_the_search():
+    from tool_agent.knowledge import expand_query
+
+    assert expand_query("Fibre packages", "en") == "Fibre packages"
+    si = expand_query("ෆයිබර් පැකේජ් මොනවාද?", "si")
+    assert si.startswith("ෆයිබර් පැකේජ් මොනවාද?") and "fibre" in si and "package" in si
+    ta = expand_query("ஃபைபர் பேக்கேஜ்கள் என்ன?", "ta")
+    assert "fibre" in ta and "broadband" in ta
+    assert expand_query("hello there", "si") == "hello there"
+
+
+def test_the_grounding_rules_name_the_only_contact_details_that_may_be_used():
+    from tool_agent.messages import guest_grounded_clause, no_facts_clause
+
+    for clause in (guest_grounded_clause("en"), no_facts_clause("en")):
+        assert "1212" in clause and "1222" in clause and "Never write any other telephone number" in clause

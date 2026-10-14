@@ -322,3 +322,12 @@ def hub_gateway():
         "tool_agent": tool_agent.stats(),
         "recent_calls": audit.recent(),
     }
+
+
+@router.get("/ratings")
+def session_ratings(days: int = Query(30, ge=1, le=365)):
+    """Summary of the five star session ratings (counts, average, distribution,
+    per channel, last 20 without any address)."""
+    from feedback import service as feedback_service
+
+    return feedback_service.summary(days)

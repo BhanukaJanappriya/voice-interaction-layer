@@ -308,12 +308,12 @@ def test_product_type_is_cached_for_ten_minutes(mods, hub, fibre, monkeypatch):
     assert called(hub).count("show_service_detail") == 2
 
 
-def test_unknown_service_type_gets_no_product_specific_tool(mods, hub, lte):
-    # The gateway offers only the common tools to a service type it cannot read.
+def test_unknown_service_type_falls_back_to_the_postpaid_tools(mods, hub, lte):
+    # The gateway treats a service type it cannot read as postpaid (owner decision),
+    # so the postpaid tools are tried and the LTE prepaid ones are never called.
     hub.customer_payloads["show_service_detail"] = "Service is fine"  # no product words
-    out = mods.cs.fetch("What is my data balance?", "en", lte)
-    assert out.kind == "unavailable"
-    assert set(called(hub)) <= {"show_service_detail"}
+    mods.cs.fetch("What is my data balance?", "en", lte)
+    assert not {"show_lte_wallet_detail", "show_lte_purchased_packages"} & set(called(hub))
 
 
 def test_product_detection_from_text(mods):

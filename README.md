@@ -771,3 +771,32 @@ call once after confirmation, within 60 seconds, without a retry. Anything uncle
 Customer data goes to the local Llama model only (`CUSTOMER_DATA_TO_CLOUD_LLM=false`).
 `/health` shows `answers` (source, gateway, tool time per turn, the hub's latency classes);
 the admin API has `GET /admin/api/hub`.
+
+## Rating, voices and hub only knowledge (2026-10-14)
+
+**Five star rating.** When a chat or a voice session ends (the back link of the chat, the end
+button or the closing goodbye of the voice screen, or logout) and the visitor took part in it, a
+window asks for 1 to 5 stars, with Submit and Skip. Only the stars, the channel, the language and
+the number of turns are stored (`session_ratings`, migration 0004), plus whether the session was a
+verified one, decided on the server. No name, number, comment or address is kept. The admin page
+shows the count, the average and the spread, and `GET /admin/api/ratings` returns the same.
+`RATING_ENABLED=false` turns it off.
+
+**Voices.** Speech uses Microsoft's neural voices through edge-tts: Ava (female) and Andrew (male)
+for English, Thilini and Sameera for Sinhala, Saranya and Kumar (Sri Lankan Tamil) for Tamil. If a
+voice name is refused the earlier voice is tried, and only then the Windows SAPI voice. The SAPI
+voice you heard came from edge-tts 7.2.8 being refused with a 403; `edge-tts==7.3.1` fixes it.
+`/health` shows `speech_engine` (which engine spoke last and the last error), so a refusal is not
+silent any more.
+
+**Hub only knowledge.** With `ANSWER_SOURCE=mcp_hub` the scraped local knowledge base is not
+loaded at start up, not read for answers, not reported as loaded in `/health`, and the MCP server
+(`/mcp`) searches the hub's knowledge base instead. A reply that carries a telephone number, web
+address or e-mail address that is not in the hub's text for that turn and is not one of the
+official numbers has that sentence removed (`tool_agent/scrub.py`), and the official options are
+added. Sinhala and Tamil questions get English topic words added to the hub search, because the hub's
+knowledge base is mostly English.
+
+**Balance and bill questions when the hub cannot say what kind of line it is.** If
+`show_service_detail` fails, the customer is treated as a postpaid line (the postpaid tools are
+allowed, the LTE prepaid ones are not) and the failed lookup is not repeated for a minute.

@@ -8,12 +8,12 @@ LANGUAGES = ("en", "si", "ta")
 VOICE_STYLES = ("female_natural", "male")
 
 EDGE_VOICES = {
-    ("en", "female_natural"): "en-US-JennyNeural",
-    ("en", "male"): "en-US-GuyNeural",
+    ("en", "female_natural"): "en-US-AvaMultilingualNeural",
+    ("en", "male"): "en-US-AndrewMultilingualNeural",
     ("si", "female_natural"): "si-LK-ThiliniNeural",
     ("si", "male"): "si-LK-SameeraNeural",
-    ("ta", "female_natural"): "ta-IN-PallaviNeural",
-    ("ta", "male"): "ta-IN-ValluvarNeural",
+    ("ta", "female_natural"): "ta-LK-SaranyaNeural",
+    ("ta", "male"): "ta-LK-KumarNeural",
 }
 
 # Google Cloud Text to Speech has no Sinhala voice at all (checked live when

@@ -1056,3 +1056,22 @@ def test_the_hub_transport_session_id_is_not_logged(env, caplog):
     post_chat(env.new_client(), GENERAL)
     logs = " | ".join(r.getMessage() for r in caplog.records)
     assert not re.search(r"session_id=[0-9a-f]{8,}", logs), "a transport session id appeared in the logs"
+
+
+# 12. The scraped local knowledge base is neither loaded nor read in hub mode
+
+def test_health_does_not_load_the_local_knowledge_base(env):
+    body = env.new_client().get("/health").json()
+    assert body["knowledge"]["enabled"] is False
+    assert "mcp_hub" in body["knowledge"]["reason"]
+    assert body["speech_engine"] is not None  # the voice engine is reported
+
+
+def test_the_mcp_servers_knowledge_search_uses_the_hub_not_the_scraped_copy(env):
+    import server
+
+    chunks = server._mcp_search("fibre packages", 3)
+    assert chunks, "the hub's knowledge base answered nothing"
+    assert chunks[0]["title"] == "SLT MCP hub knowledge base"
+    assert any(name == "search_knowledgebase_tool" for name, _ in env.hub.tool_calls)
+    assert server._mcp_package_details("Fibre Starter") == []

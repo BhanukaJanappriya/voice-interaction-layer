@@ -526,3 +526,66 @@ def test_audit_lines_hold_no_number_argument_or_result(hub, capsys):
     recent = audit.recent()
     assert {"tool", "outcome", "ms", "session"} <= set(recent[-1]) and len(audit.recent()) <= 200
     assert all(len(entry["session"]) in (1, 8) for entry in recent)
+
+
+def test_an_unreadable_service_type_falls_back_to_the_postpaid_tools(hub):
+    """The hub's show_service_detail can fail (it answered 405 for a real line). The
+    customer is then treated as postpaid so balance and bill questions still answer."""
+    login(hub)
+    hub.customer_payloads["show_service_detail"] = "Error executing tool show_service_detail: Client error '405 Method Not Allowed'"
+    gateway._service_types.clear()
+    assert gateway.service_type(verified()) == "unknown"
+    balance = gateway.call("show_gb_balance", {}, verified())
+    assert balance.kind == "ok", balance
+    assert gateway.call("show_bill_history", {}, verified()).kind == "ok"
+    assert gateway.call("show_lte_wallet_detail", {}, verified()).reason == "service_type"
+    schemas = {t["name"] for t in gateway.tool_schemas(verified())}
+    assert "show_gb_balance" in schemas and "show_lte_wallet_detail" not in schemas
+
+
+def test_a_failed_service_type_lookup_is_not_repeated_on_every_question(hub):
+    login(hub)
+    hub.customer_payloads["show_service_detail"] = json.dumps({"success": False, "error": "upstream"})
+    gateway._service_types.clear()
+    before = names(hub).count("show_service_detail")
+    for _ in range(3):
+        assert gateway.call("show_gb_balance", {}, verified()).kind == "ok"
+    assert names(hub).count("show_service_detail") - before == 1
+
+
+def test_a_stalled_first_try_of_a_public_tool_is_retried_once_and_the_breaker_cleared(hub, monkeypatch):
+    """The live hub stalled on about one call in four; the second connection answers."""
+    from mcp_client.tools import call_tool_sync as real
+
+    calls = []
+
+    def flaky(name, arguments, budget=None, access=None):
+        calls.append(budget)
+        if len(calls) == 1:
+            raise TimeoutError("stalled")
+        return real(name, arguments, budget=budget)
+
+    reset = []
+
+    class FakeHub:
+        def reset_breaker(self):
+            reset.append(True)
+
+    monkeypatch.setattr(gateway, "call_tool_sync", flaky)
+    monkeypatch.setattr(gateway, "get_hub", lambda: FakeHub())
+    result = gateway.call("search_knowledgebase_tool", {"query": "fibre packages"}, None, budget=10)
+    assert result.kind == "ok", result
+    assert len(calls) == 2 and reset == [True]
+    assert calls[0] < 10 and calls[1] > 0.3  # the first try did not use all of the time
+
+
+def test_two_stalls_give_up_within_the_budget(hub, monkeypatch):
+    calls = []
+
+    def stalled(name, arguments, budget=None, access=None):
+        calls.append(budget)
+        raise TimeoutError("stalled")
+
+    monkeypatch.setattr(gateway, "call_tool_sync", stalled)
+    result = gateway.call("search_knowledgebase_tool", {"query": "x"}, None, budget=6)
+    assert result.kind == "timeout" and len(calls) == 2

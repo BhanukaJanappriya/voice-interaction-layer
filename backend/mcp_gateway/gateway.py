@@ -93,6 +93,12 @@ _pending: "dict[str, _Pending]" = {}
 _pending_lock = threading.Lock()
 _service_types: "dict[str, tuple[float, str]]" = {}
 _service_lock = threading.Lock()
+# When the service type cannot be read (the hub's show_service_detail failed), the
+# customer is treated as postpaid, the family most lines belong to, so balance and
+# bill questions still get an answer. The failed lookup is remembered for a short
+# time so a broken detail tool is not asked again on every question.
+FALLBACK_SERVICE_TYPE = "postpaid"
+UNKNOWN_RETRY_SECONDS = 60.0
 _last_error: Optional[str] = None
 _hooked: Optional[SessionPool] = None
 
@@ -231,7 +237,7 @@ def _call(tool: str, arguments, access, national: Optional[str], budget, confirm
         service = service_type(access)
         if _pool().get(national) is not session:
             return _fail(tool, REAUTH, "login_lost", started, national, service)
-        if not matrix.allowed(tool, tier, service):
+        if not matrix.allowed(tool, tier, service if service != "unknown" else FALLBACK_SERVICE_TYPE):
             return _fail(tool, REFUSED, "service_type", started, national, service)
     return _pooled(tool, bound, national, session, budget, started, service)
 
@@ -258,13 +264,22 @@ def _pooled(tool: str, bound: dict, national: str, session, budget: float, start
 
 
 def _shared(tool: str, args: dict, budget: float, changing: bool, started: float, national: Optional[str]) -> GatewayResult:
-    """A public tool on a short lived connection. Read only tools get one
-    retry on a transport failure."""
+    """A public tool on a short lived connection. A read only tool gets a second
+    try when the first stalls or fails: the hub was seen to stall on about one
+    call in four (a connection that opens and then says nothing), and a second
+    connection answers in two seconds. The first try gets half of the time so
+    the second still has room, and the client's breaker, which a failed first
+    try would have opened, is cleared so the second try can run."""
     attempts = 1 if changing else 2
-    last = "unavailable"
+    deadline = time.monotonic() + max(budget, 0.5)
+    last, kind = "unavailable", UNAVAILABLE
     for attempt in range(attempts):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.3:
+            break
+        this_budget = remaining if attempt + 1 == attempts else max(3.0, remaining * 0.5)
         try:
-            output = call_tool_sync(tool, args, budget=budget)
+            output = call_tool_sync(tool, args, budget=this_budget)
         except HubBreakerOpen:
             return _fail(tool, UNAVAILABLE, "breaker", started, national)
         except HubAuthError:
@@ -282,7 +297,10 @@ def _shared(tool: str, args: dict, budget: float, changing: bool, started: float
                 text = structured["result"].strip()
             return _answer(tool, text, False, False, started, national, "")
         if attempt + 1 < attempts:
-            continue
+            try:
+                get_hub().reset_breaker()
+            except Exception:  # noqa: BLE001
+                pass
     return _fail(tool, kind, last, started, national)
 
 
@@ -292,8 +310,10 @@ def _shared(tool: str, args: dict, budget: float, changing: bool, started: float
 def _cached_service_type(national: str) -> str:
     with _service_lock:
         entry = _service_types.get(national)
-    if entry and _clock() - entry[0] < SERVICE_TYPE_CACHE_SECONDS:
-        return entry[1]
+    if entry:
+        lifetime = UNKNOWN_RETRY_SECONDS if entry[1] == "unknown" else SERVICE_TYPE_CACHE_SECONDS
+        if _clock() - entry[0] < lifetime:
+            return entry[1]
     return ""
 
 
@@ -324,9 +344,8 @@ def service_type(access) -> str:
             found = "lte_prepaid"
         elif result.data:
             found = "postpaid"
-    if found != "unknown":
-        with _service_lock:
-            _service_types[national] = (_clock(), found)
+    with _service_lock:
+        _service_types[national] = (_clock(), found)  # "unknown" is kept too, for UNKNOWN_RETRY_SECONDS
     return found
 
 
@@ -346,6 +365,8 @@ def tool_schemas(access, service_type: Optional[str] = None, include_state_chang
         national = _national_of(access)
         tier = "authenticated" if national else "guest"
         kind = service_type or (_resolve_service_type(access) if national else "unknown")
+        if kind == "unknown" and national:
+            kind = FALLBACK_SERVICE_TYPE
         names = [n for n in matrix.tool_names_for(tier, kind) if include_state_changing or not matrix.is_state_changing(n)]
         if not names:
             return []

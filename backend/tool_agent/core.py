@@ -79,8 +79,9 @@ def _knowledge(text: str, language, access, started: float, note: str = "", on_s
             on_status(STATUS_BY_TOOL[knowledge.TOOL])
         except Exception:  # noqa: BLE001
             pass
-    budget = float(getattr(config, "CUSTOMER_TOOLS_BUDGET_SECONDS", 8.0))
-    found = knowledge.search(text, access, budget=budget)
+    # Room for two tries: a stalled first connection is retried (mcp_gateway).
+    budget = max(float(getattr(config, "CUSTOMER_TOOLS_BUDGET_SECONDS", 8.0)), float(config.MCP_HUB_TIMEOUT_SECONDS))
+    found = knowledge.search(text, access, budget=budget, language=language)
     tool_ms = int((time.perf_counter() - started) * 1000)
     stats.record(tool_ms, {knowledge.TOOL: found.ms})
     timings = {"tool_ms": tool_ms}

@@ -610,6 +610,56 @@ class Orchestrator(ChatAgent):
         access=None,
         status_cb=None,
     ) -> Iterator[str]:
+        """The reply in pieces (see _respond_stream). With ANSWER_SOURCE=mcp_hub a
+        sentence that carries a telephone number, web address or e-mail address
+        that is neither in the hub's text for this turn nor an official SLT
+        number is removed (tool_agent.scrub), because a model fills such gaps
+        from memory; the official dial options are added instead."""
+        holder: dict = {}
+        stream = self._respond_stream(text_input, user_name, language, access, status_cb, holder)
+        if config.ANSWER_SOURCE != "mcp_hub":
+            yield from stream
+            return
+        yield from self._scrubbed(stream, holder, language)
+
+    @staticmethod
+    def _scrubbed(stream: Iterator[str], holder: dict, language: Optional[str]) -> Iterator[str]:
+        first = next(stream, None)
+        if first is None:
+            return
+        plan = holder.get("plan")
+        if plan is None or plan.kind == "canned":
+            yield first
+            yield from stream
+            return
+        try:
+            from tool_agent import scrub
+            from tool_agent.messages import _dial, dial_text
+
+            official = list(_dial().values())
+            dial_line = dial_text("tool_agent.not_found", language)
+            context = (plan.context or "") + "\n" + (plan.clause or "")
+        except Exception as exc:  # noqa: BLE001  the guard must never cost the reply
+            print(f"Orchestrator: output guard unavailable ({type(exc).__name__}).")
+            yield first
+            yield from stream
+            return
+
+        def pieces() -> Iterator[str]:
+            yield first
+            yield from stream
+
+        yield from scrub.filter_stream(pieces(), context, official, dial_line)
+
+    def _respond_stream(
+        self,
+        text_input: str,
+        user_name: Optional[str],
+        language: Optional[str],
+        access,
+        status_cb,
+        holder: dict,
+    ) -> Iterator[str]:
         """Yields the reply in pieces as it is generated, on both the cloud
         and the local path, so the voice pipeline can start speaking the
         first sentence while the rest is still being written.
@@ -646,6 +696,7 @@ class Orchestrator(ChatAgent):
             return
 
         plan = self._hub_plan(text_input, user_name, language, access, status_cb)
+        holder["plan"] = plan
         if plan is not None and plan.kind == "canned":
             self.last_mode = "SLT hub (fixed reply)"
             self.last_expired = bool(plan.expired)

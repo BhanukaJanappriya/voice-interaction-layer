@@ -1,0 +1,160 @@
+/* Rating window. Same overlay and card look as the confirmation modal; only
+   the stars, the label and the quiet Skip button are new. Dark mode follows
+   the app (media query and the data-theme attribute). */
+
+.slt-rating-overlay {
+  --slt-rate-on: #c2650a;
+  --slt-rate-off: #7b8aa0;
+  --slt-rate-ring: var(--blue, #2f6fed);
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px 12px;
+  overflow-y: auto;
+  background: rgba(15, 28, 38, 0.55);
+  font-family: inherit;
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .slt-rating-overlay { --slt-rate-on: #fbbf24; --slt-rate-off: #93a4b8; --slt-rate-ring: #7fa8ff; }
+}
+:root[data-theme="dark"] .slt-rating-overlay { --slt-rate-on: #fbbf24; --slt-rate-off: #93a4b8; --slt-rate-ring: #7fa8ff; }
+
+.slt-rating-card {
+  width: 100%;
+  max-width: 400px;
+  margin: auto;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.slt-rating-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.slt-rating-line {
+  margin: 0;
+  color: var(--text-dim, #64748b);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.slt-rating-stars {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+}
+
+.slt-rating-star {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  margin: 0;
+  padding: 4px;
+  width: 52px;
+  height: 52px;
+  min-width: 44px;
+  min-height: 44px;
+  flex: 0 1 52px;
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--slt-rate-off);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--dur-fast, 120ms) ease;
+}
+
+.slt-rating-icon {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.slt-rating-star.is-on { color: var(--slt-rate-on); }
+.slt-rating-star.is-on .slt-rating-icon { fill: currentColor; }
+.slt-rating-star.is-preview { transform: scale(1.08); }
+
+.slt-rating-star:focus-visible {
+  outline: 3px solid var(--slt-rate-ring);
+  outline-offset: 2px;
+}
+
+.slt-rating-label {
+  margin: 0;
+  min-height: 1.5em;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.slt-rating-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.slt-rating-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.slt-rating-skip {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  min-height: 44px;
+  padding: 8px 16px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--text-dim, #64748b);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.slt-rating-skip:hover { color: var(--text); }
+.slt-rating-skip:focus-visible { outline: 3px solid var(--slt-rate-ring); outline-offset: 2px; }
+.slt-rating-skip:disabled { opacity: 0.5; cursor: default; }
+
+.slt-rating-message {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.slt-rating-message.is-ok { color: var(--text); }
+.slt-rating-message.is-ok .slt-rating-check { color: var(--good, #2eab5b); }
+.slt-rating-message.is-failed { color: var(--text-dim, #64748b); }
+
+.slt-rating-card .hidden { display: none; }
+
+@media (max-width: 380px) {
+  .slt-rating-card { padding: 20px 14px; }
+  .slt-rating-star { width: 48px; height: 48px; flex-basis: 48px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slt-rating-overlay,
+  .slt-rating-card,
+  .slt-rating-star { animation: none !important; transition: none !important; }
+  .slt-rating-star.is-preview { transform: none; }
+}

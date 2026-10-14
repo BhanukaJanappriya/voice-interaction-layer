@@ -861,3 +861,30 @@ timing per turn is `timings {tool_ms, llm_ms}` in the reply and in `/health`.
 **Voice yes.** The spoken yes or no (English, Sinhala, Singlish, Tamil) is a word list. A reply
 with extra words, a question or a negation cancels, on purpose. The speech wording of amounts is
 text rewriting, not a check of how each text to speech voice reads it.
+
+## Rating, voices, hub only knowledge (2026-10-14)
+
+**Voices.** edge-tts is an unofficial client of a Microsoft service. It stopped working once
+already (403 with an older version) and can again; then speech falls back to the Windows SAPI voice
+and `/health` shows the error under `speech_engine`. The newer English voices were chosen from the
+service's own list and were synthesized, but nobody listened to them in this session, so judge the
+sound yourself. Cloud speech (Google or Azure) is not configured in `.env` (the values are empty);
+setting them gives more stable voices.
+
+**Hub speed.** On the live hub the knowledge search took 1.6 to 3.7 s and stalled for 8 s or more on
+about one call in four during testing. A guest's search is retried once on a stall; two stalls give
+the fixed "temporarily unavailable" text. The pause after a hub failure is 20 s in this mode (it was
+300 s). Customer tool calls on a customer's own connection are not retried.
+
+**Sinhala and Tamil answers.** They are answered from the hub's text, translated by the model. The
+local Llama writes poor Sinhala (it produced nonsense in one test); the cloud tier wrote readable
+Sinhala and Tamil but its Tamil is awkward in places. Customer data stays on the local model, so
+account answers in Sinhala and Tamil will be weaker than guest answers.
+
+**Output filter.** It removes sentences that carry a contact detail not given by the hub. It cannot
+tell a wrong price or wrong fact, and a sentence that mixes a correct fact with an unlisted contact
+loses both. Prices and other plain figures are not checked.
+
+**Ratings.** One prompt per channel per page visit; nothing stops someone submitting several times
+from different visits (limited per address to `RATING_RATE_LIMIT_PER_HOUR`). The numbers show how
+visitors feel about the session, not about a single answer.

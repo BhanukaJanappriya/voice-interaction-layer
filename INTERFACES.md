@@ -652,3 +652,19 @@ GET /health: answers {source, state_changing_tools, gateway, tool_agent, tool_la
 GET /admin/api/hub (admin): gateway status, latency classes, tool agent stats, recent calls
 frontend: window.SLTConfirm {show, hide, resolve, setStatus}; events slt:confirmation-result,
     slt:confirmation-closed
+
+
+Additions of 2026-10-14.
+
+POST /feedback/rating {rating 1..5 (strict integer), channel chat|voice, language en|si|ta (optional),
+    turns (optional)} -> 201 {"ok": true}; 422 invalid; 429 {code, retry_after}; 404 when RATING_ENABLED
+    is false; 503 {code} on database trouble. The verified flag is decided on the server.
+GET /feedback/config -> {"enabled": bool}
+GET /admin/api/ratings?days=1..365 (admin) -> {days, count, average, distribution{"1".."5"},
+    by_channel{chat, voice: {count, average}}, verified_count, recent[...]}
+GET /health: speech_engine {engine, last_error}; knowledge is {"enabled": false, "reason": ...} in hub mode
+frontend: window.SLTRating {ask({channel, language, turns}), hide, base}; event slt:rating-closed
+config: RATING_ENABLED, RATING_RATE_LIMIT_PER_HOUR; MCP_HUB_TIMEOUT_SECONDS now 10 and
+    MCP_HUB_BREAKER_SECONDS now 20 when ANSWER_SOURCE is mcp_hub (300 otherwise); KB_MIN_SCORE now 0.40
+tool_agent.scrub: filter_stream(pieces, context, official, dial_line), clean_text(text, context, official)
+tool_agent.knowledge: expand_query(text, language)

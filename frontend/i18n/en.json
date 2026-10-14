@@ -77,5 +77,20 @@
   "confirm.ui.invalid": "This request is no longer valid. Nothing was changed.",
   "confirm.ui.unknown": "I could not tell whether it went through. Please check your account before trying again.",
   "confirm.ui.busy": "Working",
-  "confirm.ui.hint": "Check the details, then confirm to go ahead."
+  "confirm.ui.hint": "Check the details, then confirm to go ahead.",
+  "rating.title": "How was your experience?",
+  "rating.line.chat": "Tell us how this chat went.",
+  "rating.line.voice": "Tell us how this voice call went.",
+  "rating.group": "Rating",
+  "rating.star": "{n} of 5 stars",
+  "rating.label.1": "Poor",
+  "rating.label.2": "Fair",
+  "rating.label.3": "Good",
+  "rating.label.4": "Very good",
+  "rating.label.5": "Excellent",
+  "rating.choose": "Choose a star",
+  "rating.submit": "Submit",
+  "rating.skip": "Skip",
+  "rating.thanks": "Thank you for your feedback",
+  "rating.failed": "Could not send, thank you anyway"
 }

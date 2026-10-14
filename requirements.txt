@@ -31,7 +31,7 @@ pyttsx3==2.99
 # the local SAPI5 fallback above, and is what actually gets Sinhala and
 # Tamil a natural voice with zero credentials configured; see tts.py and
 # KNOWN_LIMITATIONS.md.
-edge-tts==7.2.8
+edge-tts==7.3.1
 
 # Local chat agent fallback (Ollama REST API)
 requests==2.34.2

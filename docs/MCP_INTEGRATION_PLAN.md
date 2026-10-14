@@ -85,7 +85,7 @@ Built as planned, with these differences. (a) Cloud function calling is not used
 KNOWN_LIMITATIONS): retrieval runs before the model for every tier. (b) State changing tools
 exist but are off by default. (c) The OTP voice call channel is supported by the gateway and not
 offered in the wizard. (d) The masked contact appears in step 3, because the hub only returns it
-after sending. ADR-5: customer data stays on the local Llama (owner decision). ADR-6: a customer
-tool whose service type cannot be learned is refused, so a hub that fails `show_service_detail`
-(as it did on the live line) makes balance and bill questions answer "temporarily unavailable"
-instead of guessing a product. ADR-7: the diagnostic tool is shown to operators only.
+after sending. ADR-5: customer data stays on the local Llama (owner decision). ADR-6 (changed 2026-10-14 at the owner's request): a customer
+whose service type cannot be learned is treated as postpaid, so a hub that fails `show_service_detail`
+(as it did on the live line) still lets balance and bill questions through; the LTE prepaid tools stay
+hidden until the type is known. ADR-7: the diagnostic tool is shown to operators only.

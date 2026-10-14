@@ -144,3 +144,6 @@ class OtpChallenge(Base):
 
 # Registers the verification tables on Base.metadata for Alembic and create_all.
 import verification.models  # noqa: E402,F401
+
+# Registers the rating table on Base.metadata for Alembic and create_all.
+import feedback.models  # noqa: E402,F401

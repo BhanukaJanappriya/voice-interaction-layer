@@ -260,7 +260,7 @@ function adminName(me) {
 async function enterDashboard(me) {
   $("admin-name").textContent = adminName(me);
   showScreen("screen-dashboard");
-  await Promise.allSettled([loadAgents(), loadMcpClients(), loadAudit()]);
+  await Promise.allSettled([loadAgents(), loadMcpClients(), loadAudit(), loadRatings(), loadHub()]);
 }
 
 async function checkSession() {
@@ -740,5 +740,71 @@ async function loadAudit() {
 }
 
 $("audit-refresh").addEventListener("click", loadAudit);
+
+// Customer ratings
+
+async function loadRatings() {
+  const tbody = $("ratings-body");
+  try {
+    const data = await api("/admin/api/ratings?days=30");
+    showMessage($("ratings-message"), "");
+    tbody.replaceChildren();
+    const average = data.average === null || data.average === undefined ? "no ratings yet" : `${data.average} out of 5`;
+    $("ratings-summary").textContent = `${data.count} ratings, average ${average}. Chat ${data.by_channel.chat.count}, voice ${data.by_channel.voice.count}, verified customers ${data.verified_count}.`;
+    ["5", "4", "3", "2", "1"].forEach((stars) => {
+      const row = el("tr");
+      row.appendChild(el("td", "cell-nowrap", `${stars} star${stars === "1" ? "" : "s"}`));
+      row.appendChild(el("td", "cell-nowrap", String(data.distribution[stars] || 0)));
+      tbody.appendChild(row);
+    });
+  } catch (err) {
+    if (err.status !== 401) {
+      tbody.replaceChildren();
+      emptyRow(tbody, 2, "Ratings are not available.");
+      showMessage($("ratings-message"), err.message, "error");
+    }
+  }
+}
+
+$("ratings-refresh").addEventListener("click", loadRatings);
+
+// MCP hub gateway
+
+async function loadHub() {
+  const tbody = $("hub-body");
+  try {
+    const data = await api("/admin/api/hub");
+    showMessage($("hub-message"), "");
+    tbody.replaceChildren();
+    const gateway = data.gateway || {};
+    const agent = data.tool_agent || {};
+    const error = gateway.last_error ? `, last problem: ${gateway.last_error}` : "";
+    $("hub-summary").textContent =
+      `${gateway.sessions || 0} customer connections open, ${agent.turns || 0} turns, ` +
+      `average ${agent.avg_tool_ms || 0} ms in tools per turn${error}.`;
+    const classes = data.tool_latency_classes && data.tool_latency_classes.per_tool;
+    const byTool = agent.by_tool || {};
+    if (!classes) {
+      emptyRow(tbody, 3, "The hub did not report its latency classes.");
+      return;
+    }
+    Object.keys(classes).sort().forEach((tool) => {
+      const row = el("tr");
+      row.appendChild(el("td", "cell-mono", tool));
+      row.appendChild(el("td", "cell-nowrap", classes[tool]));
+      const seen = byTool[tool];
+      row.appendChild(el("td", "cell-nowrap", seen && seen.avg_ms !== undefined ? `${seen.avg_ms} ms` : ""));
+      tbody.appendChild(row);
+    });
+  } catch (err) {
+    if (err.status !== 401) {
+      tbody.replaceChildren();
+      emptyRow(tbody, 3, "Hub status is not available.");
+      showMessage($("hub-message"), err.message, "error");
+    }
+  }
+}
+
+$("hub-refresh").addEventListener("click", loadHub);
 
 checkSession();

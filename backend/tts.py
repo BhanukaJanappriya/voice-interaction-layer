@@ -53,13 +53,32 @@ import config
 # voices), so this one map serves both _synthesize_edge_tts() and
 # _speak_cloud_azure() below rather than keeping two copies in sync.
 _NEURAL_VOICE_MAP = {
-    ("en", "female_natural"): "en-US-JennyNeural",
-    ("en", "male"): "en-US-GuyNeural",
+    ("en", "female_natural"): "en-US-AvaMultilingualNeural",
+    ("en", "male"): "en-US-AndrewMultilingualNeural",
     ("si", "female_natural"): "si-LK-ThiliniNeural",
     ("si", "male"): "si-LK-SameeraNeural",
+    ("ta", "female_natural"): "ta-LK-SaranyaNeural",
+    ("ta", "male"): "ta-LK-KumarNeural",
+}
+
+# The voices used before the newer ones above. If Microsoft's service refuses a
+# newer voice name, the older one is tried before the offline fallback.
+_NEURAL_FALLBACK_MAP = {
+    ("en", "female_natural"): "en-US-JennyNeural",
+    ("en", "male"): "en-US-GuyNeural",
     ("ta", "female_natural"): "ta-IN-PallaviNeural",
     ("ta", "male"): "ta-IN-ValluvarNeural",
 }
+
+# Which engine spoke the last sentence and why a better one was skipped, for
+# /health. "edge-tts 403" shows up there when Microsoft's free service blocks an
+# old edge-tts version (fixed by upgrading the package), instead of the voice
+# silently becoming the Windows SAPI voice.
+_speech_state = {"engine": None, "last_error": None}
+
+
+def status() -> dict:
+    return dict(_speech_state)
 
 _LOCAL_FEMALE_VOICE_ID = None
 _LOCAL_MALE_VOICE_ID = None
@@ -330,11 +349,26 @@ def _synthesize_edge_tts(text_input: str, language: str, voice_style: str):
                     audio_bytes.extend(chunk["data"])
             return bytes(audio_bytes)
 
-        audio_bytes = asyncio.run(_synthesize())
+        audio_bytes = b""
+        for candidate in (voice_name, _NEURAL_FALLBACK_MAP.get((language, voice_style))):
+            if not candidate:
+                continue
+            voice_name = candidate
+            try:
+                audio_bytes = asyncio.run(_synthesize())
+            except Exception as exc:  # noqa: BLE001  try the older voice, then give up
+                _speech_state["last_error"] = type(exc).__name__ + ": " + str(exc)[:80]
+                audio_bytes = b""
+            if audio_bytes:
+                break
         if not audio_bytes:
+            print(f"TTS: edge-tts unavailable ({_speech_state['last_error']}), falling back.")
+            _speech_state["engine"] = "offline (SAPI)"
             return None
+        _speech_state.update(engine="edge-tts neural", last_error=None)
         return sf.read(io.BytesIO(audio_bytes), dtype="float32")
     except Exception as exc:
+        _speech_state.update(engine="offline (SAPI)", last_error=type(exc).__name__ + ": " + str(exc)[:80])
         print(f"TTS: edge-tts unavailable ({exc}), falling back.")
         return None
 
