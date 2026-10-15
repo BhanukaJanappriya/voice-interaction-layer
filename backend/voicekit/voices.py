@@ -7,14 +7,11 @@ compares the two so they cannot drift apart silently.
 LANGUAGES = ("en", "si", "ta")
 VOICE_STYLES = ("female_natural", "male")
 
-EDGE_VOICES = {
-    ("en", "female_natural"): "en-US-AvaMultilingualNeural",
-    ("en", "male"): "en-US-AndrewMultilingualNeural",
-    ("si", "female_natural"): "si-LK-ThiliniNeural",
-    ("si", "male"): "si-LK-SameeraNeural",
-    ("ta", "female_natural"): "ta-LK-SaranyaNeural",
-    ("ta", "male"): "ta-LK-KumarNeural",
-}
+from . import voice_config as _voice_config
+
+# Read from config/voices.yaml (tier "local", first entry of each list); built in
+# defaults when the file is missing, so voicekit still works when copied alone.
+EDGE_VOICES = _voice_config.edge_map()
 
 # Google Cloud Text to Speech has no Sinhala voice at all (checked live when
 # tts.py was written), so there is deliberately no si entry here.

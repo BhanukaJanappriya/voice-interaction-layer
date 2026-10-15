@@ -52,14 +52,9 @@ import config
 # catalog (edge-tts calls Microsoft Edge's own backend for the same
 # voices), so this one map serves both _synthesize_edge_tts() and
 # _speak_cloud_azure() below rather than keeping two copies in sync.
-_NEURAL_VOICE_MAP = {
-    ("en", "female_natural"): "en-US-AvaMultilingualNeural",
-    ("en", "male"): "en-US-AndrewMultilingualNeural",
-    ("si", "female_natural"): "si-LK-ThiliniNeural",
-    ("si", "male"): "si-LK-SameeraNeural",
-    ("ta", "female_natural"): "ta-LK-SaranyaNeural",
-    ("ta", "male"): "ta-LK-KumarNeural",
-}
+from voicekit import voice_config as _voice_config  # noqa: E402
+
+_NEURAL_VOICE_MAP = _voice_config.edge_map()
 
 # The voices used before the newer ones above. If Microsoft's service refuses a
 # newer voice name, the older one is tried before the offline fallback.
@@ -397,6 +392,17 @@ def _speak_offline(sentence: str, language: str, voice_style: str) -> None:
 _UNSPOKEN_MARKUP = re.compile(r"[*#_`]+")
 
 
+def _normalized_for_speech(sentence: str, language: str) -> str:
+    """Numbers, rupee amounts, phone numbers and telecom words written out the way
+    they are said (voice_text); the text on screen is not touched. Never raises."""
+    try:
+        from voicekit.normalizer_adapter import prepare_for_tts
+
+        return prepare_for_tts(sentence, language) or sentence
+    except Exception:  # noqa: BLE001
+        return sentence
+
+
 def _prepare_sentence(sentence: str, language: str, voice_style: str) -> Callable[[], None]:
     """Does the slow, network bound part (synthesis) for one sentence and
     returns a callable that plays it. Runs on speak_stream()'s synthesis
@@ -407,6 +413,7 @@ def _prepare_sentence(sentence: str, language: str, voice_style: str) -> Callabl
     sentence = _UNSPOKEN_MARKUP.sub("", sentence).strip()
     if not sentence:
         return lambda: None
+    sentence = _normalized_for_speech(sentence, language)
     start = time.perf_counter()
 
     if config.cloud_speech_configured():

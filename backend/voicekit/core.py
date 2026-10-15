@@ -41,7 +41,8 @@ import threading
 import time
 from typing import Iterable, Iterator, List, Union
 
-from .providers import azure, edge, google_cloud, local_model, sapi
+from .providers import azure, edge, gemini_tts, google_cloud, livekit_inference_tts, local_model, piper_si, sapi
+from .normalizer_adapter import prepare_for_tts
 from .providers.base import clean_for_speech
 from .settings import VoicekitSettings
 from .types import (
@@ -99,7 +100,11 @@ def _cloud_module(settings: VoicekitSettings):
 
 
 def _provider_chain(settings: VoicekitSettings):
-    modules = {"cloud": _cloud_module(settings), "edge": edge, "local_model": local_model, "sapi": sapi}
+    modules = {
+        "cloud": _cloud_module(settings), "edge": edge, "local_model": local_model, "sapi": sapi,
+        # Opt in slots, only used when a host puts them in provider_order.
+        "livekit_inference": livekit_inference_tts, "gemini_tts": gemini_tts, "piper_si": piper_si,
+    }
     return [modules[slot] for slot in settings.provider_order if slot in modules]
 
 
@@ -185,6 +190,7 @@ class SynthStream:
     def _speak_sentence(self, text: str, index: int) -> bool:
         """Tries each provider in order; returns True if any produced audio."""
         language = self._language
+        text = prepare_for_tts(text, language)
         for module in _provider_chain(self._settings):
             if self._cancel.is_set():
                 return False

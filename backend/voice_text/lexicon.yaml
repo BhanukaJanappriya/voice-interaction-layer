@@ -1,0 +1,165 @@
+# Data for backend/voice_text/normalizer.py. Everything that is a word or a name lives here;
+# the algorithms (number to words for English, date and time shapes) live in the code.
+#
+# Choices (also in docs/VOICE_EVAL.md):
+# * English numbers are spoken as English words ("four thousand five hundred ninety").
+# * Sinhala and Tamil: number to words is NOT implemented. The joining forms of Sinhala
+#   (visi, tis, hathalis) and Tamil (irupaththu, mupparhu) numbers are irregular and a wrong
+#   numeral is worse than a digit. Integers stay as Arabic digits without thousands commas, the
+#   TTS voice reads them. Phone numbers, short codes, OTPs, account numbers and decimal
+#   fractions are spelled digit by digit with the digit words below (those are simple and certain).
+# * Latin abbreviations and English telecom words inside si and ta sentences are rewritten into
+#   the native script (a spelling the voice can read), because a Sinhala or Tamil voice often
+#   reads Latin text in a flat or wrong way. Spellings are UNVERIFIED by a native speaker.
+
+languages:
+  en:
+    digits: [zero, one, two, three, four, five, six, seven, eight, nine]
+    plus: plus
+    point: point
+    months: [January, February, March, April, May, June, July, August, September, October, November, December]
+    rupee: [rupee, rupees]
+    cent: [cent, cents]
+    percent: percent
+    percent_position: after
+    meridiem: {am: "A M", pm: "P M"}
+    oclock: "o'clock"
+    oh: oh
+    hundred: hundred
+    time_context: [at, from, until, till, by, to, before, after, between, and]
+    digit_context: [otp, code, pin, account, reference, ref, number, no]
+    units:
+      GB: [gigabyte, gigabytes]
+      MB: [megabyte, megabytes]
+      KB: [kilobyte, kilobytes]
+      TB: [terabyte, terabytes]
+      Gbps: [gigabit per second, gigabits per second]
+      Mbps: [megabit per second, megabits per second]
+      Kbps: [kilobit per second, kilobits per second]
+      kbps: [kilobit per second, kilobits per second]
+    abbreviations:
+      "SLT": "S L T"
+      "PEOTV": "P E O T V"
+      "LTE": "L T E"
+      "VAS": "V A S"
+      "SMS": "S M S"
+      "OTP": "O T P"
+      "FTTH": "F T T H"
+      "IDD": "I D D"
+      "ADSL": "A D S L"
+      "SIM": "S I M"
+      "2G": "two G"
+      "3G": "three G"
+      "4G": "four G"
+      "5G": "five G"
+    words: {}
+
+  si:
+    digits: [බිංදුව, එක, දෙක, තුන, හතර, පහ, හය, හත, අට, නවය]
+    plus: ප්ලස්
+    point: දශම
+    months: [ජනවාරි, පෙබරවාරි, මාර්තු, අප්‍රේල්, මැයි, ජූනි, ජූලි, අගෝස්තු, සැප්තැම්බර්, ඔක්තෝබර්, නොවැම්බර්, දෙසැම්බර්]
+    rupee_fmt: "රුපියල් {n}"
+    cent_fmt: "සත {n}"
+    percent: සියයට
+    percent_position: before
+    meridiem: {am: "පෙරවරු", pm: "පස්වරු"}
+    time_context: [උදේ, උදෑසන, දහවල්, සවස, රාත්‍රී, රාත්රී]
+    digit_context: [otp, code, pin, කේතය, ගිණුම්, ගිණුම]
+    units:
+      GB: ගිගාබයිට්
+      MB: මෙගාබයිට්
+      KB: කිලෝබයිට්
+      TB: ටෙරාබයිට්
+      Gbps: ගිගාබිට් පර් සෙකන්ඩ්
+      Mbps: මෙගාබිට් පර් සෙකන්ඩ්
+      Kbps: කිලෝබිට් පර් සෙකන්ඩ්
+      kbps: කිලෝබිට් පර් සෙකන්ඩ්
+    abbreviations:
+      "SLT Mobitel": "එස් එල් ටී මොබිටෙල්"
+      "SLT": "එස් එල් ටී"
+      "PEOTV": "පී ඊ ඕ ටී වී"
+      "LTE": "එල් ටී ඊ"
+      "VAS": "වී ඒ එස්"
+      "SMS": "එස් එම් එස්"
+      "OTP": "ඕ ටී පී"
+      "FTTH": "එෆ් ටී ටී එච්"
+      "IDD": "අයි ඩී ඩී"
+      "ADSL": "ඒ ඩී එස් එල්"
+      "SIM": "සිම්"
+      "2G": "ටූ ජී"
+      "3G": "ත්‍රී ජී"
+      "4G": "ෆෝ ජී"
+      "5G": "ෆයිව් ජී"
+      "Mobitel": "මොබිටෙල්"
+    words:
+      "data bundle": "ඩේටා බණ්ඩල්"
+      "data package": "ඩේටා පැකේජ්"
+      "fibre": "ෆයිබර්"
+      "fiber": "ෆයිබර්"
+      "router": "රවුටර්"
+      "wi-fi": "වයිෆයි"
+      "wifi": "වයිෆයි"
+      "package": "පැකේජ්"
+      "bill": "බිල්"
+      "broadband": "බ්‍රෝඩ්බෑන්ඩ්"
+      "reload": "රීලෝඩ්"
+      "data": "ඩේටා"
+      "bundle": "බණ්ඩල්"
+
+  ta:
+    digits: [பூஜ்ஜியம், ஒன்று, இரண்டு, மூன்று, நான்கு, ஐந்து, ஆறு, ஏழு, எட்டு, ஒன்பது]
+    plus: பிளஸ்
+    point: புள்ளி
+    months: [ஜனவரி, பிப்ரவரி, மார்ச், ஏப்ரல், மே, ஜூன், ஜூலை, ஆகஸ்ட், செப்டம்பர், அக்டோபர், நவம்பர், டிசம்பர்]
+    rupee_fmt: "{n} ரூபாய்"
+    cent_fmt: "{n} சதம்"
+    percent: சதவீதம்
+    percent_position: after
+    meridiem: {am: "முற்பகல்", pm: "பிற்பகல்"}
+    time_context: [காலை, மதியம், மாலை, இரவு]
+    digit_context: [otp, code, pin, குறியீடு, கணக்கு]
+    units:
+      GB: ஜிகாபைட்
+      MB: மெகாபைட்
+      KB: கிலோபைட்
+      TB: டெராபைட்
+      Gbps: ஜிகாபிட் பெர் செகண்ட்
+      Mbps: மெகாபிட் பெர் செகண்ட்
+      Kbps: கிலோபிட் பெர் செகண்ட்
+      kbps: கிலோபிட் பெர் செகண்ட்
+    abbreviations:
+      "SLT Mobitel": "எஸ் எல் டி மொபிடெல்"
+      "SLT": "எஸ் எல் டி"
+      "PEOTV": "பி ஈ ஓ டி வி"
+      "LTE": "எல் டி இ"
+      "VAS": "வி ஏ எஸ்"
+      "SMS": "எஸ் எம் எஸ்"
+      "OTP": "ஓ டி பி"
+      "FTTH": "எஃப் டி டி எச்"
+      "IDD": "ஐ டி டி"
+      "ADSL": "ஏ டி எஸ் எல்"
+      "SIM": "சிம்"
+      "2G": "டூ ஜி"
+      "3G": "த்ரீ ஜி"
+      "4G": "ஃபோர் ஜி"
+      "5G": "ஃபைவ் ஜி"
+      "Mobitel": "மொபிடெல்"
+    words:
+      "data bundle": "டேட்டா பண்டில்"
+      "data package": "டேட்டா பேக்கேஜ்"
+      "fibre": "ஃபைபர்"
+      "fiber": "ஃபைபர்"
+      "router": "ரவுட்டர்"
+      "wi-fi": "வைஃபை"
+      "wifi": "வைஃபை"
+      "package": "பேக்கேஜ்"
+      "bill": "பில்"
+      "broadband": "பிராட்பேண்ட்"
+      "reload": "ரீலோட்"
+      "data": "டேட்டா"
+      "bundle": "பண்டில்"
+
+# Four digit short codes read digit by digit (a bare 4 digit number is otherwise read as a
+# quantity). Only codes the brief names. Add more here.
+short_codes: ["1212", "1222"]

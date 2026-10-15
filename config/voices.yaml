@@ -1,0 +1,81 @@
+# One file for every voice the assistant can use.
+# Layout: tiers -> <tier> -> <language en|si|ta> -> <gender female|male> -> ordered list.
+# The first entry is tried first, the rest are fallbacks. A null entry means "voice id
+# not confirmed" and is skipped by backend/voicekit/voice_config.py (the note says why).
+# Status words: verified (heard or listed by the service here), docs (read in vendor
+# documentation, not run), unverified (an assumption). Nobody has listened to any voice yet.
+#
+# Entries for livekit_inference are full LiveKit Inference strings "<model>:<voice>".
+# Entries for gemini_live are prebuilt voice names. Entries for local are edge-tts names,
+# except under offline_* keys.
+
+version: 1
+
+tiers:
+  # Tier 1: Gemini Live prebuilt voices. Source https://ai.google.dev/gemini-api/docs/speech-generation
+  # Licence: Google Gemini API terms (service, no per voice licence); commercial use allowed
+  # under the paid API terms. Status: unverified, the key has no credit, nothing was heard.
+  gemini_live:
+    model_hint: gemini-3.8-live
+    en:
+      female: [Kore, Aoede]
+      male: [Puck, Charon]
+    si:
+      female: [Kore, Aoede]
+      male: [Puck, Charon]
+    ta:
+      female: [Kore, Aoede]
+      male: [Puck, Charon]
+
+  # Tier 2: LiveKit Inference. Source https://docs.livekit.io/agents/models/tts/
+  # Model ids confirmed in the docs on 2026-10-15: inworld/inworld-tts-2, inworld/inworld-tts-2-flash,
+  # google/gemini-3.8-flash-tts, google/gemini-3.8-flash-lite-tts. The Inworld docs name the voices
+  # Ashley, Edward, Olivia, Diego but the full list is only in the Inworld playground, and no
+  # Sinhala specific voice is named anywhere. Whether Ashley or Edward speak good Sinhala is
+  # unverified, so they are listed as the first thing to try, not as known good.
+  # Licence: LiveKit Cloud and Inworld / Google service terms, no model files; commercial use per plan.
+  livekit_inference:
+    en:
+      female: ["google/gemini-3.8-flash-lite-tts:Kore", "google/gemini-3.8-flash-tts:Kore", "inworld/inworld-tts-2-flash:Ashley"]
+      male: ["google/gemini-3.8-flash-lite-tts:Puck", "google/gemini-3.8-flash-tts:Puck", "inworld/inworld-tts-2-flash:Edward"]
+    si:
+      # only Inworld 2.0 lists Sinhala in LiveKit Inference (docs)
+      female: ["inworld/inworld-tts-2:Ashley", "inworld/inworld-tts-2-flash:Ashley"]
+      male: ["inworld/inworld-tts-2:Edward", "inworld/inworld-tts-2-flash:Edward"]
+    ta:
+      female: ["google/gemini-3.8-flash-tts:Kore", "inworld/inworld-tts-2:Ashley"]
+      male: ["google/gemini-3.8-flash-tts:Puck", "inworld/inworld-tts-2:Edward"]
+
+  # Tier 3: local. edge-tts voices are a Microsoft service, library LGPL-3.0
+  # (https://github.com/rany2/edge-tts), Microsoft terms for commercial use UNVERIFIED.
+  # Voices listed by edge_tts.list_voices() on 2026-10-15 (verified). English order is
+  # Aria and Guy first because the Multilingual voices took 2 to 7 s to first audio
+  # (measured, docs/VOICE_EVAL.md).
+  local:
+    en:
+      female: [en-US-AvaMultilingualNeural, en-US-AriaNeural]
+      male: [en-US-AndrewMultilingualNeural, en-US-GuyNeural]
+    si:
+      # only these two Sinhala voices exist in the service
+      female: [si-LK-ThiliniNeural]
+      male: [si-LK-SameeraNeural]
+    ta:
+      female: [ta-LK-SaranyaNeural, ta-IN-PallaviNeural]
+      male: [ta-LK-KumarNeural, ta-IN-ValluvarNeural]
+
+# Offline voices used when no network voice works. Not part of the (tier, language) lookup
+# order above; the lead may append them after the edge entries.
+offline:
+  # Windows SAPI5 through pyttsx3: operating system component, English only on the dev machine.
+  sapi5:
+    en:
+      female: [default]
+      male: [default]
+  # Piper si_LK-dilu-medium: NOT FOUND. The repository https://huggingface.co/rhasspy/piper-voices
+  # has no si directory (404 on 2026-10-15, no Sinhala tag), so the brief's voice is not
+  # available there and nothing was downloaded. The adapter stays unavailable until a model file
+  # is placed in data/models/piper_si by hand after its licence is read. See providers/piper_si.py.
+  piper_si:
+    si:
+      female: [si_LK-dilu-medium]
+      male: []
