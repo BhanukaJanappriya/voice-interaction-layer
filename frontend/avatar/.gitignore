@@ -1,3 +1,6 @@
 *.glb
 *.part
 *.wav
+
+# The south asian build is committed (small); everything else generated stays out.
+!assets/*_sl.glb
