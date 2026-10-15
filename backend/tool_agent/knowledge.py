@@ -95,18 +95,53 @@ def expand_query(text: str, language: Optional[str]) -> str:
     return f"{text} {' '.join(terms)}".strip() if terms else text
 
 
-def search(text: str, access, budget: Optional[float] = None, language: Optional[str] = None) -> Search:
-    query = expand_query(text, language)[:QUERY_CHARS]
-    result = mcp_gateway.call(TOOL, {"query": query}, access, budget=budget)
-    if result.kind == "reauth":
-        return Search("reauth", ms=result.ms)
-    if result.kind != "ok":
-        return Search("unavailable", ms=result.ms)
-    threshold = min_score()
+# Added to a second, parallel search that only widens the context. Measured on the live hub:
+# "What fibre packages do you have?" scored 0.45 on its own (two thin table chunks, and the
+# model then said it had no details), 0.56 with this suffix; an off topic question rose from
+# 0.36 to 0.44, so the plain question alone still decides whether the hub knows the topic.
+RICH_SUFFIX = " SLT Mobitel details"
+
+
+def _kept(result, threshold: float) -> list:
     kept = [c for c in _chunks_of(result) if c["score"] is None or c["score"] >= threshold]
     kept.sort(key=lambda c: -(c["score"] if c["score"] is not None else 1.0))
-    kept = kept[:MAX_CHUNKS]
-    return Search("found" if kept else "none", kept, result.ms)
+    return kept
+
+
+def search(text: str, access, budget: Optional[float] = None, language: Optional[str] = None) -> Search:
+    from concurrent.futures import ThreadPoolExecutor
+
+    query = expand_query(text, language)[:QUERY_CHARS]
+    rich_query = (query + RICH_SUFFIX)[:QUERY_CHARS]
+    pool = ThreadPoolExecutor(max_workers=2)
+    try:
+        rich_future = pool.submit(mcp_gateway.call, TOOL, {"query": rich_query}, access, budget=budget)
+        result = mcp_gateway.call(TOOL, {"query": query}, access, budget=budget)
+        if result.kind == "reauth":
+            return Search("reauth", ms=result.ms)
+        if result.kind != "ok":
+            return Search("unavailable", ms=result.ms)
+        threshold = min_score()
+        kept = _kept(result, threshold)
+        ms = result.ms
+        if kept:
+            # The plain question found the topic: add what the richer question found, if it answered.
+            try:
+                rich = rich_future.result(timeout=max(1.0, float(budget or 0) or 4.0))
+            except Exception:  # noqa: BLE001  the extra context is optional
+                rich = None
+            if rich is not None and rich.kind == "ok":
+                seen = {c["content"][:120] for c in kept}
+                for chunk in _kept(rich, threshold):
+                    if chunk["content"][:120] not in seen:
+                        kept.append(chunk)
+                        seen.add(chunk["content"][:120])
+                kept.sort(key=lambda c: -(c["score"] if c["score"] is not None else 1.0))
+                ms = max(ms, rich.ms)
+        kept = kept[:MAX_CHUNKS]
+    finally:
+        pool.shutdown(wait=False)  # never wait for the optional second search
+    return Search("found" if kept else "none", kept, ms)
 
 
 def context_of(chunks: list, max_chars: Optional[int] = None) -> str:

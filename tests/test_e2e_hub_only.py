@@ -356,8 +356,8 @@ def refused_port():
 def test_guest_package_question_uses_only_the_knowledge_search(env):
     client = env.new_client()
     body = post_chat(client, GENERAL)
-    assert [name for name, _ in env.hub.tool_calls] == [KB]
-    assert env.hub.tool_calls[0][1]["query"] == GENERAL
+    assert {name for name, _ in env.hub.tool_calls} == {KB}
+    assert GENERAL in [args["query"] for _, args in env.hub.tool_calls]
     assert len(env.calls["gemini"]) == 1, "the cloud model phrases a guest answer"
     assert env.hub.search_text in env.calls["gemini"][0], "the chunk text reached the model"
     assert "ONLY from the SLT excerpts" in env.calls["gemini"][0]
@@ -373,7 +373,7 @@ def test_guest_package_question_in_each_language_still_searches_the_hub(env, lan
         "ta": "MOBITEL 1598 தொகுப்பின் விலை என்ன?",
     }[language]
     post_chat(env.new_client(), question, language)
-    assert [name for name, _ in env.hub.tool_calls] == [KB]
+    assert {name for name, _ in env.hub.tool_calls} == {KB}
     assert env.hub.search_text in env.calls["gemini"][0]
     assert f"Reply in {dict(en='English', si='Sinhala', ta='Tamil')[language]}" in env.calls["gemini"][0]
 
@@ -472,7 +472,7 @@ def test_a_score_below_the_threshold_is_the_not_found_text(env, monkeypatch, lan
     assert body["reply"] == dial_text("tool_agent.not_found", language)
     for number in DIAL:
         assert number in body["reply"]
-    assert [name for name, _ in env.hub.tool_calls] == [KB]
+    assert {name for name, _ in env.hub.tool_calls} == {KB}
     env.assert_no_model_called()
 
 
@@ -722,7 +722,7 @@ def test_a_dropped_session_does_not_stop_general_questions(env):
     client = verified_client(env)
     _drop(env)
     body = post_chat(client, GENERAL)
-    assert [name for name, _ in env.hub.tool_calls] == [KB]
+    assert {name for name, _ in env.hub.tool_calls} == {KB}
     assert body["mode"].endswith(" + SLT hub")
 
 

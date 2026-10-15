@@ -139,7 +139,10 @@ def test_guest_answer_is_built_from_the_chunk_text(hub):
     assert plan.status_key == "tool_agent.status.search"
     assert "ONLY from the SLT excerpts" in plan.clause and "short sentences" in plan.clause
     assert isinstance(plan.timings["tool_ms"], int)
-    assert hub.tool_calls == [(KB, {"query": "How much is the MOBITEL 1598 package?", "top_k": 3})]
+    # the plain question, and the same question with the widening suffix (run in parallel)
+    assert {name for name, _ in hub.tool_calls} == {KB}
+    assert sorted(args["query"] for _, args in hub.tool_calls) == sorted(["How much is the MOBITEL 1598 package?", "How much is the MOBITEL 1598 package? SLT Mobitel details"])
+    assert all(args["top_k"] == 3 for _, args in hub.tool_calls)
 
 
 def test_the_query_is_cut_to_500_characters(hub):
@@ -257,7 +260,7 @@ def test_a_general_question_from_a_customer_uses_the_knowledge_base(signed_in):
     plan = tool_agent.prepare("How much is the MOBITEL 1598 package?", "en", fibre())
     assert plan.kind == "grounded" and signed_in.search_text in plan.context
     assert plan.private is False and plan.mode_suffix == " + SLT hub"
-    assert names(signed_in) == [KB]
+    assert set(names(signed_in)) == {KB}
 
 
 def test_at_most_four_tool_calls_per_turn(signed_in):

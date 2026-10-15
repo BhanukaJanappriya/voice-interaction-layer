@@ -42,6 +42,9 @@
     "subscribe_lte_prepaid_package"
   ],
   "public_overrides": [
+    "\\bhow (do|can|to|should)( i| we| one)?( to)? (pay|settle)( my| the| a| our)? (bills?|accounts?|dues?)\\b",
+    "\\b(ways|methods|options) (to|of) pay(ing)?( my| the| a)? bills?\\b",
+    "\\bhow (do|can|to|should)( i| we| one)?( to)? (check|view|know|find|see)( out)?( my| the)? (balance|bills?|data usage|usage|remaining data)\\b",
     "how (do|can|to|should)( i| we| one)?( to)? (pay|recharge|reload|top ?up)\\b[^?.!,;]{0,50}\\b(online|on ?line|app|website|portal|web)\\b",
     "(where|how) (can|do|to)( i| we)?( to)? (pay|make a payment)\\b[^?.!,;]{0,30}\\b(online|app|website|portal|counter|branch|bank)\\b",
     "\\b(online|app|website) (payment|pay) (options?|methods?|channels?)\\b",
