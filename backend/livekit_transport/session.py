@@ -97,6 +97,10 @@ def _with_project_voice_settings(synthesize_stream):
             local_voice_dir=str(config.VOICEKIT_LOCAL_VOICE_DIR),
             max_text_chars=config.VOICEKIT_MAX_TEXT_CHARS,
         )
+        if config.VOICE_TIER2_INFERENCE:
+            # Tier 2 speaks with LiveKit Inference TTS first (Sinhala only exists on Inworld);
+            # the rest of the chain stays behind it.
+            settings.provider_order = ("livekit_inference",) + tuple(settings.provider_order)
         return functools.partial(synthesize_stream, settings=settings)
     except Exception:
         return synthesize_stream
@@ -114,6 +118,8 @@ class SessionSettings:
     # OTP verified (customer service allowed), set by the token endpoint.
     access_verified: bool = False
     greet: bool = True
+    # The call moved here from another voice tier (voice_router): say the notice, not the introduction.
+    handover: bool = False
     participant_identity: Optional[str] = None
 
 
@@ -763,6 +769,11 @@ class LiveKitVoiceSession:
         # would otherwise hear the introduction as room noise).
         if s.greet:
             text, language = b.greeting(user_name, language_hint)
+            if s.handover:
+                from voice_router import make_notice
+
+                language = language if language in ("en", "si", "ta") else "en"
+                text = make_notice(language)
             _, _ = await self._run_interruptible(
                 lambda: self._speak_canned(text, language, "Introduction", threading.Event()),
                 threading.Event(),

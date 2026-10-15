@@ -79,6 +79,9 @@ class TokenRequest(BaseModel):
     voice_style: Optional[str] = Field(default=None, max_length=32)
     user_name: Optional[str] = Field(default=None, max_length=200)
     session_token: Optional[str] = Field(default=None, max_length=4096)
+    # True when the call moved here from another voice tier: the agent then says the
+    # short reconnecting notice instead of introducing itself again.
+    handover: bool = False
 
 
 class TokenResponse(BaseModel):
@@ -205,6 +208,8 @@ def create_token(body: TokenRequest, request: Request) -> TokenResponse:
         "verified": "true" if verified is not None else "false",
         "access": access_level,
     }
+    if body.handover:
+        attributes["handover"] = "true"
     jwt_token = build_token(identity=identity, room=room, attributes=attributes, display_name=display_name)
     expires_at = int(time.time()) + int(config.LIVEKIT_TOKEN_TTL_SECONDS)
     print(f"LiveKit token issued: room {room}, {'verified user' if verified else 'guest'}.")

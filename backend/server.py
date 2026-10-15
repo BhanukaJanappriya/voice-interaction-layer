@@ -258,6 +258,11 @@ async def _lifespan(_app: FastAPI):
     seed_first_admin_from_env()
     if config.WARM_UP_ON_STARTUP:
         threading.Thread(target=_warm_up, daemon=True).start()
+    if config.VOICE_ROUTER_ENABLED:
+        from voice_router import get_router
+
+        # Off the event loop: a slow Gemini call must not delay start up.
+        asyncio.get_running_loop().run_in_executor(None, get_router().probe_all)
     if config.VOICE_TRANSPORT == "livekit" and start_livekit_worker is not None:
         # Never raises: an unreachable LiveKit server is retried in the
         # background and shown on /health, it does not stop the app.
@@ -873,6 +878,7 @@ async def voice_ws(websocket: WebSocket):
     language_hint: Optional[str] = None
     user_name: Optional[str] = None
     greet = True
+    handover = False
     session_token: Optional[str] = None
     voice_holder = {"voice_style": DEFAULT_VOICE_STYLE}
     try:
@@ -882,6 +888,7 @@ async def voice_ws(websocket: WebSocket):
             language_hint = payload.get("language_hint") or None
             user_name = (payload.get("user_name") or "").strip()[:40] or None
             greet = payload.get("greet", True) is not False
+            handover = payload.get("handover") is True
             session_token = payload.get("session_token") or None
             voice_holder["voice_style"] = _valid_voice_style(payload.get("voice_style"))
     except Exception as exc:
@@ -911,7 +918,15 @@ async def voice_ws(websocket: WebSocket):
     # and take it as the room's background noise level. The client does
     # not send audio while the status is "speaking", so none leaks in.
     try:
-        if greet:
+        if handover:
+            # The call moved here from another voice tier: a short notice, not a second introduction.
+            from voice_router import make_notice
+
+            notice_language = language_hint if language_hint in _GREETINGS else "en"
+            await _speak_canned_reply(
+                websocket, make_notice(notice_language), notice_language, "Introduction", voice_holder["voice_style"]
+            )
+        elif greet:
             greeting_text, greeting_language = _greeting(user_name, language_hint)
             await _speak_canned_reply(
                 websocket, greeting_text, greeting_language, "Introduction", voice_holder["voice_style"]
@@ -1099,6 +1114,14 @@ def _latency_classes() -> Optional[dict]:
     return value
 
 
+def _voice_router_status():
+    if not config.VOICE_ROUTER_ENABLED:
+        return None
+    from voice_router import health_status
+
+    return health_status()
+
+
 @app.get("/health")
 async def health():
     """Plain status endpoint for a demo or a smoke test, reporting which
@@ -1157,9 +1180,116 @@ async def health():
             "available": livekit_router is not None,
             "worker": livekit_state["worker"].status() if livekit_state.get("worker") else None,
         },
+        "voice_router": _voice_router_status(),
         "avatar_renderer": config.AVATAR_RENDERER,
         "voicekit": {"enabled": config.VOICEKIT_ENABLED, "api_keys_configured": bool(config.VOICEKIT_API_KEYS)},
     }
+
+
+# Voice tiers: Gemini Live first, then LiveKit, then the local pipeline (docs/GEMINI_LIVE_PLAN.md).
+def _voice_name(language: str, voice_style: str) -> str:
+    from voicekit import voice_config
+
+    names = voice_config.lookup("gemini_live", language, voice_style)
+    return names[0] if names else "Kore"
+
+
+def _livekit_usable() -> Optional[bool]:
+    """None when LiveKit is not in use (another transport is chosen or it has no keys), else
+    whether its agent worker is running right now."""
+    if config.VOICE_TRANSPORT != "livekit" or not config.livekit_configured():
+        return None
+    worker = livekit_state.get("worker")
+    try:
+        return bool(worker and worker.status().get("state") == "running")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@app.get("/api/voice/tier")
+def voice_tier(http_request: Request):
+    """Which voice tier a new session should start on. No secrets: a tier name and states."""
+    if not config.VOICE_ROUTER_ENABLED:
+        return {"enabled": False, "tier": "livekit" if config.livekit_configured() else "local"}
+    from voice_router import get_router
+
+    router = get_router()
+    tier = router.pick().value
+    skip_live = not config.GEMINI_LIVE_ENABLED
+    if not skip_live and tier == "gemini_live" and not config.CUSTOMER_DATA_TO_CLOUD_LLM:
+        # A signed in customer (cookie) is not sent to Gemini; /ws/live checks the token again.
+        try:
+            skip_live = access_from_request(http_request, None, None).is_verified
+        except Exception:  # noqa: BLE001
+            skip_live = False
+    if tier == "gemini_live" and skip_live:
+        tier = "livekit" if config.livekit_configured() else "local"
+    if tier == "livekit":
+        usable = _livekit_usable()
+        if usable is None:
+            tier = "local"  # LiveKit is not the chosen transport here: not a failure
+        elif not usable:
+            # Configured and meant to run, but the agent worker is not running: a genuine failure.
+            from voice_router import Tier
+
+            router.report(Tier.LIVEKIT, "outage")
+            tier = router.pick().value
+    return {"enabled": True, "tier": tier, "model": config.GEMINI_LIVE_MODEL, "status": router.status()}
+
+
+@app.websocket("/ws/live")
+async def live_ws(websocket: WebSocket):
+    """Gemini Live through this server: the key and every tool call stay here."""
+    await websocket.accept()
+    try:
+        start = json.loads(await websocket.receive_text())
+    except Exception:
+        await websocket.close()
+        return
+    language = start.get("language_hint") or "en"
+    voice_style = _valid_voice_style(start.get("voice_style"))
+    access = await asyncio.to_thread(access_from_request, websocket, start.get("session_token") or None, language)
+    from voice_router import Tier, get_router
+
+    if access.is_verified and not config.CUSTOMER_DATA_TO_CLOUD_LLM:
+        # Customer account data stays on this machine's model (the owner's decision, the same rule
+        # /chat follows). Gemini Live would be sent the hub's account answers, so a verified customer
+        # is served by the next tier. Not a failure: the router is not told.
+        await _send_json(websocket, {"type": "live_failed", "reason": "customer_data_local_only"})
+        await websocket.close()
+        return
+
+    if not (config.GEMINI_LIVE_ENABLED and config.GEMINI_API_KEY):
+        get_router().report(Tier.GEMINI_LIVE, "missing_key")
+        await _send_json(websocket, {"type": "live_failed", "reason": "missing_key"})
+        await websocket.close()
+        return
+    from gemini_live import ws as gemini_live_ws
+
+    user_name = (start.get("user_name") or "").strip()[:40] or None
+    verified = await asyncio.to_thread(verified_user_from_request, websocket, start.get("session_token") or None)
+    if verified is not None:
+        user_name = verified.display_name
+    result = await gemini_live_ws.handle(
+        websocket, access, language, voice_style,
+        api_key=config.GEMINI_API_KEY,
+        model=config.GEMINI_LIVE_MODEL,
+        voice_name=_voice_name(language, voice_style),
+        setup_timeout_seconds=config.GEMINI_LIVE_SETUP_TIMEOUT_SECONDS,
+        user_name=user_name,
+        greet=start.get("greet", True) is not False,
+        state_changing=config.STATE_CHANGING_TOOLS_ENABLED,
+        context=str(start.get("context") or ""),
+    )
+    from voice_router import Outcome
+
+    # A session that held a conversation proves the tier; a hang up or a safety block
+    # changes nothing; only a genuine failure trips the breaker.
+    get_router().report(Tier.GEMINI_LIVE, Outcome.success() if result.ok and result.turns else result.reason_class)
+    try:
+        await websocket.close()
+    except Exception:
+        pass
 
 
 # Static files last, so every route above wins. The admin portal first,

@@ -91,6 +91,7 @@ def _settings_from_participant(participant, job_metadata: str = "") -> SessionSe
         verified=attributes.get("verified") == "true",
         access_verified=attributes.get("access") == "verified",
         greet=attributes.get("greet") != "false",
+        handover=attributes.get("handover") == "true",
         participant_identity=participant.identity,
     )
 
