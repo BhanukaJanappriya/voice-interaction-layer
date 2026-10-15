@@ -6,7 +6,7 @@
  *   SltFormat.percent(0.25)            // "25%"
  *   SltFormat.date(new Date())         // long date in the page language
  *   SltFormat.time(new Date())         // short time
- *   SltFormat.duration(105)            // "01:45" (for the OTP and confirmation countdowns)
+ *   SltFormat.duration(105)            // "1:45" (for the OTP and confirmation countdowns)
  *   SltFormat.forLanguage("ta").number(5)   // explicit language, used by tests
  *
  * The page language comes from SltI18n.language() when i18n.js is loaded, else
@@ -122,7 +122,8 @@
         var fmt = build("DateTimeFormat", getLang(), options || { dateStyle: "medium", timeStyle: "short" });
         try { return fmt ? fmt.format(d) : d.toString(); } catch (e) { return ""; }
       },
-      // Seconds as mm:ss (or h:mm:ss from an hour up). Digits follow the locale
+      // Seconds as m:ss (or h:mm:ss from an hour up), the way the countdowns always read.
+      // Digits follow the locale
       // numbering system, which is Latin for si-LK, ta-LK and en-LK.
       duration: function (seconds) {
         var s = toNumber(seconds);
@@ -130,7 +131,7 @@
         s = Math.max(0, Math.floor(s));
         var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
         var two = function (n) { return (n < 10 ? numberFormat(0) : "") + numberFormat(n, { useGrouping: false }); };
-        return (h ? numberFormat(h, { useGrouping: false }) + ":" + two(m) : two(m)) + ":" + two(r);
+        return (h ? numberFormat(h, { useGrouping: false }) + ":" + two(m) : numberFormat(m, { useGrouping: false })) + ":" + two(r);
       },
     };
   }
