@@ -1418,12 +1418,14 @@ const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
 const chatTranscript = document.getElementById("chat-transcript");
 const chatModeBadge = document.getElementById("chat-mode-badge");
+let lastChatMode = null;
 
 function chatHttpUrl() {
   return `${backendHttpBase()}/chat`;
 }
 
 function setChatModeBadge(mode) {
+  lastChatMode = mode;
   if (!chatModeBadge) return;
   if (!mode) {
     chatModeBadge.textContent = tr("chat.mode_none");
@@ -1515,5 +1517,3 @@ function repaintDynamicLabels() {
   setOtpMode(otpMode);
 }
 document.addEventListener("slt:language", repaintDynamicLabels);
-let lastChatMode = null;
-  lastChatMode = mode;
