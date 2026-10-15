@@ -78,6 +78,18 @@ let greetingsGiven = { voice: false, chat: false }; // avoids re-greeting on eve
 // The LiveKit room handle (see livekit-voice.js) while a conversation runs on
 // that transport; null on the original /ws/voice path.
 let livekitSession = null;
+// The Gemini Live session (see live-voice.js) while a conversation runs on tier 1.
+let liveSession = null;
+// The last lines of the conversation, kept so a move to another voice tier can carry them.
+const recentTurns = [];
+function rememberTurn(who, text) {
+  if (!text) return;
+  recentTurns.push(`${who}: ${String(text).slice(0, 200)}`);
+  while (recentTurns.length > 6) recentTurns.shift();
+}
+function handoverContext() {
+  return recentTurns.join("\n").slice(-800);
+}
 
 // Male/female choice for the avatar AND the spoken voice, kept in the browser.
 // The backend voice styles are "female_natural" and "male" (backend/tts.py).
@@ -821,6 +833,7 @@ function handleServerMessage(event) {
       break;
     case "final_transcript":
       finalizePartial(payload.text);
+      rememberTurn("Customer", payload.text);
       sessionTurns.voice += 1;
       break;
     case "agent_response_chunk":
@@ -952,13 +965,17 @@ async function beginVoiceSession() {
   if (isActive) greetingsGiven.voice = true;
 }
 
-async function startConversation(greet = false) {
+async function startConversation(greet = false, handover = false) {
   if (isActive || isConnecting) return;
   isConnecting = true;
 
+  // Tier 1, Gemini Live through the backend, when the voice router says it is up.
+  // Any failure falls through to LiveKit and then the local pipeline below.
+  if (await tryStartGeminiLive(greet, handover)) return;
+
   // The LiveKit transport, when the server is set to it. Any failure falls
   // through to the original WebSocket path below, which is unchanged.
-  if (await tryStartLiveKit()) return;
+  if (await tryStartLiveKit(handover)) return;
 
   const backendUrl = backendWsUrl();
   if (!backendUrl) {
@@ -1003,6 +1020,7 @@ async function startConversation(greet = false) {
         language_hint: selectedLanguage,
         user_name: userName,
         greet,
+        handover,
         session_token: sessionToken,
         voice_style: voiceStyle(),
       })
@@ -1026,9 +1044,76 @@ async function startConversation(greet = false) {
   updateMicButtonUI();
 }
 
+// Tier 1: Gemini Live through /ws/live. Returns true once the conversation runs on it,
+// false to let the caller use the next tier. A failure after it started (the server
+// already told the router) says a short notice and continues on the next tier.
+async function tryStartGeminiLive(greet, handover) {
+  const live = window.LiveVoice;
+  if (!live) return false;
+  // Right after a Gemini Live failure the next tier is started without asking the router,
+  // which may not have been told yet.
+  if (skipLiveOnce) {
+    skipLiveOnce = false;
+    return false;
+  }
+  try {
+    const status = await live.tier(backendHttpBase());
+    if (status.tier !== "gemini_live") return false;
+    const wsUrl = backendWsUrl();
+    if (!wsUrl) return false;
+    setCaption(tr("loader.connecting"));
+    const model = status.model || "";
+    liveSession = await live.connect({
+      wsUrl: wsUrl.replace(/\/ws\/voice$/, "/ws/live"),
+      language: selectedLanguage,
+      voiceStyle: voiceStyle(),
+      userName: userName,
+      sessionToken: sessionToken,
+      greet: greet && !handover,
+      context: handover ? handoverContext() : "",
+      onEvent: (payload) => {
+        if (payload.type === "agent_response") {
+          rememberTurn("Assistant", payload.text);
+          payload = Object.assign({}, payload, { mode: `gemini live (${model})` });
+        }
+        handleServerMessage({ data: JSON.stringify(payload) });
+      },
+      onAudio: (analyser) => {
+        const bridge = window.avatarBridge;
+        if (bridge && bridge.speakAudio) bridge.speakAudio(analyser, null, { language: selectedLanguage });
+      },
+      onFailed: () => handoverFromLive(),
+      onClosed: () => {
+        if (liveSession) stopConversation();
+      },
+    });
+  } catch (err) {
+    console.warn("Gemini Live unavailable, using the next voice tier:", err && err.reason ? err.reason : err);
+    liveSession = null;
+    return false;
+  }
+  isActive = true;
+  isConnecting = false;
+  isMuted = false;
+  audioSendAllowed = true;
+  updateMicButtonUI();
+  return true;
+}
+
+// Tier 1 failed in the middle of a conversation: say so briefly, then start the next
+// tier with the same language, voice, sign in and the last lines of the conversation.
+let skipLiveOnce = false;
+function handoverFromLive() {
+  liveSession = null;
+  skipLiveOnce = true;
+  stopConversation();
+  setCaption(tr("voice.reconnecting"));
+  setTimeout(() => startConversation(false, true), 300);
+}
+
 // Joins a LiveKit room instead of opening /ws/voice. Returns true once the
 // conversation is running on it, false to let the caller use the WebSocket.
-async function tryStartLiveKit() {
+async function tryStartLiveKit(handover = false) {
   const livekit = window.LiveKitVoice;
   if (!livekit) return false;
   try {
@@ -1040,6 +1125,7 @@ async function tryStartLiveKit() {
       voiceStyle: voiceStyle(),
       userName: userName,
       sessionToken: sessionToken,
+      handover: handover,
       onEvent: (payload) => handleServerMessage({ data: JSON.stringify(payload) }),
       onAgentAudio: (track) => {
         const avatar = newAvatar();
@@ -1070,6 +1156,15 @@ async function tryStartLiveKit() {
 }
 
 function stopConversation() {
+  const closingLive = liveSession;
+  liveSession = null;
+  if (closingLive) {
+    try {
+      closingLive.disconnect();
+    } catch (err) {
+      /* already closed */
+    }
+  }
   const closingRoom = livekitSession;
   livekitSession = null;
   if (closingRoom) {
@@ -1253,7 +1348,12 @@ function setAvatarGender(gender) {
   }
   applyGenderUI();
   if (window.avatarBridge) window.avatarBridge.setGender(avatarGender);
-  if (livekitSession) {
+  if (liveSession) {
+    // A Gemini Live voice is fixed when the session opens: reconnect with the new one,
+    // carrying the conversation so far, and no second introduction.
+    stopConversation();
+    setTimeout(() => startConversation(false, true), 200);
+  } else if (livekitSession) {
     livekitSession.setVoice(voiceStyle()).catch(() => {});
   } else if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: "set_voice", voice_style: voiceStyle() }));

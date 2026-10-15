@@ -72,6 +72,7 @@
         voice_style: options.voiceStyle || "female_natural",
         user_name: options.userName || null,
         session_token: options.sessionToken || null,
+        handover: Boolean(options.handover),
       }),
     });
     if (!response.ok) throw new Error(`token request failed (${response.status})`);

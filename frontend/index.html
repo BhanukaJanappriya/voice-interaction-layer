@@ -346,6 +346,8 @@
      see livekit-voice.js); app.js falls back to the WebSocket if it is missing. -->
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.js"></script>
 <script src="livekit-voice.js"></script>
+<!-- Gemini Live voice tier through the backend proxy (/ws/live), used first when the server says so. -->
+<script src="live-voice.js"></script>
 <!-- New lip synced avatar (AVATAR_RENDERER=talkinghead). The loader stays
      idle unless the server asks for it and puts bot3d.js back on any failure. -->
 <script src="avatar/loader.js"></script>
