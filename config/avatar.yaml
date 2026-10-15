@@ -1,0 +1,58 @@
+# Avatar look settings. Read by tools/avatar/build_avatar.py (build time) and
+# meant to be read by the app at run time (see docs/patches/E_avatar_renderer.md).
+# Colours are sRGB 0 to 255. The build takes --skin <preset name> or --skin "#RRGGBB".
+# The values below describe the AVERAGE skin colour of the lit face and body texture;
+# the texture keeps its own shading and detail around that average.
+
+default_skin: medium_brown
+
+skin_presets:
+  light_brown:
+    rgb: [201, 150, 112]
+    description: Light brown, a common lighter Sri Lankan complexion
+  medium_brown:
+    rgb: [166, 112, 78]
+    description: Medium brown, the default
+  deep_brown:
+    rgb: [112, 72, 50]
+    description: Deep brown, a darker Sri Lankan complexion
+
+# Share of the original texture chroma that survives the recolor. 0 gives a pure tone
+# map (lips and blush vanish), 1 keeps the source tint. 0.25 keeps lips and cheeks visible.
+skin_detail_chroma: 0.25
+
+# The app lights the avatar strongly (ambient 2, direct 30, ACES tone mapping), so a texture
+# at the plain preset colour renders far too light. The preset colours are the ON SCREEN
+# look; the texture albedo is the preset times this linear factor.
+skin_light_compensation: 0.3
+# The face is lit harder than the torso on screen, so its albedo is scaled down a little.
+skin_face_scale: 0.95
+# Principled specular level of the skin. Lower means less pale sheen.
+skin_specular: 0.25
+
+# Shirt base colour texture size in pixels (the logo sharpness depends on it).
+shirt_texture_px: 4096
+
+# Same idea for hair, brows, lashes and iris.
+light_compensation: 0.3
+
+shirt_roughness: 1.0
+shirt_specular: 0.0
+
+hair_rgb: [30, 22, 18]
+brow_lash_rgb: [20, 14, 11]
+iris_rgb: [66, 38, 22]
+shirt_rgb: [22, 22, 24]
+
+# Chest decal. width_m is the logo width in metres on the body (the body is about 1.77 m tall).
+# centre_z_ratio is the logo centre height as a share of body height. x is centred on the body.
+logo:
+  file: frontend/assets/mobitel-logo.png
+  width_m: 0.18
+  centre_z_ratio_male: 0.735
+  centre_z_ratio_female: 0.725
+
+# Run time (browser) settings the lead can wire into avatar.js.
+runtime:
+  skin_preset: medium_brown
+  apply_runtime_tint: false

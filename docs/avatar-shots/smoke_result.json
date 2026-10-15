@@ -1,0 +1,16 @@
+{
+ "male": {
+  "loaded": true,
+  "peaks": {
+   "jawOpen": 0.3975938507598176,
+   "viseme": 0.65
+  }
+ },
+ "female": {
+  "loaded": true,
+  "peaks": {
+   "jawOpen": 0.3911365087118194,
+   "viseme": 0.65
+  }
+ }
+}
