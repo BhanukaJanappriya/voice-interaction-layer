@@ -19,6 +19,8 @@ from fastapi.responses import JSONResponse
 
 from auth.access_context import access_from_request
 from auth.dependencies import client_ip
+from auth.routes import request_language
+from i18n import t
 
 from . import api, store
 
@@ -76,7 +78,7 @@ def _who(request: Request):
 def pending(request: Request):
     access, key = _who(request)
     if _limited(key):
-        return _json(429, {"detail": "Too many requests"}, {"Retry-After": "30"})
+        return _json(429, {"detail": t("api.rate_limited", request_language(request))}, {"Retry-After": "30"})
     return _json(200, {"confirmation": api.pending_for(access)})
 
 
@@ -84,7 +86,7 @@ def pending(request: Request):
 def accept(token: str, request: Request):
     access, key = _who(request)
     if _limited(key):
-        return _json(429, {"detail": "Too many requests"}, {"Retry-After": "30"})
+        return _json(429, {"detail": t("api.rate_limited", request_language(request))}, {"Retry-After": "30"})
     return _answer(api.confirm(access, token))
 
 
@@ -92,5 +94,5 @@ def accept(token: str, request: Request):
 def cancel(token: str, request: Request):
     access, key = _who(request)
     if _limited(key):
-        return _json(429, {"detail": "Too many requests"}, {"Retry-After": "30"})
+        return _json(429, {"detail": t("api.rate_limited", request_language(request))}, {"Retry-After": "30"})
     return _answer(api.cancel(access, token))

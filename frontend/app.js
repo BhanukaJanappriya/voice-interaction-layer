@@ -21,6 +21,19 @@ const CHUNK_SECONDS = 0.5;
 const CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_SECONDS;
 const CALIBRATION_SECONDS = 1.0; // matches backend/server.py's calibration window
 
+// Translated text for the language chosen on the first screen. SltI18n falls
+// back to English, then to the key, so this never returns an empty string.
+function tr(key, vars) {
+  try {
+    return window.SltI18n ? window.SltI18n.t(key, vars) : key;
+  } catch (err) {
+    return key;
+  }
+}
+function num(value) {
+  return window.SltFormat ? window.SltFormat.integer(value) : String(value);
+}
+
 const botAvatar = document.getElementById("bot-avatar");
 const transcript = document.getElementById("transcript");
 const backendUrlInput = document.getElementById("backend-url");
@@ -181,8 +194,10 @@ function navigateTo(screenName) {
 document.querySelectorAll(".choice-button[data-language]").forEach((button) => {
   button.addEventListener("click", () => {
     selectedLanguage = button.getAttribute("data-language");
-    // Sets <html lang> and loads the wizard's strings for this language.
-    if (window.SltI18n) window.SltI18n.setLanguage(selectedLanguage);
+    // Sets <html lang>, the page title and every data-i18n text for this language.
+    if (window.SltI18n) {
+      window.SltI18n.setLanguage(selectedLanguage).then(repaintDynamicLabels).catch(() => {});
+    }
     // Remembered so the landing greeting uses it on the next visit.
     try { localStorage.setItem("slt-language", selectedLanguage); } catch (err) { /* storage may be blocked */ }
     navigateTo("select");
@@ -243,7 +258,7 @@ function setOtpMode(mode) {
   if (otpStep) otpStep.classList.toggle("hidden", mode !== "otp-code");
   if (userPhoneInput) userPhoneInput.disabled = mode === "otp-code";
   if (confirmNameButton) {
-    confirmNameButton.textContent = mode === "pin" ? "Continue" : mode === "otp-phone" ? "Send code" : "Verify";
+    confirmNameButton.textContent = tr(mode === "pin" ? "legacy.continue" : mode === "otp-phone" ? "legacy.send_code" : "legacy.verify");
   }
   if (useOtpButton) useOtpButton.classList.toggle("hidden", !(otpOffered && mode === "pin"));
   if (usePinButton) usePinButton.classList.toggle("hidden", !(otpOffered && mode !== "pin"));
@@ -273,7 +288,7 @@ function startResendCountdown(seconds) {
   const paint = () => {
     if (!otpResendButton) return;
     otpResendButton.disabled = left > 0;
-    otpResendButton.textContent = left > 0 ? `Resend code in ${left}s` : "Resend code";
+    otpResendButton.textContent = left > 0 ? tr("legacy.resend_in", { seconds: num(left) }) : tr("legacy.resend");
   };
   paint();
   otpResendTimer = setInterval(() => {
@@ -294,22 +309,22 @@ async function otpErrorMessage(response) {
   }
   const wait = parseInt(response.headers.get("Retry-After") || data.retry_after || "0", 10);
   if (response.status === 422) {
-    return typeof data.detail === "string" ? data.detail : "Please enter a valid Sri Lankan landline number.";
+    return tr("verify.errors.phone_format");
   }
-  if (response.status === 423) return "Too many wrong codes. Please request a new code.";
+  if (response.status === 423) return tr("legacy.err.code_locked");
   if (response.status === 429) {
-    return wait > 0 ? `Please wait ${wait} seconds before trying again.` : "Too many attempts. Please wait a moment and try again.";
+    return wait > 0 ? tr("legacy.err.wait_seconds", { seconds: num(wait) }) : tr("legacy.err.too_many");
   }
   if (response.status === 503 || response.status === 404) {
-    return "One time codes are not available right now. Please use your PIN.";
+    return tr("legacy.err.otp_unavailable");
   }
-  return "That code is not correct or has expired.";
+  return tr("legacy.err.code_wrong");
 }
 
 async function requestOtp() {
   const phone = userPhoneInput.value.trim();
   if (!phone) {
-    showVerifyError("Please enter your landline number.");
+    showVerifyError(tr("legacy.err.enter_phone"));
     return;
   }
   confirmNameButton.disabled = true;
@@ -328,12 +343,12 @@ async function requestOtp() {
     setOtpMode("otp-code");
     otpChallengeId = data.challenge_id;
     if (otpInfo) {
-      otpInfo.textContent = `We sent a code to ${data.masked_destination}. It is valid for ${Math.round(data.expires_in / 60)} minutes.`;
+      otpInfo.textContent = tr("legacy.otp_sent", { masked: data.masked_destination, minutes: num(Math.round(data.expires_in / 60)) });
     }
     startResendCountdown(data.resend_in);
     if (otpInput) otpInput.focus();
   } catch (err) {
-    showVerifyError("Could not reach the server. Please try again.");
+    showVerifyError(tr("verify.errors.network"));
   } finally {
     confirmNameButton.disabled = false;
   }
@@ -342,7 +357,7 @@ async function requestOtp() {
 async function verifyOtp() {
   const code = otpInput.value.trim();
   if (!/^[0-9]{4,8}$/.test(code)) {
-    showVerifyError("Please enter the code we sent you.");
+    showVerifyError(tr("legacy.err.enter_code"));
     return;
   }
   confirmNameButton.disabled = true;
@@ -365,7 +380,7 @@ async function verifyOtp() {
     setOtpMode("pin");
     proceedToSelectedMode();
   } catch (err) {
-    showVerifyError("Could not reach the server. Please try again.");
+    showVerifyError(tr("verify.errors.network"));
   } finally {
     confirmNameButton.disabled = false;
   }
@@ -391,15 +406,15 @@ async function verifyErrorMessage(response) {
   const retryAfter = parseInt(response.headers.get("Retry-After") || "0", 10);
   const minutes = Math.max(1, Math.ceil(retryAfter / 60));
   if (response.status === 423) {
-    return `Too many incorrect attempts. This account is locked for about ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+    return tr("legacy.err.account_locked", { minutes: num(minutes) });
   }
   if (response.status === 429) {
-    return "Too many attempts from this device. Please wait a minute and try again.";
+    return tr("legacy.err.device_limit");
   }
   if (response.status === 422) {
-    return detail || "Please enter a valid Sri Lankan landline number and a 4 to 6 digit PIN.";
+    return tr("legacy.err.phone_pin_format");
   }
-  return "That number and PIN do not match our records.";
+  return tr("legacy.err.mismatch");
 }
 
 async function verifyExistingUser() {
@@ -408,7 +423,7 @@ async function verifyExistingUser() {
   const phone = userPhoneInput.value.trim();
   const pin = userPinInput.value.trim();
   if (!phone || !pin) {
-    showVerifyError("Please enter your landline number and PIN.");
+    showVerifyError(tr("legacy.err.enter_phone_pin"));
     return;
   }
   confirmNameButton.disabled = true;
@@ -429,7 +444,7 @@ async function verifyExistingUser() {
     userPinInput.value = "";
     proceedToSelectedMode();
   } catch (err) {
-    showVerifyError("Could not reach the server. Please try again.");
+    showVerifyError(tr("verify.errors.network"));
   } finally {
     confirmNameButton.disabled = false;
   }
@@ -513,36 +528,14 @@ if (confirmNameButton) {
 // screen the backend speaks its own copy of the same introductions out
 // loud (see _GREETINGS in backend/server.py). "Guest" is used in the
 // selected language when no name was given.
-const CHAT_GREETINGS = {
-  en: {
-    guest: "Guest",
-    text: (name) =>
-      `Welcome to SLT Mobitel, ${name}! I'm your voice assistant, and I understand ` +
-      "English, Sinhala, and Tamil, so just start speaking whenever you're ready.",
-  },
-  si: {
-    guest: "අමුත්තා",
-    text: (name) =>
-      `SLT Mobitel වෙත සාදරයෙන් පිළිගනිමු, ${name}! මම ඔබේ හඬ සහායකයා. මට ඉංග්‍රීසි, ` +
-      "සිංහල සහ දෙමළ භාෂා තේරෙනවා, ඒ නිසා ඔබ සූදානම් වූ විට කතා කිරීම ආරම්භ කරන්න.",
-  },
-  ta: {
-    guest: "விருந்தினர்",
-    text: (name) =>
-      `SLT Mobitel-க்கு வரவேற்கிறோம், ${name}! நான் உங்கள் குரல் உதவியாளர். எனக்கு ` +
-      "ஆங்கிலம், சிங்களம் மற்றும் தமிழ் புரியும், எனவே நீங்கள் தயாரானதும் பேசத் தொடங்குங்கள்.",
-  },
-};
-
 function greetingText() {
-  const greeting = CHAT_GREETINGS[selectedLanguage] || CHAT_GREETINGS.en;
-  return greeting.text(userName || greeting.guest);
+  return tr("chat.greeting", { name: userName || tr("chat.guest") });
 }
 
 function chatGreeting() {
   if (greetingsGiven.chat) return;
   greetingsGiven.chat = true;
-  addBubble("assistant", greetingText(), "Introduction", chatTranscript);
+  addBubble("assistant", greetingText(), tr("chat.intro_meta"), chatTranscript);
 }
 
 function proceedToSelectedMode() {
@@ -740,7 +733,7 @@ function finalizeStreamingReply(text, mode) {
     currentStreamingReplyBubble.remove();
     currentStreamingReplyBubble = null;
   }
-  addBubble("assistant", text, mode);
+  addBubble("assistant", text, modeLabel(mode));
   setCaption(text);
 }
 
@@ -837,7 +830,7 @@ function handleServerMessage(event) {
       finalizeStreamingReply(payload.text, payload.mode);
       if (window.SLTConfirm) SLTConfirm.setStatus(null);
       if (window.SltUi && window.SltUi.dashboard && payload.mode) {
-        try { window.SltUi.dashboard.setMode(payload.mode); } catch (err) { /* decoration only */ }
+        try { window.SltUi.dashboard.setMode(modeLabel(payload.mode)); } catch (err) { /* decoration only */ }
       }
       break;
     case "speaking_sentence":
@@ -887,8 +880,8 @@ function handleServerMessage(event) {
       break;
     case "error":
       setStatus("error");
-      addBubble("assistant", `Error: ${payload.message}`);
-      setCaption(`Error: ${payload.message}`);
+      addBubble("assistant", tr("error.prefix", { message: payload.message }));
+      setCaption(tr("error.prefix", { message: payload.message }));
       break;
     default:
       break;
@@ -969,7 +962,7 @@ async function startConversation(greet = false) {
 
   const backendUrl = backendWsUrl();
   if (!backendUrl) {
-    setCaption("No backend URL is configured.");
+    setCaption(tr("error.unreachable"));
     isConnecting = false;
     return;
   }
@@ -977,7 +970,7 @@ async function startConversation(greet = false) {
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
-    setCaption(`Microphone access denied or unavailable: ${err.message}`);
+    setCaption(tr("voice.mic_denied"));
     setStatus("error");
     isConnecting = false;
     return;
@@ -1023,7 +1016,7 @@ async function startConversation(greet = false) {
   };
 
   socket.onerror = () => {
-    setCaption("Could not reach the backend. Is it running?");
+    setCaption(tr("error.unreachable"));
     setStatus("error");
   };
 
@@ -1040,7 +1033,7 @@ async function tryStartLiveKit() {
   if (!livekit) return false;
   try {
     if (!(await livekit.isEnabled(backendHttpBase()))) return false;
-    setCaption("Connecting…");
+    setCaption(tr("loader.connecting"));
     livekitSession = await livekit.connect({
       baseUrl: backendHttpBase(),
       language: selectedLanguage,
@@ -1052,7 +1045,7 @@ async function tryStartLiveKit() {
         const avatar = newAvatar();
         if (avatar) avatar.attachAudioStream(new MediaStream([track.mediaStreamTrack]));
       },
-      onNeedsGesture: () => setCaption("Tap anywhere to turn the sound on."),
+      onNeedsGesture: () => setCaption(tr("voice.tap_sound")),
       onDisconnected: () => {
         if (livekitSession) stopConversation();
       },
@@ -1154,15 +1147,15 @@ function updateMicButtonUI() {
   if (!micToggleButton) return;
   if (!isActive) {
     micToggleButton.setAttribute("aria-pressed", "false");
-    micToggleButton.setAttribute("aria-label", "Start the conversation");
+    micToggleButton.setAttribute("aria-label", tr("voice.mic.start"));
     if (micIcon) micIcon.innerHTML = ICON_MIC_INNER;
   } else if (isMuted) {
     micToggleButton.setAttribute("aria-pressed", "true");
-    micToggleButton.setAttribute("aria-label", "Unmute microphone");
+    micToggleButton.setAttribute("aria-label", tr("voice.mic.unmute"));
     if (micIcon) micIcon.innerHTML = ICON_MIC_OFF_INNER;
   } else {
     micToggleButton.setAttribute("aria-pressed", "false");
-    micToggleButton.setAttribute("aria-label", "Mute microphone");
+    micToggleButton.setAttribute("aria-label", tr("voice.mic.mute"));
     if (micIcon) micIcon.innerHTML = ICON_MIC_INNER;
   }
 }
@@ -1246,9 +1239,9 @@ function applyGenderUI() {
   genderToggleButton.setAttribute("aria-pressed", String(isMale));
   genderToggleButton.setAttribute(
     "aria-label",
-    isMale ? "Male voice and avatar. Switch to female" : "Female voice and avatar. Switch to male"
+    tr(isMale ? "voice.gender.male" : "voice.gender.female")
   );
-  if (genderLetterEl) genderLetterEl.textContent = isMale ? "M" : "F";
+  if (genderLetterEl) genderLetterEl.textContent = tr(isMale ? "voice.gender.letter_male" : "voice.gender.letter_female");
 }
 
 function setAvatarGender(gender) {
@@ -1271,7 +1264,7 @@ function setAvatarGender(gender) {
 // so rather than let the switch look broken. The voice still changes.
 document.addEventListener("avatar:gender-fallback", (event) => {
   const reason = event.detail && event.detail.message;
-  setCaption(reason || "The male avatar is not installed; the voice has changed.");
+  setCaption(tr("voice.male_missing"));
 });
 
 if (genderToggleButton) {
@@ -1333,12 +1326,12 @@ function chatHttpUrl() {
 function setChatModeBadge(mode) {
   if (!chatModeBadge) return;
   if (!mode) {
-    chatModeBadge.textContent = "Agent mode: —";
+    chatModeBadge.textContent = tr("chat.mode_none");
     chatModeBadge.className = "badge badge-muted";
     return;
   }
   const isCloud = mode.toLowerCase().includes("cloud");
-  chatModeBadge.textContent = `Agent mode: ${mode}`;
+  chatModeBadge.textContent = tr("chat.mode", { mode: modeLabel(mode) });
   chatModeBadge.className = `badge ${isCloud ? "badge-cloud" : "badge-local"}`;
 }
 
@@ -1373,7 +1366,7 @@ if (chatForm) {
       }
       const data = await response.json();
       typingBubble.remove();
-      addBubble("assistant", data.reply, data.mode, chatTranscript);
+      addBubble("assistant", data.reply, modeLabel(data.mode), chatTranscript);
       setChatModeBadge(data.mode);
       if (window.SLTConfirm) {
         if (data.confirmation) SLTConfirm.show(data.confirmation);
@@ -1381,7 +1374,7 @@ if (chatForm) {
       }
     } catch (err) {
       typingBubble.remove();
-      addBubble("assistant", `Error: could not reach the backend (${err.message}).`, null, chatTranscript);
+      addBubble("assistant", tr("error.unreachable"), null, chatTranscript);
     } finally {
       chatInput.disabled = false;
       chatInput.focus();
@@ -1395,3 +1388,32 @@ document.addEventListener("slt:confirmation-result", function (event) {
   var detail = (event && event.detail) || {};
   if (detail.text) addBubble("assistant", detail.text, null, chatTranscript);
 });
+
+// Maps the English mode text the backend sends to a translated label.
+function modeLabel(mode) {
+  if (!mode) return "";
+  const text = String(mode);
+  const lower = text.toLowerCase();
+  let label;
+  if (lower.startsWith("cloud")) label = tr("mode.cloud");
+  else if (lower.startsWith("local")) label = tr("mode.local_agent");
+  else if (lower.startsWith("access policy")) label = tr("mode.policy");
+  else if (lower.startsWith("slt hub")) label = tr("mode.hub");
+  else if (lower.startsWith("account data unavailable")) label = tr("mode.account_unavailable");
+  else if (lower.startsWith("gemini live")) label = tr("voice.mode.gemini_live", { model: (text.match(/\(([^)]+)\)/) || [])[1] || "" });
+  else if (lower.startsWith("livekit")) label = tr("voice.mode.livekit");
+  else if (lower.startsWith("local voice")) label = tr("voice.mode.local");
+  else return text;
+  if (/\+ SLT account data/i.test(text)) label = tr("mode.plus_account", { mode: label });
+  return label;
+}
+
+function repaintDynamicLabels() {
+  updateMicButtonUI();
+  applyGenderUI();
+  setChatModeBadge(lastChatMode);
+  setOtpMode(otpMode);
+}
+document.addEventListener("slt:language", repaintDynamicLabels);
+let lastChatMode = null;
+  lastChatMode = mode;

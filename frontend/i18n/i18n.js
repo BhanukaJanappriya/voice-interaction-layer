@@ -77,6 +77,12 @@
     scope.querySelectorAll("[data-i18n-placeholder]").forEach(function (el) {
       el.setAttribute("placeholder", t(el.getAttribute("data-i18n-placeholder")));
     });
+    scope.querySelectorAll("[data-i18n-title]").forEach(function (el) {
+      el.setAttribute("title", t(el.getAttribute("data-i18n-title")));
+    });
+    scope.querySelectorAll("[data-i18n-alt]").forEach(function (el) {
+      el.setAttribute("alt", t(el.getAttribute("data-i18n-alt")));
+    });
   }
 
   function setLanguage(lang) {
@@ -87,6 +93,11 @@
       current = wanted;
       document.documentElement.lang = wanted;
       apply(document);
+      var title = t("app.title");
+      if (title && title !== "app.title") document.title = title;
+      try {
+        document.dispatchEvent(new CustomEvent("slt:language", { detail: { language: wanted } }));
+      } catch (err) { /* old browser: dynamic labels repaint on their next change */ }
       return wanted;
     });
   }

@@ -47,6 +47,31 @@ import config
 from knowledge.prompts import rules_for, with_context
 
 
+def _say(key: str, language: Optional[str], default: str) -> str:
+    """Visitor facing text from backend/i18n in the request language; the English
+    `default` if the lookup fails. Developer detail never goes through here."""
+    try:
+        import i18n  # type: ignore
+
+        text = i18n.t(key, language)
+        if isinstance(text, str) and text and text != key:
+            return text
+    except Exception:  # noqa: BLE001
+        pass
+    return default
+
+
+def _local_unavailable(language: Optional[str], detail: str) -> str:
+    """The reply when the local model cannot answer. The detailed English text goes
+    to the log only; the visitor gets the translated generic sentence."""
+    print(f"Local model: {detail}")
+    return _say("llm.local_unavailable", language, "Sorry, I can't reach my language service right now. Please try again in a moment.")
+
+
+def _lost_connection(language: Optional[str]) -> str:
+    return " " + _say("llm.lost_connection", language, "Sorry, I lost my connection there. Could you ask that again?")
+
+
 class ChatAgent(ABC):
     @abstractmethod
     def respond(self, text_input: str) -> str:
@@ -231,23 +256,23 @@ class LlamaOllamaAgent(ChatAgent):
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
             print(f"Agent latency (local Llama): {time.perf_counter() - start:.2f}s")
-            return "Error: could not reach the local Ollama server. Is it running?"
+            return _local_unavailable(language, "could not reach the local Ollama server. Is it running?")
         except requests.exceptions.Timeout:
             print(f"Agent latency (local Llama): {time.perf_counter() - start:.2f}s")
-            return "Error: the local Ollama server took too long to respond."
+            return _local_unavailable(language, "the local Ollama server took too long to respond.")
         except requests.exceptions.HTTPError:
             print(f"Agent latency (local Llama): {time.perf_counter() - start:.2f}s")
             if response.status_code == 404:
-                return f"Error: model '{self.model}' was not found on the Ollama server."
-            return f"Error: Ollama server returned an HTTP error ({response.status_code})."
+                return _local_unavailable(language, f"model '{self.model}' was not found on the Ollama server.")
+            return _local_unavailable(language, f"Ollama server returned an HTTP error ({response.status_code}).")
         except requests.exceptions.RequestException as exc:
             print(f"Agent latency (local Llama): {time.perf_counter() - start:.2f}s")
-            return f"Error: could not get a response from Ollama ({exc})."
+            return _local_unavailable(language, f"could not get a response from Ollama ({exc}).")
 
         try:
             data = response.json()
         except ValueError:
-            return "Error: received an unreadable response from the Ollama server."
+            return _local_unavailable(language, "received an unreadable response from the Ollama server.")
 
         return data.get("response", "").strip()
 
@@ -279,22 +304,22 @@ class LlamaOllamaAgent(ChatAgent):
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
             print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
-            yield "Error: could not reach the local Ollama server. Is it running?"
+            yield _local_unavailable(language, "could not reach the local Ollama server. Is it running?")
             return
         except requests.exceptions.Timeout:
             print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
-            yield "Error: the local Ollama server took too long to respond."
+            yield _local_unavailable(language, "the local Ollama server took too long to respond.")
             return
         except requests.exceptions.HTTPError:
             print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
             if response.status_code == 404:
-                yield f"Error: model '{self.model}' was not found on the Ollama server."
+                yield _local_unavailable(language, f"model '{self.model}' was not found on the Ollama server.")
             else:
-                yield f"Error: Ollama server returned an HTTP error ({response.status_code})."
+                yield _local_unavailable(language, f"Ollama server returned an HTTP error ({response.status_code}).")
             return
         except requests.exceptions.RequestException as exc:
             print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
-            yield f"Error: could not get a response from Ollama ({exc})."
+            yield _local_unavailable(language, f"could not get a response from Ollama ({exc}).")
             return
 
         try:
@@ -311,7 +336,7 @@ class LlamaOllamaAgent(ChatAgent):
                 if data.get("done"):
                     break
         except requests.exceptions.RequestException as exc:
-            yield f"\n[Error: connection to Ollama dropped mid reply ({exc}).]"
+            yield "\n" + _local_unavailable(language, f"connection to Ollama dropped mid reply ({exc}).")
         finally:
             print(f"Agent latency (local Llama, streaming): {time.perf_counter() - start:.2f}s")
 
@@ -725,7 +750,7 @@ class Orchestrator(ChatAgent):
                     yield from external_stream
                 except ExternalAgentError as exc:
                     print(f"Orchestrator: external agent stream dropped mid reply ({exc}).")
-                    yield " Sorry, I lost my connection there. Could you ask that again?"
+                    yield _lost_connection(language)
                 return
 
         if config.LLM_CHAIN:
@@ -763,7 +788,7 @@ class Orchestrator(ChatAgent):
                     yield from cloud_stream
                 except CloudUnavailableError as exc:
                     print(f"Orchestrator: cloud stream dropped mid reply ({exc}).")
-                    yield " Sorry, I lost my connection there. Could you ask that again?"
+                    yield _lost_connection(language)
                 return
         else:
             print("Orchestrator: no cloud LLM provider configured, using local agent alone.")

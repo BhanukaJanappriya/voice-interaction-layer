@@ -63,6 +63,7 @@ from auth.ratelimit import SlidingWindowRateLimiter, as_utc
 from auth.users import VerifiedUser, get_user
 from db.base import session_scope
 from mcp_client.errors import HubError, HubToolError
+from i18n import t as _t
 from otp import hashing, masking
 from otp.hub_backend import GENERIC_DESTINATION, HubOtpBackend, HubOtpStart, HubOtpUnknownResponse
 from otp.sender import OtpSender, get_sender
@@ -70,6 +71,13 @@ from otp.tables import challenges, users
 
 KNOWN_METHODS = ("pin", "otp")
 _RETAIN = timedelta(days=1)  # challenge rows older than this are deleted
+
+
+def _generic_destination(language: Optional[str]) -> str:
+    """Shown when the hub does not reveal where the code went (key otp.destination_generic).
+    GENERIC_DESTINATION stays the English default."""
+    text = _t("otp.destination_generic", language if language in config.SUPPORTED_LANGUAGES else "en")
+    return text if text and text != "otp.destination_generic" else GENERIC_DESTINATION
 
 
 class OtpError(Exception):
@@ -211,10 +219,10 @@ class OtpService:
                         # Decoys copy whatever the hub did last time, so a
                         # hub that stops sending masks cannot expose them.
                         self._hub_masks_seen = bool(hub_start.masked_destination)
-                        masked = hub_start.masked_destination or GENERIC_DESTINATION
+                        masked = hub_start.masked_destination or _generic_destination(language)
                     else:
                         user_id = None
-                        masked = masking.decoy_mobile(phone_hash) if self._hub_masks_seen else GENERIC_DESTINATION
+                        masked = masking.decoy_mobile(phone_hash) if self._hub_masks_seen else _generic_destination(language)
                     destination = None
                 elif contact is not None:
                     destination, channel, user_id = contact.destination, contact.channel, contact.user_id

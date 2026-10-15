@@ -72,7 +72,12 @@
     return /^0[1-9]\d{8}$/.test(s) || /^(\+94|0094|94)[1-9]\d{8}$/.test(s);
   }
 
+  function fint(value) {
+    return window.SltFormat ? window.SltFormat.integer(value) : value;
+  }
+
   function formatTime(seconds) {
+    if (window.SltFormat) return window.SltFormat.duration(seconds);
     var m = Math.floor(seconds / 60);
     var s = seconds % 60;
     return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
@@ -192,7 +197,7 @@
 
     function rateLimitedText(r) {
       var wait = retryAfter(r);
-      return t("verify.errors.rate_limited", { seconds: wait, count: wait });
+      return t("verify.errors.rate_limited", { seconds: fint(wait), count: fint(wait) });
     }
 
     // ---- shared pieces -------------------------------------------------
@@ -483,7 +488,7 @@
         if (r.status === 429) {
           var wait = retryAfter(r);
           if (code === "cooldown") {
-            return cb({ ok: false, retry: wait, message: t("verify.errors.cooldown", { seconds: wait, count: wait }) });
+            return cb({ ok: false, retry: wait, message: t("verify.errors.cooldown", { seconds: fint(wait), count: fint(wait) }) });
           }
           return cb({ ok: false, retry: wait, message: rateLimitedText(r) });
         }
@@ -650,7 +655,7 @@
         var left = Math.max(0, Math.ceil((resendAt - now()) / 1000));
         resendBtn.disabled = left > 0 || busy;
         cooldownNote.classList.toggle("hidden", left <= 0);
-        if (left > 0) cooldownNote.textContent = t("verify.errors.cooldown", { seconds: left, count: left });
+        if (left > 0) cooldownNote.textContent = t("verify.errors.cooldown", { seconds: fint(left), count: fint(left) });
       }
 
       function tick() {
@@ -702,7 +707,7 @@
             refreshVerify();
             var left = r.data && typeof r.data.attempts_left === "number" ? r.data.attempts_left : null;
             var msg = t("verify.errors.invalid");
-            if (left !== null) msg += " " + t("verify.errors.attempts_left", { count: left, attempts: left });
+            if (left !== null) msg += " " + t("verify.errors.attempts_left", { count: fint(left), attempts: fint(left) });
             return showError(err, msg);
           }
           if (r.status === 410 || c === "expired") {

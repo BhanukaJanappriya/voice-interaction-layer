@@ -56,6 +56,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 from livekit import rtc
 
+from i18n import t
 from vad import SAMPLE_RATE
 
 from .errors import SessionError
@@ -785,7 +786,7 @@ class LiveKitVoiceSession:
         if self._closed.is_set():
             return
         if not self._calibrated.is_set():
-            await self._send({"type": "error", "message": "No microphone audio arrived, so the conversation is ending."})
+            await self._send({"type": "error", "message": t("voice.no_mic_audio", self.settings.language or None)})
             raise SessionError("no microphone audio within the wait limit")
 
         awaiting_close_confirmation = False

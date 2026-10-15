@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 import config
 from auth.access_context import access_from_request
 from auth.dependencies import verified_user_from_request
+from i18n import t
 
 router = APIRouter(prefix="/api/livekit", tags=["livekit"])
 
@@ -182,7 +183,7 @@ def create_token(body: TokenRequest, request: Request) -> TokenResponse:
     if not agent_ready():
         # A room with no agent in it would be silent. Refusing here lets the
         # page fall back to /ws/voice and the local pipeline straight away.
-        raise HTTPException(status_code=503, detail="The LiveKit voice agent is not running right now.")
+        raise HTTPException(status_code=503, detail=t("voice.agent_down", body.language))
 
     verified = verified_user_from_request(request, body.session_token)
     if verified is not None:

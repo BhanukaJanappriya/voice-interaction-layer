@@ -31,6 +31,8 @@ event loop. PINs and passwords are never logged.
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 import config
@@ -39,6 +41,7 @@ from auth.dependencies import ADMIN_COOKIE, USER_COOKIE, client_ip, require_admi
 from auth.phone import InvalidPhoneNumber, normalize_sl_landline
 from auth.tokens import AUDIENCE_ADMIN, AUDIENCE_USER, issue_token
 from auth.users import AuthError, verify_user
+from i18n import t
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -48,6 +51,7 @@ _NO_STORE = {"Cache-Control": "no-store"}
 class VerifyRequest(BaseModel):
     phone: str = Field(..., max_length=40)
     pin: str = Field(..., max_length=12)
+    language: Optional[str] = Field(default=None, max_length=8)
 
 
 class VerifyResponse(BaseModel):
@@ -74,13 +78,26 @@ class AdminMeResponse(BaseModel):
     username: str
 
 
-def _auth_failure(error: AuthError, invalid_message: str) -> JSONResponse:
+def request_language(request: Request, body_language: Optional[str] = None) -> str:
+    """The language of the visitor: the body's language when the request has one, else
+    the first usable Accept-Language entry, else English."""
+    wanted = (body_language or "").strip().lower()[:2]
+    if wanted in ("en", "si", "ta"):
+        return wanted
+    for part in (request.headers.get("accept-language") or "").split(","):
+        code = part.split(";")[0].strip().lower()[:2]
+        if code in ("en", "si", "ta"):
+            return code
+    return "en"
+
+
+def _auth_failure(error: AuthError, invalid_message: str, lang: str = "en") -> JSONResponse:
     if error.reason == "locked":
         minutes = max(1, (error.retry_after or 60) // 60)
         return JSONResponse(
             status_code=423,
             content={
-                "detail": f"Too many incorrect attempts. This account is locked; try again in about {minutes} minute(s).",
+                "detail": t("auth.account_locked", lang, minutes=minutes),
                 "reason": "locked",
                 "retry_after": error.retry_after,
             },
@@ -90,7 +107,7 @@ def _auth_failure(error: AuthError, invalid_message: str) -> JSONResponse:
         return JSONResponse(
             status_code=429,
             content={
-                "detail": "Too many attempts from this device. Please wait a minute and try again.",
+                "detail": t("auth.device_limit", lang),
                 "reason": "rate_limited",
                 "retry_after": error.retry_after,
             },
@@ -126,7 +143,7 @@ def verify(body: VerifyRequest, request: Request):
     try:
         user = verify_user(body.phone, body.pin, client_ip(request))
     except AuthError as error:
-        return _auth_failure(error, "The phone number or PIN is incorrect.")
+        return _auth_failure(error, t("auth.bad_credentials", request_language(request, body.language)), request_language(request, body.language))
 
     token, expires_at = issue_token(str(user.id), AUDIENCE_USER, config.USER_SESSION_MINUTES)
     response = JSONResponse(
@@ -151,7 +168,7 @@ def logout():
 def me(request: Request):
     user = verified_user_from_request(request)
     if user is None:
-        return JSONResponse(status_code=401, content={"detail": "Not signed in."}, headers=_NO_STORE)
+        return JSONResponse(status_code=401, content={"detail": t("auth.not_signed_in", request_language(request))}, headers=_NO_STORE)
     return JSONResponse(content={"display_name": user.display_name}, headers=_NO_STORE)
 
 

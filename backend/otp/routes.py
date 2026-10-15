@@ -36,14 +36,16 @@ from pydantic import BaseModel, Field
 
 import config
 from auth.dependencies import USER_COOKIE, client_ip
+from auth.routes import request_language
 from auth.phone import InvalidPhoneNumber
 from auth.tokens import AUDIENCE_USER, issue_token
+from i18n import t
 from otp import service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _NO_STORE = {"Cache-Control": "no-store"}
-INVALID_MESSAGE = "The code is incorrect or has expired."
+INVALID_MESSAGE = "The code is incorrect or has expired."  # English default; the answer uses otp.bad_code
 
 
 class OtpRequestBody(BaseModel):
@@ -56,24 +58,20 @@ class OtpVerifyBody(BaseModel):
     code: str = Field(..., min_length=1, max_length=12)
 
 
-def _failure(error: service.OtpError) -> JSONResponse:
+def _failure(error: service.OtpError, lang: str = "en") -> JSONResponse:
     retry = str(error.retry_after or 60)
     if error.reason == "locked":
         return JSONResponse(
             status_code=423,
             content={
-                "detail": "Too many incorrect codes. Please request a new code.",
+                "detail": t("otp.locked", lang),
                 "reason": "locked",
                 "retry_after": error.retry_after,
             },
             headers={"Retry-After": retry, **_NO_STORE},
         )
     if error.reason in ("rate_limited", "cooldown"):
-        detail = (
-            "A code was sent a moment ago. Please wait before asking for another."
-            if error.reason == "cooldown"
-            else "Too many attempts. Please try again later."
-        )
+        detail = t("otp.too_soon", lang) if error.reason == "cooldown" else t("otp.rate_limited", lang)
         return JSONResponse(
             status_code=429,
             content={"detail": detail, "reason": error.reason, "retry_after": error.retry_after},
@@ -82,15 +80,15 @@ def _failure(error: service.OtpError) -> JSONResponse:
     if error.reason == "unavailable":
         return JSONResponse(
             status_code=503,
-            content={"detail": "One time codes are not available right now. Please use your PIN.", "reason": "unavailable"},
+            content={"detail": t("otp.unavailable", lang), "reason": "unavailable"},
             headers=_NO_STORE,
         )
-    return JSONResponse(status_code=401, content={"detail": INVALID_MESSAGE, "reason": "invalid"}, headers=_NO_STORE)
+    return JSONResponse(status_code=401, content={"detail": t("otp.bad_code", lang), "reason": "invalid"}, headers=_NO_STORE)
 
 
-def _disabled() -> JSONResponse:
+def _disabled(lang: str = "en") -> JSONResponse:
     return JSONResponse(
-        status_code=404, content={"detail": "One time code sign in is not enabled.", "reason": "disabled"}, headers=_NO_STORE
+        status_code=404, content={"detail": t("otp.disabled", lang), "reason": "disabled"}, headers=_NO_STORE
     )
 
 
@@ -104,14 +102,15 @@ def methods():
 
 @router.post("/otp/request")
 def otp_request(body: OtpRequestBody, request: Request):
+    lang = request_language(request, body.language)
     if not service.otp_enabled():
-        return _disabled()
+        return _disabled(lang)
     try:
         info = service.request_otp(body.phone, client_ip(request), body.language)
     except InvalidPhoneNumber as exc:
         return JSONResponse(status_code=422, content={"detail": str(exc), "reason": "phone_format"})
     except service.OtpError as error:
-        return _failure(error)
+        return _failure(error, lang)
     return JSONResponse(
         content={
             "challenge_id": info.challenge_id,
@@ -126,12 +125,13 @@ def otp_request(body: OtpRequestBody, request: Request):
 
 @router.post("/otp/verify")
 def otp_verify(body: OtpVerifyBody, request: Request):
+    lang = request_language(request)
     if not service.otp_enabled():
-        return _disabled()
+        return _disabled(lang)
     try:
         user = service.verify_otp(body.challenge_id, body.code, client_ip(request))
     except service.OtpError as error:
-        return _failure(error)
+        return _failure(error, lang)
     # Same token, audience, lifetime and cookie as POST /auth/verify.
     token, expires_at = issue_token(str(user.id), AUDIENCE_USER, config.USER_SESSION_MINUTES)
     response = JSONResponse(

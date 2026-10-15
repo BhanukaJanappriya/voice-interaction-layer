@@ -34,18 +34,36 @@ _NOT_CONFIGURED = "no API key or credentials are configured"
 SafetyMessage = Callable[[Optional[str]], str]
 
 
-def _default_safety_message(language: Optional[str]) -> str:
-    """The localized notice (i18n key llm.safety_blocked) from the i18n module; the
-    English sentence if the lookup fails."""
+def _localized(key: str, language: Optional[str], default: str) -> str:
+    """The text for `key` in `language` from the i18n module; `default` (the English
+    constant) if the lookup fails or the key is missing."""
     try:
         import i18n  # type: ignore
 
-        text = i18n.t("llm.safety_blocked", language)
-        if isinstance(text, str) and text and text != "llm.safety_blocked":
+        text = i18n.t(key, language)
+        if isinstance(text, str) and text and text != key:
             return text
     except Exception:  # noqa: BLE001
         pass
-    return SAFETY_NOTICE
+    return default
+
+
+def _default_safety_message(language: Optional[str]) -> str:
+    """The localized notice (i18n key llm.safety_blocked) from the i18n module; the
+    English sentence if the lookup fails."""
+    return safety_notice(language)
+
+
+def apology(language: Optional[str]) -> str:
+    return " " + _localized("llm.lost_connection", language, APOLOGY.strip())
+
+
+def safety_notice(language: Optional[str]) -> str:
+    return _localized("llm.safety_blocked", language, SAFETY_NOTICE)
+
+
+def unavailable_notice(language: Optional[str]) -> str:
+    return _localized("llm.unavailable", language, UNAVAILABLE_NOTICE)
 
 
 class LlmChain:
@@ -134,14 +152,14 @@ class LlmChain:
                 # dropped stream is often a one off.
                 self._record_error(name, unavailable_from_exception(exc).args[0])
                 print(f"LLM chain: {name} stream dropped mid reply.")
-                yield APOLOGY
+                yield apology(turn.language)
             finally:
                 self._close(pieces)
             return
 
         self.last_mode = "unavailable"
         print("LLM chain: no tier could answer this turn.")
-        yield UNAVAILABLE_NOTICE
+        yield unavailable_notice(turn.language)
 
     @staticmethod
     def _first_piece(pieces: Iterator[str]) -> str:

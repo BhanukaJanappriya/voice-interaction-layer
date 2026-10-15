@@ -149,7 +149,7 @@
             else sg.removeAttribute("data-on");
           });
           var text = typeof fn === "function" ? fn(current, total) : "";
-          label.textContent = text || current + " / " + total;
+          label.textContent = text || (window.SltFormat ? window.SltFormat.integer(current) + " / " + window.SltFormat.integer(total) : current + " / " + total);
         },
         destroy: function () {
           bar.remove();

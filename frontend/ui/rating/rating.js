@@ -222,7 +222,7 @@
       (function (v) {
         var icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false", class: "slt-rating-icon" });
         icon.appendChild(svg("path", { d: STAR_PATH }));
-        var star = el("button", { type: "button", class: "slt-rating-star", role: "radio", "aria-checked": "false", "aria-label": t("rating.star", { n: v }), tabindex: "-1" }, [icon]);
+        var star = el("button", { type: "button", class: "slt-rating-star", role: "radio", "aria-checked": "false", "aria-label": t("rating.star", { n: window.SltFormat ? window.SltFormat.integer(v) : v }), tabindex: "-1" }, [icon]);
         star.addEventListener("click", function () { choose(v, false); });
         star.addEventListener("mouseenter", function () { hover = v; paint(); });
         star.addEventListener("mouseleave", function () { hover = 0; paint(); });
