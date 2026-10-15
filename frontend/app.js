@@ -1369,6 +1369,9 @@ document.addEventListener("avatar:gender-fallback", (event) => {
 
 if (genderToggleButton) {
   applyGenderUI();
+  // The saved choice also decides which avatar the 3D renderer starts with (the bridge remembers
+  // it until the renderer is ready); before this the voice was male while the face was female.
+  if (window.avatarBridge) window.avatarBridge.setGender(avatarGender);
   genderToggleButton.addEventListener("click", () => {
     setAvatarGender(avatarGender === "male" ? "female" : "male");
   });

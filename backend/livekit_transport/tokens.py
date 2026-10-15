@@ -96,6 +96,7 @@ class TransportConfig(BaseModel):
     transport: str
     livekit_configured: bool
     avatar_renderer: str
+    avatar_variant: str = "original"
     # False while the voice agent is not running (still starting, retrying
     # because LiveKit is unreachable, or stopped). The page then uses
     # /ws/voice and the local pipeline instead of joining an empty room.
@@ -169,6 +170,7 @@ def livekit_config() -> TransportConfig:
         transport=config.VOICE_TRANSPORT,
         livekit_configured=config.livekit_configured(),
         avatar_renderer=config.AVATAR_RENDERER,
+        avatar_variant=config.AVATAR_VARIANT,
         agent_ready=agent_ready(),
     )
 

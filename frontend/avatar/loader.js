@@ -22,7 +22,7 @@
 
   var script = document.currentScript;
   var base = script && script.src ? script.src.replace(/[^\/]*$/, "") : "/avatar/";
-  var remembered = { state: "idle", gender: null, stream: null };
+  var remembered = { state: "idle", gender: null, stream: null, variant: "original" };
   var mode = "legacy"; // legacy | loading | talkinghead | fallback
 
   function renderer() {
@@ -105,7 +105,7 @@
     new Function("u", "return import(u)")(base + "avatar.js")
       .then(function () {
         var r = window.avatarRenderer;
-        return r.init(stage, { gender: remembered.gender === "male" ? "male" : "female" });
+        return r.init(stage, { gender: remembered.gender === "male" ? "male" : "female", variant: remembered.variant });
       })
       .then(function (ok) {
         if (!ok) return; // the fallback event already cleaned up
@@ -121,18 +121,23 @@
       });
   }
 
-  function decide(value) {
+  function decide(value, variant) {
+    if (variant) remembered.variant = String(variant).toLowerCase();
     if (value === "talkinghead") start();
   }
 
   function begin() {
     try {
       var m = /[?&]avatar=(\w+)/.exec(window.location.search);
-      if (m) { decide(m[1].toLowerCase()); return; }
+      if (m) {
+        var v = /[?&]variant=(\w+)/.exec(window.location.search);
+        decide(m[1].toLowerCase(), v ? v[1] : null);
+        return;
+      }
       if (!window.fetch) return;
       fetch("/api/livekit/config", { cache: "no-store" })
         .then(function (res) { return res.ok ? res.json() : null; })
-        .then(function (cfg) { decide(cfg && String(cfg.avatar_renderer || "").toLowerCase()); })
+        .then(function (cfg) { decide(cfg && String(cfg.avatar_renderer || "").toLowerCase(), cfg && cfg.avatar_variant); })
         .catch(function () { /* route missing or network down: legacy */ });
     } catch (err) { /* never throw out of the loader */ }
   }

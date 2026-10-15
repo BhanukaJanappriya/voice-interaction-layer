@@ -243,6 +243,10 @@ LIVEKIT_LLM_MAX_TOKENS = _env_int("LIVEKIT_LLM_MAX_TOKENS", 220)
 # without them, or without WebGL, the page falls back), "legacy" is bot3d.js
 # (Three.js r128) and the flat 2D face.
 AVATAR_RENDERER = os.environ.get("AVATAR_RENDERER", "talkinghead").strip().lower()
+# Which human models the 3D renderer shows: "south_asian" (medium brown skin, black SLT T shirt;
+# frontend/avatar/assets/male_sl.glb and female_sl.glb, rebuilt with tools/avatar/build_avatar.py)
+# or "original" (male.glb and mpfb.glb). A missing south_asian file falls back to the original.
+AVATAR_VARIANT = os.environ.get("AVATAR_VARIANT", "original").strip().lower()
 
 # voicekit: the reusable text to speech package and its HTTP/WebSocket API.
 VOICEKIT_ENABLED = _env_bool("VOICEKIT_ENABLED", True)

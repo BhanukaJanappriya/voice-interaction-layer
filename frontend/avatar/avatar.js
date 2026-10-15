@@ -41,10 +41,12 @@ const FEMALE_BONES = [
 ];
 const BASELINE = { headRotateX: -0.01, eyeBlinkLeft: 0.05, eyeBlinkRight: 0.05 };
 const AVATARS = {
-  female: { file: "mpfb.glb", body: "F", modelDynamicBones: FEMALE_BONES },
+  // files: the south asian build (tools/avatar/build_avatar.py, docs/AVATAR.md) first, then the
+  // original model, which is also the whole list when the variant is "original".
+  female: { files: ["female_sl.glb", "mpfb.glb"], file: "mpfb.glb", body: "F", modelDynamicBones: FEMALE_BONES },
   // The male file comes from another build step. Its bone names are unknown
   // here, so no dynamic bones are configured for it.
-  male: { file: "male.glb", body: "M" },
+  male: { files: ["male_sl.glb", "male.glb"], file: "male.glb", body: "M" },
 };
 
 // What each pipeline state looks like. mt values are eased in with setValue
@@ -86,11 +88,21 @@ function hasWebGL() {
   }
 }
 
+// The first file of the gender's list that exists (the original one only for the "original" variant).
+async function pickFile(gender) {
+  const spec = AVATARS[gender];
+  const names = S.variant === "original" ? [spec.file] : spec.files;
+  for (const name of names) if (await assetExists(name)) return name;
+  return null;
+}
+
 async function assetExists(name) {
   try {
     const r = await fetch(ASSET(name), { method: "HEAD", cache: "no-store" });
     // A static mount that answers 200 with an HTML page is not a GLB.
-    return r.ok && !(r.headers.get("content-type") || "").includes("text/html");
+    // An LFS pointer or other plain text file is not a GLB either.
+    const type = r.headers.get("content-type") || "";
+    return r.ok && !type.includes("text/html") && !type.startsWith("text/plain");
   } catch (e) {
     return false;
   }
@@ -503,8 +515,9 @@ function setupGaze() {
 
 async function loadAvatar(gender) {
   const spec = AVATARS[gender];
+  const file = (await pickFile(gender)) || spec.file;
   await S.head.showAvatar({
-    url: ASSET(spec.file), body: spec.body, avatarMood: "neutral", lipsyncLang: "en",
+    url: ASSET(file), body: spec.body, avatarMood: "neutral", lipsyncLang: "en",
     baseline: BASELINE, modelDynamicBones: spec.modelDynamicBones,
   });
   S.shownGender = gender;
@@ -517,7 +530,7 @@ async function setGender(gender) {
     if (!S.active) return { gender: S.shownGender, fallback: false };
     let want = gender;
     let fell = false;
-    if (want === "male" && !(await assetExists(AVATARS.male.file))) {
+    if (want === "male" && !(await pickFile("male"))) {
       want = "female";
       fell = true;
       document.dispatchEvent(new CustomEvent("avatar:gender-fallback", {
@@ -560,8 +573,9 @@ async function init(container, opts) {
     const { TalkingHead } = await import(VENDOR("talkinghead.mjs"));
     if (timedOut) return readyPromise;
     S.gender = opts.gender === "male" ? "male" : "female";
-    const first = S.gender === "male" && (await assetExists(AVATARS.male.file)) ? "male" : "female";
-    if (!(await assetExists(AVATARS[first].file))) throw Object.assign(new Error(AVATARS[first].file + " is missing, run fetch_assets.py"), { reason: "asset-missing" });
+    S.variant = opts.variant === "original" ? "original" : "south_asian";
+    const first = S.gender === "male" && (await pickFile("male")) ? "male" : "female";
+    if (!(await pickFile(first))) throw Object.assign(new Error(AVATARS[first].file + " is missing, run fetch_assets.py"), { reason: "asset-missing" });
     const stage = document.createElement("div");
     stage.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
     container.appendChild(stage);
