@@ -20,10 +20,6 @@
   "customer.unavailable": "I cannot reach your account details right now. Please try again later, or contact SLT directly: call {hotline} (toll free from SLT lines), send an SMS to {sms}, or call {prepaid} for prepaid.",
   "customer.changes_not_supported": "I can only show account information here, I cannot make changes. To buy, activate, change or cancel anything, please call {hotline} (toll free from SLT lines), send an SMS to {sms}, or call {prepaid} for prepaid.",
   "verify.neutral_name": "Customer",
-  "_meta": {
-    "language": "en",
-    "reviewed": true
-  },
   "session.expired": "Your verified session has ended, so I can no longer open your account details. Please verify again with a one time code, or contact SLT directly: call the hotline {hotline} (toll free from SLT lines), send an SMS to {sms}, or call {prepaid} for CDMA prepaid.",
   "tool_agent.not_found": "I could not find that in the SLT information I have. Please call {hotline} (toll free from SLT lines), send an SMS to {sms}, or call {prepaid} for prepaid.",
   "tool_agent.hub_unavailable": "The SLT information service is temporarily unavailable. Please try again shortly, or contact SLT: call {hotline} (toll free from SLT lines), send an SMS to {sms}, or call {prepaid} for prepaid.",
@@ -77,5 +73,31 @@
   "confirm.fault.bad_choice": "I did not understand that. Please reply with one of the numbers.",
   "confirm.status.packages": "Checking the available packages",
   "confirm.status.fault": "Preparing your fault report",
-  "confirm.status.executing": "Making the change"
+  "confirm.status.executing": "Making the change",
+  "voice.reconnecting": "One moment, reconnecting",
+  "voice.guest": "Guest",
+  "voice.greeting": "Welcome to SLT Mobitel, {name}! I'm your voice assistant, and I understand English, Sinhala, and Tamil, so just start speaking whenever you're ready.",
+  "voice.closing_question": "You're welcome! Is there anything else I can help you with, or shall I end our conversation here?",
+  "voice.goodbye": "Thank you for using the SLT Mobitel voice assistant. Goodbye, and have a great day!",
+  "voice.no_mic_audio": "No microphone audio arrived, so the conversation is ending.",
+  "voice.agent_down": "The LiveKit voice agent is not running right now.",
+  "llm.lost_connection": "Sorry, I lost my connection there. Could you ask that again?",
+  "llm.unavailable": "Sorry, I can't reach my language service right now. Please try again in a moment.",
+  "llm.local_unavailable": "Sorry, I could not get an answer from the local assistant. Please try again in a moment.",
+  "auth.account_locked": "Too many incorrect attempts. This account is locked; try again in about {minutes} minute(s).",
+  "auth.device_limit": "Too many attempts from this device. Please wait a minute and try again.",
+  "auth.bad_credentials": "The phone number or PIN is incorrect.",
+  "auth.not_signed_in": "You are not signed in.",
+  "otp.bad_code": "The code is incorrect or has expired.",
+  "otp.locked": "Too many incorrect codes. Please request a new code.",
+  "otp.too_soon": "A code was sent a moment ago. Please wait before asking for another.",
+  "otp.rate_limited": "Too many attempts. Please try again later.",
+  "otp.unavailable": "One time codes are not available right now. Please use your PIN.",
+  "otp.disabled": "One time code sign in is not enabled.",
+  "otp.destination_generic": "your registered mobile number",
+  "api.rate_limited": "Too many requests. Please wait a moment and try again.",
+  "_meta": {
+    "language": "en",
+    "reviewed": true
+  }
 }
