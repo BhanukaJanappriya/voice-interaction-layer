@@ -31,6 +31,11 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 # fails, the local Ollama model answers alone.
 CLOUD_LLM_PROVIDER = os.environ.get("CLOUD_LLM_PROVIDER", "livekit").strip().lower()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest").strip()
+# Gemini Live (native speech to speech, tier 1 of the voice router). This is a
+# different model family from GEMINI_MODEL above: a Live model such as
+# gemini-3.8-live cannot be used for text generation and the other way round.
+GEMINI_LIVE_ENABLED = os.environ.get("GEMINI_LIVE_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+GEMINI_LIVE_MODEL = os.environ.get("GEMINI_LIVE_MODEL", "gemini-3.8-live").strip()
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 # Extra "reasoning" model call before the reply is composed (see
 # agent.py's Orchestrator). Off by default: it has to finish before the
@@ -88,6 +93,17 @@ def _env_float(name: str, default: float) -> float:
         return float(os.environ.get(name, "").strip() or default)
     except ValueError:
         return default
+
+
+GEMINI_LIVE_SETUP_TIMEOUT_SECONDS = float(os.environ.get("GEMINI_LIVE_SETUP_TIMEOUT_SECONDS", "").strip() or 8)
+# Voice tier fallback: Gemini Live, then LiveKit, then the local pipeline. A tier
+# is skipped only after a genuine failure (see voice_router/reasons.py).
+VOICE_ROUTER_ENABLED = os.environ.get("VOICE_ROUTER_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+VOICE_TIER_ORDER = os.environ.get("VOICE_TIER_ORDER", "gemini_live,livekit,local").strip()
+# Tier 2 speech from LiveKit Inference TTS (needs the LiveKit credentials; off until someone has
+# listened to it, see docs/VOICE_EVAL.md). Speech to text on tier 2 stays the local Whisper model.
+VOICE_TIER2_INFERENCE = os.environ.get("VOICE_TIER2_INFERENCE", "false").strip().lower() in ("1", "true", "yes")
+VOICE_ROUTER_BREAKER_SECONDS = float(os.environ.get("VOICE_ROUTER_BREAKER_SECONDS", "").strip() or 60)
 
 
 def _local_secret(name: str, factory) -> str:
