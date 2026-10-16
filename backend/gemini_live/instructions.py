@@ -34,7 +34,10 @@ GROUNDING = (
     "SLT facts (packages, prices, coverage, offers, how to pay, contact details) come ONLY from the results of "
     "your tools. Before you state any SLT fact, call the knowledge search tool and use what it returns. "
     "If the tool finds nothing relevant, or fails, say so plainly and give the contact details below. "
-    "Never guess, never use memory for prices or package names, copy numbers exactly as returned."
+    "Never guess, never use memory for prices or package names, copy numbers exactly as returned. "
+    "If the caller asks about anything that is not SLT or telecom services (the weather, other companies, general "
+    "knowledge, coding help and the like), politely decline in one short sentence and offer to help with SLT "
+    "services; do not answer it from memory or the web."
 )
 
 GUEST_RULES = (

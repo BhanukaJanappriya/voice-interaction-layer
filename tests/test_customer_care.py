@@ -47,12 +47,11 @@ def search_returns(monkeypatch, kind, chunks=None):
 
 
 @pytest.mark.parametrize("kind", ["none", "unavailable"])
-def test_a_general_question_gets_a_polite_general_answer(hub_mode, monkeypatch, kind):
+def test_a_question_that_is_not_about_slt_gets_a_polite_decline_and_no_model(hub_mode, monkeypatch, kind):
     search_returns(monkeypatch, kind)
     plan = tool_agent.prepare("What is the capital of France?", "en", None)
-    assert plan.kind == PASS
-    assert "general knowledge" in plan.clause and "customer care officer" in plan.clause
-    assert "Do NOT state any SLT specific facts" in plan.clause
+    assert plan.kind == CANNED and plan.context == ""
+    assert "only help with SLT-Mobitel services" in plan.canned and "1212" in plan.canned
 
 
 def test_an_slt_question_the_hub_knows_nothing_about_gets_the_fixed_dial_text(hub_mode, monkeypatch):
@@ -73,11 +72,6 @@ def test_an_slt_question_the_hub_answers_is_grounded_in_the_hub(hub_mode, monkey
     assert plan.kind == GROUNDED and "Fiber Starter" in plan.context and plan.tools == ("search_knowledgebase_tool",)
 
 
-def test_the_general_answer_is_never_sent_the_hub_text(hub_mode, monkeypatch):
-    search_returns(monkeypatch, "none")
-    assert tool_agent.prepare("tell me a joke", "en", None).context == ""
-
-
 def test_hub_answers_are_asked_to_be_friendly_plain_and_organised():
     clause = messages.guest_grounded_clause("en")
     assert "customer care officer" in clause and "plain text only" in clause.lower()
@@ -90,29 +84,17 @@ def test_small_talk_is_also_in_a_caring_voice():
     assert "customer care officer" in messages.no_facts_clause("en")
 
 
-@pytest.mark.parametrize("language,name", [("en", "English"), ("si", "Sinhala"), ("ta", "Tamil")])
-def test_the_general_clause_names_the_language(language, name):
-    assert f"Reply in {name}" in messages.general_clause(language)
-
-
-
-@pytest.mark.parametrize("text", ["What is fibre internet?", "what is a router", "Explain roaming", "how does 4G work",
-                                  "what's the difference between LTE and fibre"])
-def test_an_idea_the_hub_has_nothing_on_is_explained_with_the_slt_details_marked_missing(hub_mode, monkeypatch, text):
+@pytest.mark.parametrize("text", ["What is fibre internet?", "how does roaming work", "What is the price of fibre",
+                                  "what are your fibre packages", "Tell me about the zebra tariff"])
+def test_slt_topics_with_nothing_in_the_hub_still_get_the_fixed_text(hub_mode, monkeypatch, text):
     search_returns(monkeypatch, "none")
     plan = tool_agent.prepare(text, "en", None)
-    assert plan.kind == PASS
-    assert "from general knowledge" in plan.clause and "could not find SLT's own details" in plan.clause
-    assert "Do NOT state any SLT specific fact" in plan.clause
+    assert plan.kind == CANNED and "could not find that in the SLT information" in plan.canned
 
 
-@pytest.mark.parametrize("text", ["What is the price of fibre", "what are your fibre packages", "Tell me about the zebra tariff"])
-def test_slt_specifics_with_nothing_in_the_hub_still_get_the_fixed_text(hub_mode, monkeypatch, text):
-    search_returns(monkeypatch, "none")
-    assert tool_agent.prepare(text, "en", None).kind == CANNED
-
-
-def test_a_hub_answer_may_be_enriched_with_general_knowledge_but_not_with_slt_facts():
+def test_a_hub_answer_never_adds_general_knowledge_or_other_sources():
     clause = messages.guest_grounded_clause("en")
-    assert "helpful general knowledge" in clause
-    assert "every SLT specific fact" in clause and "only from the excerpts" in clause
+    assert "politely decline in one short sentence" in clause and "never answer it from memory" in clause
+    assert "general knowledge" in clause  # only as an example of what is declined
+    assert "helpful general knowledge" not in clause
+    assert "ONLY from the SLT excerpts" in clause

@@ -1,10 +1,9 @@
 """Is this question about SLT or telecom services at all?
 
 Used only when the SLT knowledge base found nothing relevant. A question that is about SLT, a
-package, a bill, a line, a connection and the like must be answered from the hub or with the fixed
-"call 1212" text, never from the model's memory. A question that has nothing to do with telecom
-(a capital city, a recipe, a maths question) can be answered politely from general knowledge, the
-way a friendly customer care officer would.
+package, a bill, a line, a connection and the like gets the fixed "not found, call 1212" text. A question
+that has nothing to do with telecom (the weather, another company, general knowledge, coding help) gets a
+polite decline that offers help with SLT services. Neither is ever answered from the model's memory.
 
 When unsure the answer is True: that gives the fixed hub only reply, which is the safe side. English,
 Sinhala, Tamil and the Latin letter forms are covered by whole word and substring rules below.
@@ -45,24 +44,6 @@ _ROMAN = (
 
 _LATIN = re.compile(r"(?<![a-z0-9])(?:" + _EN + r"|" + _ROMAN + r")(?![a-z0-9])")
 _SCRIPT = re.compile("(?:" + _SI_TA + ")")
-
-
-# "What is fibre?", "how does roaming work", "difference between 4G and fibre": a question about an idea,
-# not about what SLT sells or charges. Matched at the start of the question (English only; the Sinhala and
-# Tamil questions of this kind are left to the hub, which is the safe side).
-_CONCEPT = re.compile(
-    r"^(?:what(?: is|s| are|'s)(?: a| an| the)?|explain|define|meaning of|how (?:does|do|is|are) .{1,40}? (?:work|works|different)|"
-    r"difference between|what does .{1,30}? mean|why (?:is|do|does|are)|tell me about the (?:idea|concept) of)\b"
-)
-_ABOUT_SLT = re.compile(r"(?<![a-z0-9])(?:slt|mobitel|sltmobitel|peo|peotv|my slt|myslt|your|you|do you|can i|my|price|cost|rs|lkr|charge|rental|package for)(?![a-z0-9])")
-
-
-def is_concept_question(text: str) -> bool:
-    """A question about what something is or how it works, not about SLT's own offers, prices or accounts."""
-    if not isinstance(text, str):
-        return False
-    rest = normalize(text)
-    return bool(_CONCEPT.search(rest)) and not _ABOUT_SLT.search(rest)
 
 
 def is_slt_topic(text: str) -> bool:

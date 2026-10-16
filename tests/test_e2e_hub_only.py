@@ -1075,3 +1075,25 @@ def test_the_mcp_servers_knowledge_search_uses_the_hub_not_the_scraped_copy(env)
     assert chunks[0]["title"] == "SLT MCP hub knowledge base"
     assert any(name == "search_knowledgebase_tool" for name, _ in env.hub.tool_calls)
     assert server._mcp_package_details("Fibre Starter") == []
+
+
+# A guest is politely declined for anything that is not SLT: no model, no memory, only the knowledge tool
+
+OFF_TOPIC = {
+    "en": ["What is the weather in Colombo today?", "Who is the CEO of Dialog Axiata?", "Write a Python function to reverse a string",
+           "What is the capital of France?", "Who won the cricket world cup?"],
+    "si": ["කොළඹ අද කාලගුණය කොහොමද?", "ඩයලොග් සමාගමේ සභාපති කවුද?", "string එකක් reverse කරන Python කේතයක් ලියන්න", "ප්‍රංශයේ අගනුවර කුමක්ද?"],
+    "ta": ["இன்று கொழும்பு வானிலை எப்படி?", "டயலாக் நிறுவனத்தின் தலைவர் யார்?", "ஒரு Python குறியீடு எழுதுங்கள்", "பிரான்சின் தலைநகரம் என்ன?"],
+}
+
+
+@pytest.mark.parametrize("language,question", [(lang, q) for lang, qs in OFF_TOPIC.items() for q in qs])
+def test_a_guest_is_politely_declined_for_anything_that_is_not_slt(env, monkeypatch, language, question):
+    monkeypatch.setattr(config, "KB_MIN_SCORE", 0.95)  # the hub finds nothing relevant (the mock scores 0.91)
+    from tool_agent.messages import text as translate
+
+    body = post_chat(env.new_client(), question, language)
+    assert body["reply"] == translate("tool_agent.off_topic", language)
+    assert "1212" in body["reply"]
+    assert {name for name, _ in env.hub.tool_calls} <= {KB}, "a guest may only use the knowledge search"
+    env.assert_no_model_called()

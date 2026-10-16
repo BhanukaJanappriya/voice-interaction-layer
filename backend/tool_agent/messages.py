@@ -23,6 +23,14 @@ BUILTIN = {
         "ta": "என்னிடம் உள்ள SLT தகவல்களில் அதைக் கண்டுபிடிக்க முடியவில்லை. தயவுசெய்து {hotline} (SLT இணைப்புகளிலிருந்து "
               "கட்டணமில்லை) அழைக்கவும், {sms} எண்ணுக்கு SMS அனுப்பவும், அல்லது முன்கட்டணச் சேவைக்கு {prepaid} அழைக்கவும்.",
     },
+    "tool_agent.off_topic": {
+        "en": "I'm sorry, I can only help with SLT-Mobitel services such as packages, bills, connections and coverage. "
+              "Please ask me about those, or call {hotline} (toll free from SLT lines).",
+        "si": "සමාවෙන්න, මට උදව් කළ හැක්කේ SLT-Mobitel සේවා (පැකේජ, බිල්පත්, සම්බන්ධතා, ආවරණය) ගැන පමණි. ඒ ගැන අසන්න, "
+              "නැතහොත් {hotline} (SLT දුරකථනවලින් නොමිලේ) අමතන්න.",
+        "ta": "மன்னிக்கவும், SLT-Mobitel சேவைகள் (பேக்கேஜ்கள், பில்கள், இணைப்புகள், கவரேஜ்) தொடர்பான கேள்விகளுக்கு மட்டுமே "
+              "என்னால் உதவ முடியும். அவற்றைப் பற்றி கேளுங்கள், அல்லது {hotline} (SLT இணைப்புகளிலிருந்து கட்டணமில்லை) ஐ அழைக்கவும்.",
+    },
     "tool_agent.hub_unavailable": {
         "en": "The SLT information service is temporarily unavailable. Please try again shortly, or contact SLT: "
               "call {hotline} (toll free from SLT lines), send an SMS to {sms}, or call {prepaid} for prepaid.",
@@ -169,42 +177,10 @@ def guest_grounded_clause(language: Optional[str]) -> str:
         "product under another name), say that the exact name is not listed and describe the related item with "
         "its price and details instead of only saying you have no details. "
         "Never send the customer to a website, only to the contact details below. "
-        "You may add a sentence or two of helpful general knowledge to explain an idea (what fibre is, how roaming "
-        "works), but every SLT specific fact (a package, price, speed offered, coverage, date or contact) must come "
-        "only from the excerpts. "
-        "Only if the question has nothing to do with SLT or telecom at all (for example a general knowledge "
-        "question) and the excerpts are about something else, answer it briefly and kindly from general knowledge "
-        "and say you are happy to help with SLT services too. "
+        "If the question is not about SLT or telecom services at all (the weather, other companies, general "
+        "knowledge, coding help and the like), politely decline in one short sentence and offer to help with SLT "
+        "services; never answer it from memory or from outside the excerpts. "
         + CARE_STYLE + " " + PRESENT_RULES + " " + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
-    )
-
-
-def concept_clause(language: Optional[str]) -> str:
-    """A telecom idea (what fibre is, how roaming works) the hub has no text about: explain the idea from general
-    knowledge, and say that SLT's own details were not found."""
-    return (
-        "The question asks what something is or how it works, and the SLT knowledge base has nothing on it. Explain "
-        "the idea simply and briefly from general knowledge, as a friendly customer care officer would. Then say that "
-        "you could not find SLT's own details about it in the information you have, and offer the official contact "
-        "numbers below. Do NOT state any SLT specific fact from memory: no packages, prices, speeds offered, "
-        "coverage, dates or contact details. Write plain text only: no asterisks or markdown, and in Sinhala and "
-        "Tamil use simple, short, everyday sentences. "
-        + CARE_STYLE + " " + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
-    )
-
-
-def general_clause(language: Optional[str]) -> str:
-    """A question that is not about SLT or telecom and that the hub knows nothing about: a polite general
-    answer. SLT facts are never given from memory."""
-    return (
-        "The question is general knowledge, not about SLT. Answer it helpfully, briefly and politely from your "
-        "general knowledge, the way a friendly customer care officer would. If you are not sure of a fact, say so "
-        "honestly instead of guessing. For medical, legal or financial matters give only general information and "
-        "suggest asking a professional. Do NOT state any SLT specific facts from memory: no packages, prices, "
-        "services, coverage, contact details or account data; those only come from the SLT knowledge base. "
-        "End by saying you are glad to help with anything about SLT services. Write plain text only: no asterisks "
-        "or markdown, and in Sinhala and Tamil use simple, short, everyday sentences. "
-        + CARE_STYLE + " " + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
     )
 
 

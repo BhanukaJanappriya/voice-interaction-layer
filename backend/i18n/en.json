@@ -96,6 +96,7 @@
   "otp.disabled": "One time code sign in is not enabled.",
   "otp.destination_generic": "your registered mobile number",
   "api.rate_limited": "Too many requests. Please wait a moment and try again.",
+  "tool_agent.off_topic": "I'm sorry, I can only help with SLT-Mobitel services such as packages, bills, connections and coverage. Please ask me about those, or call {hotline} (toll free from SLT lines).",
   "_meta": {
     "language": "en",
     "reviewed": true

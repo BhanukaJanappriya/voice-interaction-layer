@@ -219,6 +219,5 @@ backend/tool_agent/knowledge.py | a an the of for to in on at and or is are was 
 backend/tool_agent/knowledge.py | data package price details | OK low: a search query suffix sent to the hub, never shown to the visitor
 backend/tool_agent/messages.py | Organise what you found: one short friendly opening sentence, then each item on its own with its nam | OK low: an instruction to the language model, never shown to the visitor
 backend/tool_agent/messages.py | Sound like a warm, polite SLT-Mobitel customer care officer talking to a person: natural everyday wo | OK low: an instruction to the language model, never shown to the visitor
-backend/tool_agent/messages.py | The question is general knowledge, not about SLT. Answer it helpfully, briefly and politely from you | OK low: an instruction to the language model, never shown to the visitor
 backend/tool_agent/topic.py | *non-latin | OK low: Sinhala and Tamil topic words matched against the question, never shown to the visitor
-backend/tool_agent/messages.py | The question asks what something is or how it works, and the SLT knowledge base has nothing on it. E | OK low: an instruction to the language model, never shown to the visitor
+backend/tool_agent/messages.py | I'm sorry, I can only help with SLT-Mobitel services such as packages, bills, connections and covera | OK low: the built in English copy of the translated key tool_agent.off_topic, used when the translation file cannot be read
