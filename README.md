@@ -800,3 +800,43 @@ knowledge base is mostly English.
 **Balance and bill questions when the hub cannot say what kind of line it is.** If
 `show_service_detail` fails, the customer is treated as a postpaid line (the postpaid tools are
 allowed, the LTE prepaid ones are not) and the failed lookup is not repeated for a minute.
+
+## Gemini Live, voice tiers, voices and localization (2026-10-15)
+
+**Voice tiers.** A voice session starts on the first tier that is up: **Gemini Live** (native speech to
+speech, `gemini-3.8-live`), then **LiveKit** (the agent with the LiveKit Inference model), then the **local
+pipeline** (Whisper, local Llama, the existing voices). `GET /api/voice/tier` tells the page which one;
+the page asks at the start of every session, so when Gemini Live recovers new sessions go back to it. A
+tier is skipped only after a genuine failure (missing or invalid key, no credit or quota, model not found,
+5xx, timeout, or three unknown failures in five minutes). A safety block, a refusal or a normal hang up is
+not a failure. If a tier fails in the middle of a conversation, the page says "One moment, reconnecting"
+(localized) and the next tier takes over with the same language, voice gender, sign in and the last lines
+of the conversation. `/health` shows each tier's state and last error reason (`voice_router`).
+
+**Gemini Live goes through this server** (`/ws/live`): the browser never sees `GEMINI_API_KEY`, and every
+tool the model asks for runs through the same MCP gateway, so a guest can only use
+`search_knowledgebase_tool`, a customer gets the tools for their service type, and buying or logging a
+fault needs the same confirmation. Settings: `GEMINI_LIVE_ENABLED`, `GEMINI_LIVE_MODEL` (a Live model, not
+`GEMINI_MODEL`, which is for text), `GEMINI_LIVE_SETUP_TIMEOUT_SECONDS`, `VOICE_ROUTER_ENABLED`,
+`VOICE_TIER_ORDER`, `VOICE_ROUTER_BREAKER_SECONDS`, `VOICE_TIER2_INFERENCE`. **The Gemini key in this
+project has no credit** (verified 2026-10-15: Live setup closes with "Your prepayment credits are
+depleted"), so Gemini Live was built and tested against a scripted fake and has never produced audio here.
+
+**Voices.** `config/voices.yaml` is the one place that maps tier, language and gender to a voice. The
+spoken text of the two non native tiers goes through `backend/voice_text` first (amounts, dates, phone
+numbers, units, abbreviations, English telecom words inside Sinhala and Tamil). The evaluation, with what
+was measured and what nobody has listened to yet, is `docs/VOICE_EVAL.md`.
+
+**Localization.** The page's texts, the backend's replies and the fixed spoken lines are in
+`frontend/i18n` and `backend/i18n` for English, Sinhala and Tamil; tests fail when a key is missing in one
+language or when a new hardcoded visitor facing string appears (`tests/test_i18n_*.py`,
+`docs/I18N_AUDIT.md`). Every Sinhala and Tamil text is machine written and listed in
+`docs/TRANSLATIONS_REVIEW.md` for a native speaker.
+
+**Avatars.** The voice screen shows human 3D avatars with lip sync (TalkingHead): a female model in female mode and a
+male model in male mode, chosen with the button on the voice screen and remembered (a saved male choice now also
+shows the male face; before, the voice was male and the face female). `AVATAR_RENDERER=legacy` brings back the flat
+robot style face. `AVATAR_VARIANT=original` (default) uses `mpfb.glb` and `male.glb`; `AVATAR_VARIANT=south_asian` uses
+`male_sl.glb` and `female_sl.glb` (medium brown skin, black SLT T shirt with the official logo, rebuilt with
+`tools/avatar/build_avatar.py`, see `docs/AVATAR.md`). The South Asian set is new and has only been looked at with a
+software renderer, so it is not the default.

@@ -142,3 +142,49 @@ Feather licence (for the seven derived icons):
 The `favicon.svg` on slt.lk was not used: it is a bitmap wrapped in SVG, not a vector.
 The web app manifest icons (`icon-192.png`, `icon-512.png`, `icon-512-maskable.png`) are
 still cut from the logo already in the repository.
+
+
+## Gemini Live, voices, localization and avatar additions (2026-10-15)
+
+Rows written by the agents that did the work; the lead removed nothing except where noted. Nothing here has had legal review.
+
+### Voices and speech
+
+Add these rows to the table of the voice and speech section (the one with columns Name, Version, Used for, Source, Licence,
+Attribution required, Commercial use OK, How obtained, Status), after the `dialoglk/SinhalaVITS-TTS-*` row. Checked on 2026-10-15.
+Nothing marked Rejected may be a default; none of the rows below is.
+
+| Name | Version | Used for | Source | Licence | Attribution required | Commercial use OK | How obtained | Status |
+|-|-|-|-|-|-|-|-|-|
+| Gemini prebuilt voices (Kore, Aoede, Puck, Charon) | service side, models `gemini-3.8-live`, `gemini-3.8-flash-tts` | Tier 1 voices, optional `gemini_tts` provider | https://ai.google.dev/gemini-api/docs/speech-generation | Google Gemini API terms (a service; no per voice licence) | per Google terms | yes under the paid API terms, UNVERIFIED here (key has no credit) | Network call at runtime | Adopted as tier 1, never heard |
+| LiveKit Inference TTS (Inworld TTS 2.0 and 2.0 Flash, Google Gemini 3.8 Flash and Flash-Lite TTS) | model ids `inworld/inworld-tts-2`, `inworld/inworld-tts-2-flash`, `google/gemini-3.8-flash-tts`, `google/gemini-3.8-flash-lite-tts` | Tier 2 voices (Sinhala only exists on Inworld 2.0) | https://docs.livekit.io/agents/models/tts/ , https://docs.livekit.io/agents/models/tts/inworld/ , https://docs.livekit.io/agents/models/tts/gemini/ | LiveKit Cloud terms plus the model vendors' terms; billed to the LiveKit project; prices not stated on the pages read | none known | per plan, UNVERIFIED | Network call at runtime with the project's own key | Adopted as tier 2, never run |
+| Inworld voices Ashley, Edward (and Diego, Olivia) | service side | Tier 2 Sinhala and Tamil voice names (Sinhala fit unknown) | https://docs.livekit.io/agents/models/tts/inworld/ | Inworld terms through LiveKit Inference | none known | per plan, UNVERIFIED | Network call | Adopted for trial, voice quality unknown |
+| Edge voices `en-US-AvaMultilingualNeural`, `en-US-AndrewMultilingualNeural` | service side | English voices (first choice, unchanged) | Microsoft Edge read aloud service | Microsoft service terms, UNVERIFIED for commercial use | none known | UNVERIFIED | Network call | Adopted, first choice as before (Aria and Guy are the listed alternates; the measured latency gap was small) |
+| Edge voices `ta-IN-PallaviNeural`, `ta-IN-ValluvarNeural` | service side | Tamil fallback voices | same | same | none known | UNVERIFIED | Network call | Adopted as fallback (already listed above) |
+| Piper `si_LK-dilu-medium` | not found | Optional offline Sinhala female | https://huggingface.co/rhasspy/piper-voices (no `si` directory on 2026-10-15) | Claimed MIT in the brief; no model card could be read | unknown | NO until the model card is read | Not downloaded | Not adopted; adapter `providers/piper_si.py` stays unavailable without a hand placed model in `data/models/piper_si/` |
+| `backend/voice_text/lexicon.yaml` spellings | n/a | Sinhala and Tamil respelling of English telecom words and abbreviations | written in this project | project licence | none | yes | in repository | In use, spellings not checked by a native speaker |
+| PyYAML | 6.0.3 in venv, already in requirements.txt | Reads `config/voices.yaml` and `lexicon.yaml` | https://github.com/yaml/pyyaml | MIT | Keep notice | yes | pip | Already used |
+
+Rejected (add if absent, all already in the file or the evaluation): MMS-TTS Sinhala and Tamil (CC BY-NC 4.0, non commercial),
+`intellisr/sinhala-tts-piper-v1` (tagged GPL-3.0, data rights unclear), SinhalaVITS (MPL-2.0, heavy, competitor operator).
+
+### Avatar
+
+| Name | Version | Used for | Source | Licence | Attribution required | Commercial use OK | How obtained | Status |
+|-|-|-|-|-|-|-|-|-|
+| `male_sl.glb`, `female_sl.glb` (Sri Lankan SLT avatars, built here) | 3,648,136 bytes, SHA-256 `5ccd6d746a61bfe1fe1be32219ad951e7ba8342ee5e9989824d78eae8e952027` (male) and 7,371,508 bytes, SHA-256 `430334836ef4a1b4fb7c3ffc08ec8be30621a9f82aa0aa8ac1832e8db886b877` (female), medium_brown preset | Default avatars with a black SLT T-shirt | Derived from `male.glb` and `mpfb.glb` by `tools/avatar/build_avatar.py` | CC0 sources (recolored textures, same geometry); the logo is SLT's own file | none for the CC0 parts; the logo stays SLT's mark | yes (own logo) | Built with Blender, stored with Git LFS | Adopted, legacy `male.glb` and `mpfb.glb` stay as fallback |
+| SLT Mobitel logo `frontend/assets/mobitel-logo.png` | repo file, 3840 x 1451 RGBA | Chest decal baked into the shirt texture, unmodified in shape and colour | this repository | Company trademark | n/a | internal use | already in repo | Adopted |
+| Blender | 5.2.2 LTS | Runs `build_avatar.py` (bpy, glTF importer and exporter) | https://www.blender.org | GPL-3.0, output is the author's | none | yes for output | Installed | Build tool, not shipped |
+| meshoptimizer (EXT_meshopt_compression, inside Blender's exporter) | bundled with Blender 5.2 | Shrinks `female_sl.glb` from about 9.3 MB to 7.4 MB | https://github.com/zeux/meshoptimizer | MIT | keep notice if redistributed | yes | bundled | Used for `female_sl.glb`; the decoder is already vendored (`vendor/three/examples/jsm/libs/meshopt_decoder.module.js`) and TalkingHead registers it |
+
+### Fonts
+
+Written 2026-10-15 by Agent D. Add these rows to a new section "Fonts" in `docs/THIRD_PARTY.md`, using the same columns as the avatar table. Nothing here has had legal review. Licence facts below are from the font projects' published licence (SIL Open Font License 1.1); confirm against the licence file inside the downloaded font package before vendoring.
+
+| Name | Version | Used for | Source | Licence | Attribution required | Commercial use OK | How obtained | Status |
+|-|-|-|-|-|-|-|-|-|
+| Noto Sans Sinhala | current Google Fonts release | Sinhala text on every screen | https://fonts.google.com/noto/specimen/Noto+Sans+Sinhala , https://github.com/notofonts/sinhala | SIL Open Font License 1.1 | Keep the copyright notice and the licence text with any copy of the font files; the font may not be sold on its own | yes | Loaded today from the Google Fonts stylesheet in `frontend/index.html` (weights 400, 600, 700). Optional: vendor the woff2 files into `frontend/assets/fonts/` | Adopted (hosted). Vendoring optional |
+| Noto Sans Tamil | current Google Fonts release | Tamil text on every screen | https://fonts.google.com/noto/specimen/Noto+Sans+Tamil , https://github.com/notofonts/tamil | SIL Open Font License 1.1 | same as above | yes | same as above | Adopted (hosted). Vendoring optional |
+| Google Fonts service | n/a | Delivers the two families above | https://fonts.googleapis.com , https://fonts.gstatic.com | Terms of the Google Fonts API; the fonts themselves are OFL | none | yes | A stylesheet link, no key | Adopted. Privacy note: the visitor's browser contacts Google to fetch the fonts, which sends the visitor's IP address; vendoring the files removes that request |
+
+If the files are vendored: copy each family's `OFL.txt` next to the woff2 files (`frontend/assets/fonts/OFL-NotoSansSinhala.txt`, `frontend/assets/fonts/OFL-NotoSansTamil.txt`), subset only to the Sinhala (U+0D80 to U+0DFF) or Tamil (U+0B80 to U+0BFF) blocks plus the joiners U+200C and U+200D (subsetting is allowed by the OFL as long as the font is not renamed in a way the licence forbids; keep the Reserved Font Name rules in mind and keep the original family name only if no Reserved Font Name is declared in the package).

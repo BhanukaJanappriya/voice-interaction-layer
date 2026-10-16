@@ -585,3 +585,45 @@ The pool holds one MCP connection per verified customer. `begin_login` opens it 
 code, `finish_login` verifies on the same connection and keeps it, `drop_session` closes it.
 `access_from_request` treats a token marked "hub" whose connection is gone as a guest with
 `session_expired`, so the downgrade is decided on the server for every request.
+
+## Gemini Live and the voice tiers (2026-10-15)
+
+```
+ page --GET /api/voice/tier--> voice_router (one breaker per tier, probes at start up)
+   gemini_live: page <--binary PCM + JSON events--> /ws/live --> gemini_live.session --> Gemini Live (google-genai)
+                                                       |  function call --> mcp_gateway.call(access)  (matrix, number injection, confirmations)
+   livekit:     page <--WebRTC room--> LiveKitVoiceSession (local VAD and STT, LiveKit Inference LLM chain, voicekit speech)
+   local:       page <--/ws/voice--> VAD > STT > Orchestrator > tts.py (server speakers)
+ lip sync: tier 1 audio plays in the page through an AnalyserNode that is handed to TalkingHead (real audio)
+```
+
+Why a proxy for Gemini Live: the tool calls must run through the gateway on the server, so the server has to
+be in the session anyway, and that keeps the key off the browser without an ephemeral token. The helper
+that mints ephemeral tokens exists (`gemini_live/tokens.py`) and is not used. Details, formats and the
+session limits are in `docs/GEMINI_LIVE_PLAN.md`: audio sessions are capped at 15 minutes and a connection
+lives about 10 minutes unless context window compression and session resumption are on (they are); the
+session reconnects with its resumption handle when the server sends a go away message.
+
+Router rules (`backend/voice_router`): genuine failures trip a tier's breaker at once (60 s by default),
+unknown errors trip it after three in five minutes, the local tier never trips, and a success closes the
+breaker so the next session starts higher again. A running conversation is not moved back up. The
+handover carries language, voice gender, the sign in (the page re-sends its session token), the last
+lines of the conversation (into the Gemini instruction; the other tiers are stateless per turn and do not
+use them) and the pending confirmation, which lives in the confirmations store per customer.
+
+Tier 2 uses LiveKit Inference for the language model (the existing chain) and, when
+`VOICE_TIER2_INFERENCE=true`, for speech; its speech to text stays the local Whisper model.
+
+Speech normalization (`voice_text`) runs per sentence before synthesis on tiers 2 and 3 only. Tier 1 speaks
+natively and the model is told how to read amounts and numbers in its instruction.
+
+### Measured on 2026-10-15 (this machine, the real Gemini key with no credit, the real hub)
+
+| Step | Result |
+|-|-|
+| `/ws/live` with the depleted key, en, si and ta | `live_failed` with reason `billing_or_quota` after 0.97, 0.97 and 1.00 s |
+| `/api/voice/tier` after that | `livekit`, `/health` shows `gemini_live` tripped with `billing_or_quota` |
+| LiveKit worker unable to reach the server (bad secret) | tier `local`, `livekit` tripped with `outage`; after the 60 s breaker, `gemini_live` is offered again |
+| `/ws/voice` with `handover` | spoken notice instead of the introduction in en, si, ta (3.9 to 5.1 s to the end of the notice, synthesis included) |
+| Guest question through the real hub, browser, en, si, ta | answers in 7.8, 4.8 and 4.6 s (hub tool 1.6 to 4.9 s) |
+| Gemini Live first audio, voice quality, mouth offset | not measured: no credit on the key |

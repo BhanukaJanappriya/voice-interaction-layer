@@ -888,3 +888,72 @@ loses both. Prices and other plain figures are not checked.
 **Ratings.** One prompt per channel per page visit; nothing stops someone submitting several times
 from different visits (limited per address to `RATING_RATE_LIMIT_PER_HOUR`). The numbers show how
 visitors feel about the session, not about a single answer.
+
+## Gemini Live, voice tiers, voices and localization (2026-10-15)
+
+**Gemini Live was never run.** The key has no credit; every Live session closes at setup with "Your
+prepayment credits are depleted". The session, the tool calling, the resumption and the proxy are tested
+against a scripted fake that follows the SDK's documented shapes. Unmeasured: connect time, time to first
+audio, Sinhala and Tamil voice quality, whether the model keeps the chosen language, how the real server
+chunks transcripts, whether `START_OF_ACTIVITY_INTERRUPTS`, the sliding window and resumption are accepted by
+`gemini-3.8-live`, and the audio to mouth offset on Gemini audio. The model list call works with the key, so the
+router's start up probe cannot see a depleted balance; the first session after a depletion or a top up pays one
+failed connect before it falls back.
+
+**Grounding on tier 1.** The model speaks the hub's answers itself, so the output filter that removes made up
+phone numbers and addresses (`tool_agent.scrub`) cannot act on the audio, only on the transcript. The instruction
+tells the model to answer from tool results only and to give only the official numbers; that is a request, not a
+guarantee.
+
+**Spoken yes on tier 1 is not routed to the confirmation store.** A spoken "yes" reaches the model, not
+`confirmations.intercept`; the confirmation window (button) is the only way to confirm while on Gemini Live. Buying and
+fault logging are off by default (`STATE_CHANGING_TOOLS_ENABLED`), and the model is not told about a button
+confirmation. Both are open decisions.
+
+**Handover.** The conversation lines are carried only into a Gemini instruction. The LiveKit and local tiers keep
+no history between turns today, so after a handover they know the language, voice, sign in and pending
+confirmation, not what was said. The reconnecting notice is spoken by the new tier; on LiveKit it needs the
+agent to be running.
+
+**LiveKit tier 2.** Language model through LiveKit Inference is the existing chain. Speech from LiveKit Inference TTS is
+behind `VOICE_TIER2_INFERENCE` and has never run (voice ids from the documentation only; Sinhala exists only on
+Inworld 2.0 and nobody has heard it). Speech to text on this tier is still the local Whisper model; LiveKit Inference
+STT is not used.
+
+**Voices.** Nobody has listened to any voice. The offline Sinhala Piper voice `si_LK-dilu-medium` was not found in the Piper
+repository, so offline Sinhala is unavailable and there is no open male Sinhala voice. edge-tts is unofficial and
+broke once. The text normalizer does not turn Sinhala or Tamil numbers into words (it reads them digit by digit
+or leaves the digits), and its Sinhala and Tamil respellings of English words were written by a model.
+
+**Localization.** All new Sinhala and Tamil text is machine written. The static scan finds hardcoded strings
+only in the patterns it knows; `docs/I18N_AUDIT.md` lists what was moved, what stays in code tables and what is
+intentionally English. Layout at 360 px was checked in a browser only for the screens in
+`tests/ui/test_i18n_layout.py`; see the result recorded in the final report.
+
+**Customer data and Gemini Live.** The owner's rule is that a verified customer's account data goes to the local
+model only (`CUSTOMER_DATA_TO_CLOUD_LLM=false`). Gemini Live would be sent the hub's account answers, so a verified
+customer is never put on tier 1: `GET /api/voice/tier` skips it for a signed in cookie and `/ws/live` refuses a verified
+token with `customer_data_local_only` (not a failure, the router is not told). Guests use Gemini Live. Setting
+`CUSTOMER_DATA_TO_CLOUD_LLM=true` allows customers on it. Found by the QA agent, fixed before commit.
+
+**Router signals.** The router learns about LiveKit only from the agent worker's state on `/api/voice/tier` (the worker
+cycles between running and retrying while it cannot reach the server, so the answer can flip for a moment) and about
+Gemini Live from `/ws/live` outcomes. A failure that only the browser sees (a room that cannot connect, microphone
+trouble) is handled by the page's own fallback to `/ws/voice` and is not reported to the router, on purpose: a
+browser reported failure would let anyone trip the breaker for every visitor. When the 60 second breaker of a failed
+tier ends, the next session tries that tier again and pays one failed connect (about 1 second measured for the
+depleted Gemini key).
+
+**English short question.** On the live hub "What fibre packages do you have?" answered "could not find that" while
+"Tell me about SLT fibre broadband packages and prices" answered with the real packages (2026-10-15, same hub
+text, different retrieval). Not caused by this work; the retrieval score floor is the likely reason.
+
+**Avatars (2026-10-16).** The South Asian models (`AVATAR_VARIANT=south_asian`) keep every shape key, joint and viseme of
+the source and lip sync moves in the real page (jaw about 0.4, visemes up to 0.7), but they were only viewed in headless
+Chrome with software rendering: the faces look flat and posterized there, the female has grey green patches on the face,
+the logo is paler than its file colours under the app's bright lighting, and for the first 10 to 17 seconds that renderer
+does not draw the skin at all (the original models do the same). Nobody has seen them on a real GPU. The female neckline is
+wider than a crew neck and the jeans stay blue. The skin is baked, so another tone needs a rebuild in Blender (Blender is
+installed on the development machine only). The original models are fair skinned and European looking; no Indian looking
+original exists in the project. The 3D avatars need WebGL and a few seconds to load; the page keeps the flat avatar
+until they are ready and falls back to it on any failure.

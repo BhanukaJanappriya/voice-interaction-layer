@@ -668,3 +668,27 @@ config: RATING_ENABLED, RATING_RATE_LIMIT_PER_HOUR; MCP_HUB_TIMEOUT_SECONDS now 
     MCP_HUB_BREAKER_SECONDS now 20 when ANSWER_SOURCE is mcp_hub (300 otherwise); KB_MIN_SCORE now 0.40
 tool_agent.scrub: filter_stream(pieces, context, official, dial_line), clean_text(text, context, official)
 tool_agent.knowledge: expand_query(text, language)
+
+
+Additions of 2026-10-15 (Gemini Live and voice tiers).
+
+GET /api/voice/tier -> {"enabled": bool, "tier": "gemini_live"|"livekit"|"local", "model"?: str, "status"?: {...}}
+WS /ws/live
+    page -> server  text {"type":"start_session","language_hint":"en|si|ta","voice_style":"female_natural|male",
+                          "user_name"?,"greet"?,"session_token"?,"context"?: last lines, trimmed to 800}
+                    binary PCM16 mono 16 kHz; text {"type":"end_session"}
+    server -> page  binary PCM16 mono 24 kHz; the /ws/voice events status, partial_transcript, final_transcript,
+                    agent_response_chunk, agent_response (mode "gemini live"), interrupt, speaking_done, confirmation;
+                    {"type":"live_ready"}; {"type":"live_failed","reason":"<reason class>"} (genuine failure, stream ends)
+WS /ws/voice start_session gains optional "handover": true (speaks the reconnecting notice, no introduction)
+POST /api/livekit/token body gains optional "handover": bool (token attribute handover=true)
+GET /health gains "voice_router": {order, active, tiers: {name: {state ready|tripped|not_configured, last_error, last_ok_at, retry_in}}}
+config: GEMINI_LIVE_ENABLED, GEMINI_LIVE_MODEL, GEMINI_LIVE_SETUP_TIMEOUT_SECONDS, VOICE_ROUTER_ENABLED, VOICE_TIER_ORDER,
+    VOICE_ROUTER_BREAKER_SECONDS, VOICE_TIER2_INFERENCE (all optional with defaults)
+files: config/voices.yaml (tier, language, gender -> ordered voices)
+python: voice_router {Tier, VoiceRouter, Outcome, classify, get_router, build_handover, make_notice, health_status},
+    gemini_live {GeminiLiveSession, LiveSessionConfig, events, ToolExecutor, build_tools, build_instruction, errors.classify},
+    voice_text.normalize(text, language), voicekit.voice_config {lookup, gender_of, edge_map},
+    voicekit.normalizer_adapter.prepare_for_tts(text, language, tier)
+frontend: window.LiveVoice {tier(baseUrl), connect(options)}, window.SltFormat (number, integer, percent, currency, date, time, duration)
+i18n keys added: voice.reconnecting, voice.mode.gemini_live ({model}), voice.mode.livekit, voice.mode.local and the keys listed in docs/patches/D_i18n_keys.json
