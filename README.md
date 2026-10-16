@@ -842,3 +842,12 @@ robot style face. `AVATAR_VARIANT=original` (default) uses `mpfb.glb` and `male.
 software renderer, so it is not the default.
 
 **Port.** The app always runs on port 8000 and on no other: `python -m backend` and `scripts\start.ps1` have no port option, and if 8000 is already in use the app says so and stops instead of choosing another port (stop the older copy, or run `scripts\stop.ps1`).
+
+**How questions are answered (2026-10-16).** A question about SLT or telecom (packages, bills, lines, connections, coverage,
+contacts and the like) is answered only from the SLT MCP hub, in a warm customer care voice: a friendly opening, each item
+in plain words with its price and the useful detail, and a follow up question; when the hub knows nothing the reply is the
+fixed text with the official numbers. A general question with nothing to do with telecom (a capital city, a fun fact, study
+tips) is answered politely from general knowledge, ending with an offer to help with SLT services; such an answer never
+states SLT packages, prices, coverage or contact details from memory. The sign in code goes through the hub by default
+(`VERIFY_OTP_BACKEND` empty means hub when the hub is the only source of answers): the hub validates the number, sends the
+code to the customer's registered mobile or e-mail and checks it.

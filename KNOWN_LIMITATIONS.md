@@ -967,3 +967,13 @@ Cloud speech to text is still not usable until the Google Cloud Speech to Text A
 people, so real accuracy will differ. The 3D avatar renders at 30 frames a second with the pixel ratio capped at 2 and stops
 drawing when it is not visible (this was already so); it was only timed on a software renderer, so smoothness on a real GPU
 was not measured. The first visit downloads the female model (37 MB for the original female model).
+
+**General questions (2026-10-16).** Whether a question is about SLT is decided by word lists in English, Sinhala, Tamil and
+the Latin letter forms (`tool_agent/topic.py`), and only when the hub found nothing relevant. A telecom question that uses none
+of the listed words gets a general answer instead of the fixed hub text, and a general question that contains one of them
+(for example "line") gets the fixed text. General answers come from the language model's memory and can be wrong; the model is
+told to say so when unsure and to keep SLT facts out. The model writes weak Sinhala in free answers (a general Sinhala answer
+was poor in the live test), better in Tamil and English. The output filter removes an invented hotline in the English and
+Sinhala word orders tested; it cannot catch every phrasing. The sign in code was only sent live once with the owner's own
+number earlier in this project; a re-run now was limited to checks that send nothing (a malformed number is refused with 422 by the
+app and by the hub) so as not to message a real customer.
