@@ -208,6 +208,13 @@ STT_VAD_FILTER = _env_bool("STT_VAD_FILTER", True)
 # not confident (empty turns it off). The final transcript decides what is
 # asked, so a second look at the uncertain ones is worth its extra second.
 STT_ACCURATE_MODEL = os.environ.get("STT_ACCURATE_MODEL", "small").strip()
+# Seconds of silence that end an utterance. It used to be a whole second plus up to half a
+# second of chunk rounding; with 0.25 s chunks 0.75 s ends the turn about 0.5 s sooner.
+STT_SILENCE_SECONDS = _env_float("STT_SILENCE_SECONDS", 0.75)
+# Languages whose FINAL transcript is made by STT_ACCURATE_MODEL directly: measured on synthesized
+# Tamil speech the small model matched the sentence 0.75 against 0.43 for base in the same time.
+# Sinhala is left out on purpose: neither Whisper model could read it (0.16 and 0.13).
+STT_ACCURATE_LANGUAGES = tuple(x.strip() for x in os.environ.get("STT_ACCURATE_LANGUAGES", "ta").split(",") if x.strip())
 # Average log probability of a transcript below which the larger model is
 # asked to check it (closer to 0 means more confident).
 STT_CONFIDENCE_FLOOR = _env_float("STT_CONFIDENCE_FLOOR", -0.40)

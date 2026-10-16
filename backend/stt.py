@@ -110,8 +110,17 @@ def _transcribe_local(audio: np.ndarray, language_hint: Optional[str], final: bo
     asked, gets a second look from the larger model when the main one was
     unsure of it (see STT_ACCURATE_MODEL and STT_CONFIDENCE_FLOOR): most
     turns are clear and pay nothing extra."""
-    text, lang, confidence = _run_whisper(_get_local_model(config.LOCAL_WHISPER_MODEL_SIZE), audio, language_hint)
     accurate = config.STT_ACCURATE_MODEL
+    if final and accurate and language_hint in config.STT_ACCURATE_LANGUAGES:
+        # The final transcript of these languages comes straight from the larger model: running
+        # the small one first and the large one again would only cost more time.
+        try:
+            text, lang, _ = _run_whisper(_get_local_model(accurate), audio, language_hint)
+            if text:
+                return text, lang
+        except Exception as exc:
+            print(f"STT: '{accurate}' failed for {language_hint} ({exc}); using the main model.")
+    text, lang, confidence = _run_whisper(_get_local_model(config.LOCAL_WHISPER_MODEL_SIZE), audio, language_hint)
     if (
         final
         and accurate
@@ -205,12 +214,11 @@ def _emit(audio: np.ndarray, language_hint: Optional[str], final: bool = False) 
 
 # Tuned for ~0.5s audio chunks, matching the chunk size main.py/server.py
 # use when reading from the microphone or WebSocket.
-CHUNK_SECONDS = 0.5
-# ~1s of trailing silence ends an utterance. This used to be 1.5s, which
-# was dead time added to every single turn before the agent even started;
-# 1s still allows a normal breath between phrases.
-SILENCE_CHUNKS_TO_FINALIZE = 2
-REFRESH_CHUNKS = 3  # emit a partial roughly every 1.5s of new speech
+CHUNK_SECONDS = 0.25
+# Trailing silence ends an utterance (STT_SILENCE_SECONDS, 0.75 s by default; it was 1.5 s, then
+# 1 s plus the rounding of 0.5 s chunks). A normal breath between phrases is shorter than that.
+SILENCE_CHUNKS_TO_FINALIZE = max(1, round(config.STT_SILENCE_SECONDS / CHUNK_SECONDS))
+REFRESH_CHUNKS = round(1.5 / CHUNK_SECONDS)  # emit a partial roughly every 1.5s of new speech
 
 
 def transcribe_stream(

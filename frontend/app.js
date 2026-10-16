@@ -17,7 +17,7 @@
  */
 
 const SAMPLE_RATE = 16000;
-const CHUNK_SECONDS = 0.5;
+const CHUNK_SECONDS = 0.25;
 const CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_SECONDS;
 const CALIBRATION_SECONDS = 1.0; // matches backend/server.py's calibration window
 
