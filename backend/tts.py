@@ -119,6 +119,16 @@ def _speak_local(text_input: str, voice_style: str) -> bool:
         voice_id = _LOCAL_FEMALE_VOICE_ID if voice_style == "female_natural" else _LOCAL_MALE_VOICE_ID
         if voice_id:
             engine.setProperty("voice", voice_id)
+        cancel = _current_cancel()
+        if cancel is not None:
+            if cancel.is_set():
+                return True
+
+            def _stop_if_cancelled(*_args, **_kwargs):
+                if cancel.is_set():
+                    engine.stop()
+
+            engine.connect("started-word", _stop_if_cancelled)
         engine.say(text_input)
         engine.runAndWait()
         engine.stop()
@@ -151,10 +161,37 @@ _GOOGLE_CHIRP_VOICE_MAP = {
 _google_tts_client = None
 
 
+# Barge in. speak_stream() runs every play callable on its own thread and records
+# the caller's cancel event here, so the low level players below (which take no
+# arguments) can notice it. Setting the event stops the sound within a few
+# milliseconds and makes speak_stream() drop everything still queued.
+_playback = threading.local()
+_CANCEL_POLL_SECONDS = 0.01
+
+
+def _current_cancel() -> Optional[threading.Event]:
+    return getattr(_playback, "cancel", None)
+
+
 def _play(data, samplerate) -> None:
     import sounddevice as sd
 
+    cancel = _current_cancel()
+    if cancel is not None and cancel.is_set():
+        return
     sd.play(data, samplerate)
+    if cancel is None:
+        sd.wait()
+        return
+    try:
+        duration = len(data) / float(samplerate)
+    except TypeError:
+        duration = 0.0
+    deadline = time.monotonic() + duration + 0.25
+    while time.monotonic() < deadline:
+        if cancel.wait(_CANCEL_POLL_SECONDS):
+            sd.stop()  # flushes what sounddevice still holds for this clip
+            return
     sd.wait()
 
 
@@ -184,18 +221,34 @@ def _play_pcm_stream(first_chunk: bytes, chunks: "queue.Queue", samplerate: int)
     import sounddevice as sd
 
     leftover = b""
+    cancel = _current_cancel()
     with sd.RawOutputStream(samplerate=samplerate, channels=1, dtype="int16") as out:
         item = first_chunk
         while item is not None:
+            if cancel is not None and cancel.is_set():
+                out.abort()  # drops the buffered audio instead of draining it
+                break
             if isinstance(item, Exception):
                 print(f"TTS: Google stream broke part way ({item}).")
                 break
             data = leftover + item
             usable = len(data) - (len(data) % 2)  # whole 16 bit samples only
             if usable:
-                out.write(data[:usable])
+                # Small writes, so a cancel is noticed within about 100 ms of audio.
+                step = 4800
+                for start in range(0, usable, step):
+                    if cancel is not None and cancel.is_set():
+                        break
+                    out.write(data[start : min(start + step, usable)])
             leftover = data[usable:]
-            item = chunks.get()
+            while True:
+                try:
+                    item = chunks.get(timeout=0.05)
+                    break
+                except queue.Empty:
+                    if cancel is not None and cancel.is_set():
+                        item = b""
+                        break
 
 
 def _stream_cloud_google(text_input: str, language: str, voice_style: str) -> Optional[Callable[[], None]]:
@@ -529,6 +582,7 @@ def speak_stream(
     language: str = "en",
     voice_style: str = "female_natural",
     on_sentence_start: Optional[Callable[[str], None]] = None,
+    cancel: Optional[threading.Event] = None,
 ) -> None:
     """Speaks sentences as they arrive from any iterable, including one
     that blocks while the agent is still generating (see server.py).
@@ -537,13 +591,32 @@ def speak_stream(
     the next instead of alternating with it. on_sentence_start, if given,
     is called with each sentence right before its audio starts, which is
     what lets the frontend flip to "speaking" and animate the avatar's
-    mouth in step with the real audio rather than a guess."""
+    mouth in step with the real audio rather than a guess.
+
+    cancel (barge in): when the event is set the sentence that is playing is
+    cut off at once, queued and not yet synthesized sentences are dropped, the
+    source iterable is no longer consumed and the function returns."""
     prepared: "queue.Queue" = queue.Queue(maxsize=2)
     done = object()
+
+    def _cancelled() -> bool:
+        return cancel is not None and cancel.is_set()
+
+    def _put(item) -> bool:
+        while True:
+            if _cancelled():
+                return False
+            try:
+                prepared.put(item, timeout=0.05)
+                return True
+            except queue.Full:
+                continue
 
     def _synthesis_worker():
         try:
             for sentence in sentences:
+                if _cancelled():
+                    break
                 if not sentence or not sentence.strip():
                     continue
                 try:
@@ -551,22 +624,34 @@ def speak_stream(
                 except Exception as exc:
                     print(f"TTS: could not prepare sentence ({exc}).")
                     continue
-                prepared.put((sentence, play))
+                if not _put((sentence, play)):
+                    break
         finally:
-            prepared.put(done)
+            _put(done)  # waits for room; gives up only when cancelled (the player is leaving then)
 
     threading.Thread(target=_synthesis_worker, daemon=True).start()
 
-    while True:
-        item = prepared.get()
-        if item is done:
-            return
-        sentence, play = item
-        if on_sentence_start is not None:
-            on_sentence_start(sentence)
-        start = time.perf_counter()
-        play()
-        print(f"TTS playback ({language}): {time.perf_counter() - start:.2f}s")
+    _playback.cancel = cancel
+    try:
+        while True:
+            if _cancelled():
+                return
+            try:
+                item = prepared.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if item is done:
+                return
+            sentence, play = item
+            if _cancelled():
+                return
+            if on_sentence_start is not None:
+                on_sentence_start(sentence)
+            start = time.perf_counter()
+            play()
+            print(f"TTS playback ({language}): {time.perf_counter() - start:.2f}s")
+    finally:
+        _playback.cancel = None
 
 
 def warm_up() -> None:
@@ -588,6 +673,7 @@ def speak_text(
     language: str = "en",
     voice_style: str = "female_natural",
     on_sentence_start: Optional[Callable[[str], None]] = None,
+    cancel: Optional[threading.Event] = None,
 ) -> None:
     """Speaks an already complete text, sentence by sentence, through the
     same pipelined playback as speak_stream(). Tries, in order: the
@@ -597,7 +683,7 @@ def speak_text(
     spoken English notice for Sinhala or Tamil."""
     if text_input is None or not text_input.strip():
         return
-    speak_stream(_split_sentences(text_input) or [text_input], language, voice_style, on_sentence_start)
+    speak_stream(_split_sentences(text_input) or [text_input], language, voice_style, on_sentence_start, cancel)
 
 
 def _run_standalone_test():

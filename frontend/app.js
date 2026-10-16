@@ -64,6 +64,13 @@ let isMuted = false;
 // all, not just a server side filter on top of an already sent, already
 // ambiguous chunk.
 let audioSendAllowed = false;
+// Barge in over /ws/voice: the server plays the reply on its own speakers, so the
+// microphone is also sent while the status is "speaking" and the server decides
+// (stricter VAD, see backend/vad.py BargeInDetector) whether the user really
+// talks over it. Not before the first customer turn (the introduction and the
+// calibration must stay clean) and not for the canned closing lines.
+let bargeInReady = false;
+let bargeInBlocked = false;
 let currentPartialBubble = null;
 let selectedLanguage = null;
 let selectedMode = null; // "voice" | "chat", set when leaving the select screen
@@ -643,7 +650,10 @@ window.addEventListener("mousemove", (event) => {
 });
 
 function setStatus(state) {
-  audioSendAllowed = state === "listening" || state === "calibrating";
+  audioSendAllowed =
+    state === "listening" ||
+    state === "calibrating" ||
+    (state === "speaking" && bargeInReady && !bargeInBlocked && Boolean(socket) && !livekitSession && !liveSession);
   // Drives the flat CSS avatar's mouth/ring/waveform styling (see style.css's
   // .bot.state-* rules) by replacing only the state-* class, so the has-3d
   // class bot3d.js adds (see bot3d.js) survives every status change.
@@ -835,11 +845,13 @@ function handleServerMessage(event) {
       finalizePartial(payload.text);
       rememberTurn("Customer", payload.text);
       sessionTurns.voice += 1;
+      bargeInReady = true;
       break;
     case "agent_response_chunk":
       updateStreamingReply(payload.text);
       break;
     case "agent_response":
+      bargeInBlocked = payload.mode === "closing" || payload.mode === "Introduction";
       finalizeStreamingReply(payload.text, payload.mode);
       if (window.SLTConfirm) SLTConfirm.setStatus(null);
       if (window.SltUi && window.SltUi.dashboard && payload.mode) {
@@ -870,6 +882,11 @@ function handleServerMessage(event) {
       {
         const avatar = newAvatar();
         if (avatar) avatar.stop();
+      }
+      // The reply that was cut off stays on screen as it was when it stopped.
+      if (currentStreamingReplyBubble) {
+        currentStreamingReplyBubble.classList.remove("bubble-partial");
+        currentStreamingReplyBubble = null;
       }
       break;
     case "user_name":
@@ -985,7 +1002,11 @@ async function startConversation(greet = false, handover = false) {
   }
 
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    bargeInReady = false;
+    bargeInBlocked = false;
   } catch (err) {
     setCaption(tr("voice.mic_denied"));
     setStatus("error");

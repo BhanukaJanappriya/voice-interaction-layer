@@ -126,7 +126,7 @@ from tts import SentenceChunker, speak_stream, speak_text
 from tts import precache as precache_speech
 from tts import warm_up as warm_up_tts
 from tts import status as speech_status
-from vad import SAMPLE_RATE, VoiceActivityDetector
+from vad import SAMPLE_RATE, BargeInDetector, VoiceActivityDetector
 from voicekit.api import create_router as create_voicekit_router
 from voicekit.settings import VoicekitSettings
 
@@ -572,6 +572,7 @@ async def _run_one_utterance(
     language_hint: Optional[str],
     vad: VoiceActivityDetector,
     voice_holder: Optional[dict] = None,
+    seed: Optional[np.ndarray] = None,
 ):
     """Streams audio chunks from the websocket into transcribe_stream()
     running on a background thread, forwarding each partial or final event
@@ -579,6 +580,13 @@ async def _run_one_utterance(
     (final_text, detected_language, session_ended)."""
     loop = asyncio.get_running_loop()
     chunk_source = _ChunkQueueSource()
+    if seed is not None and seed.size:
+        # Barge in: the audio that interrupted the reply (about the last 400 ms
+        # plus the confirming speech) opens the utterance, cut into the usual
+        # chunk size, so the first word is not lost.
+        step = int(SAMPLE_RATE * 0.25)
+        for start in range(0, seed.size, step):
+            chunk_source.put(seed[start : start + step])
     event_queue: "asyncio.Queue" = asyncio.Queue()
     worker_done = threading.Event()
 
@@ -669,7 +677,7 @@ def _status_text(key: Optional[str], language: Optional[str]) -> Optional[str]:
 
 
 async def _stream_agent_reply(
-    text_input: str, user_name: Optional[str], language: Optional[str], access=None, websocket=None
+    text_input: str, user_name: Optional[str], language: Optional[str], access=None, websocket=None, cancel=None
 ):
     """Runs orchestrator.respond_stream() (agent.py) on a background
     thread and yields each text chunk as it arrives, bridged into the
@@ -694,12 +702,22 @@ async def _stream_agent_reply(
             )
 
     def _worker():
+        generator = None
         try:
-            for chunk in orchestrator.respond_stream(text_input, user_name, language, access=access, status_cb=_status):
+            generator = orchestrator.respond_stream(text_input, user_name, language, access=access, status_cb=_status)
+            for chunk in generator:
+                if cancel is not None and cancel.is_set():
+                    break  # barge in: stop pulling, which closes the model stream below
                 loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
         except Exception as exc:
             loop.call_soon_threadsafe(chunk_queue.put_nowait, exc)
         finally:
+            close = getattr(generator, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception:  # noqa: BLE001
+                    pass
             loop.call_soon_threadsafe(chunk_queue.put_nowait, None)
 
     threading.Thread(target=_worker, daemon=True).start()
@@ -823,6 +841,7 @@ async def _speak_streamed_reply(
     language: Optional[str],
     voice_style: str = DEFAULT_VOICE_STYLE,
     access=None,
+    barge: Optional[dict] = None,
 ) -> tuple[str, float, Optional[float]]:
     """Generates the agent's reply and speaks it at the same time. Each
     sentence goes to TTS the moment the agent finishes writing it, so the
@@ -832,29 +851,84 @@ async def _speak_streamed_reply(
     the length of its answer.
 
     Returns (reply_text, agent_seconds, first_audio_at), the last being
-    the wall clock time audio started, or None if nothing was spoken."""
+    the wall clock time audio started, or None if nothing was spoken.
+
+    Barge in: pass a dict with the session's calibrated "vad" as `barge`. While
+    the reply is spoken the microphone audio the page keeps sending is checked
+    by a BargeInDetector (stricter than the normal end of speech detection, see
+    vad.py). When the user really starts talking, playback stops at once and
+    queued sentences are dropped, the model stream and the TTS are cancelled,
+    {"type": "interrupt"} is sent (the page already handles it) and the audio
+    that interrupted is stored in barge["seed"] for the next utterance. If the
+    client ended the session meanwhile, barge["ended"] is set instead."""
     loop = asyncio.get_running_loop()
     announcer = _SentenceAnnouncer(websocket, loop)
     sentence_source = _ChunkQueueSource()
     chunker = SentenceChunker()
+
+    cancel = None
+    detector = None
+    if barge is not None and _barge_in_available(barge.get("vad")):
+        cancel = threading.Event()
+        detector = BargeInDetector(barge["vad"])
+    tts_kwargs = {"cancel": cancel} if cancel is not None else {}
     tts_task = loop.run_in_executor(
-        None, speak_stream, sentence_source, language or "en", voice_style, announcer
+        None,
+        functools.partial(speak_stream, sentence_source, language or "en", voice_style, announcer, **tts_kwargs),
     )
+    monitor = None
+    if detector is not None:
+        monitor = asyncio.ensure_future(
+            _watch_for_barge_in(websocket, detector, announcer, barge.get("voice_holder"))
+        )
 
     agent_start = time.time()
     reply_text = ""
-    try:
-        async for chunk in _stream_agent_reply(text_input, user_name, language, access, websocket):
-            reply_text += chunk
-            await _send_json(websocket, {"type": "agent_response_chunk", "text": reply_text})
-            for sentence in chunker.feed(chunk):
+
+    async def _generate():
+        nonlocal reply_text
+        try:
+            async for chunk in _stream_agent_reply(text_input, user_name, language, access, websocket, cancel):
+                reply_text += chunk
+                await _send_json(websocket, {"type": "agent_response_chunk", "text": reply_text})
+                for sentence in chunker.feed(chunk):
+                    sentence_source.put(_for_speech(sentence, language, announcer))
+        except Exception as exc:
+            await _send_json(websocket, {"type": "error", "message": f"Agent error: {exc}"})
+        finally:
+            for sentence in chunker.flush():
                 sentence_source.put(_for_speech(sentence, language, announcer))
-    except Exception as exc:
-        await _send_json(websocket, {"type": "error", "message": f"Agent error: {exc}"})
-    finally:
-        for sentence in chunker.flush():
-            sentence_source.put(_for_speech(sentence, language, announcer))
+            sentence_source.close()
+
+    async def _barge_in(outcome) -> None:
+        """Stops everything for this turn: the model stream, the synthesis and
+        the playback (flushed), then tells the page."""
+        cancel.set()
+        if not generation.done():
+            generation.cancel()
+            try:
+                await generation
+            except BaseException:  # noqa: BLE001  cancelled on purpose
+                pass
         sentence_source.close()
+        try:
+            await tts_task  # returns within about 100 ms, cancel is set
+        except Exception:  # noqa: BLE001
+            pass
+        kind, seed = outcome
+        if kind == "barge":
+            barge["seed"] = seed
+            await _send_json(websocket, {"type": "interrupt"})
+        else:
+            barge["ended"] = True
+
+    generation = asyncio.ensure_future(_generate())
+    if monitor is not None:
+        await asyncio.wait({generation, monitor}, return_when=asyncio.FIRST_COMPLETED)
+        if monitor.done():
+            await _barge_in(monitor.result())
+            return reply_text, time.time() - agent_start, announcer.first_audio_at
+    await generation
     agent_time = time.time() - agent_start
 
     if reply_text:
@@ -869,11 +943,63 @@ async def _speak_streamed_reply(
             await _send_json(websocket, {"type": "confirmation", "confirmation": pending})
 
     try:
+        if monitor is not None:
+            await asyncio.wait({tts_task, monitor}, return_when=asyncio.FIRST_COMPLETED)
+            if monitor.done():
+                await _barge_in(monitor.result())
+                return reply_text, agent_time, announcer.first_audio_at
+            monitor.cancel()
+            try:
+                await monitor
+            except BaseException:  # noqa: BLE001
+                pass
         await tts_task
     except Exception as exc:
         await _send_json(websocket, {"type": "error", "message": f"TTS error: {exc}"})
     await _send_json(websocket, {"type": "speaking_done"})
     return reply_text, agent_time, announcer.first_audio_at
+
+
+def _barge_in_available(vad) -> bool:
+    """True for the real calibrated detector. Test doubles without the WebRTC
+    classifier and the noise floor keep the old behaviour (no barge in)."""
+    return vad is not None and hasattr(vad, "_vad") and hasattr(vad, "noise_floor_rms")
+
+
+async def _watch_for_barge_in(websocket: WebSocket, detector, announcer, voice_holder: Optional[dict]):
+    """Reads the microphone chunks the page keeps sending while the reply is
+    spoken. Returns ("barge", seed_audio) when the user really started talking,
+    or ("ended", None) when the client ended the session or the socket closed.
+    Nothing is judged before the first audio has actually started."""
+    armed = False
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                return "ended", None
+            data = message.get("bytes")
+            if data is not None:
+                if announcer.first_audio_at is None:
+                    continue
+                if not armed:
+                    detector.reset()
+                    armed = True
+                seed = detector.feed(np.frombuffer(data, dtype=np.float32))
+                if seed is not None:
+                    return "barge", seed
+            elif message.get("text") is not None:
+                try:
+                    payload = json.loads(message["text"])
+                except ValueError:
+                    continue
+                if payload.get("type") == "end_session":
+                    return "ended", None
+                if payload.get("type") == "set_voice" and voice_holder is not None:
+                    voice_holder["voice_style"] = _valid_voice_style(payload.get("voice_style"))
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001  a closed socket raises on receive
+        return "ended", None
 
 
 @app.websocket("/ws/voice")
@@ -966,13 +1092,17 @@ async def voice_ws(websocket: WebSocket):
     # _sounds_negative above) or was a false alarm, in which case it is
     # answered normally instead.
     awaiting_close_confirmation = False
+    pending_seed = None  # the speech that interrupted the last reply (barge in)
 
     try:
         while True:
             turn_start = time.time()
             await _send_json(websocket, {"type": "status", "state": "listening"})
 
-            final_text, detected_language, session_ended = await _run_one_utterance(websocket, language_hint, vad, voice_holder)
+            final_text, detected_language, session_ended = await _run_one_utterance(
+                websocket, language_hint, vad, voice_holder, seed=pending_seed
+            )
+            pending_seed = None
 
             if session_ended:
                 return
@@ -1022,9 +1152,16 @@ async def voice_ws(websocket: WebSocket):
                 continue
 
             await _send_json(websocket, {"type": "status", "state": "thinking"})
+            barge = {"vad": vad, "voice_holder": voice_holder}
             reply_text, agent_time, first_audio_at = await _speak_streamed_reply(
-                websocket, final_text, user_name, reply_language, voice_holder["voice_style"], access_context
+                websocket, final_text, user_name, reply_language, voice_holder["voice_style"], access_context, barge
             )
+            if barge.get("ended"):
+                return
+            if barge.get("seed") is not None:
+                pending_seed = barge["seed"]
+                print("Barge in: the reply was cut off, listening with the interrupting speech.")
+                continue
             if not reply_text:
                 continue
 

@@ -91,6 +91,104 @@ class VoiceActivityDetector:
         return speech_frames / num_frames >= 0.5
 
 
+# Barge in while the server itself is playing the reply (/ws/voice). The sound
+# comes out of the machine's own speakers, so the browser's echo cancellation has
+# no reference signal and cannot remove it. The guard is therefore stricter than
+# the normal end of speech detection: a frame must be well above the calibrated
+# floor (the floor is already 2.5x the room's own level) and the speech must run
+# for a while before anything is cut off.
+BARGE_ENERGY_MARGIN = 2.0  # frame RMS must be this many times the calibrated floor
+BARGE_MIN_RMS = 0.02  # and never below this absolute level (a quiet room has a tiny floor)
+BARGE_CONFIRM_MS = 300  # continuous speech needed before the reply is cut off
+BARGE_GAP_FRAMES = 3  # up to 90 ms of quiet inside a word does not restart the count
+BARGE_PREROLL_MS = 150  # audio kept from before the first speech frame
+BARGE_HISTORY_MS = 2000
+
+
+class BargeInDetector:
+    """Decides whether the user really started talking over the assistant.
+
+    feed() takes the microphone chunks (any length, float32 mono, SAMPLE_RATE)
+    and returns None until the speech has run for confirm_ms, then the audio to
+    start the next utterance with: from preroll_ms before the first speech
+    frame up to the end of the chunk that confirmed it, so the first word is
+    not lost. Only frames that clear BOTH the stricter energy margin and the
+    WebRTC classifier count, so the assistant's own voice coming back through
+    the microphone and steady noise do not trigger it."""
+
+    def __init__(
+        self,
+        vad: "VoiceActivityDetector",
+        confirm_ms: int = BARGE_CONFIRM_MS,
+        energy_margin: float = BARGE_ENERGY_MARGIN,
+        min_rms: float = BARGE_MIN_RMS,
+        gap_frames: int = BARGE_GAP_FRAMES,
+        preroll_ms: int = BARGE_PREROLL_MS,
+    ):
+        self._vad = vad
+        self._need_frames = max(1, round(confirm_ms / FRAME_MS))
+        self._margin = energy_margin
+        self._min_rms = min_rms
+        self._gap_frames = gap_frames
+        self._preroll = int(SAMPLE_RATE * preroll_ms / 1000)
+        self._max_history = int(SAMPLE_RATE * BARGE_HISTORY_MS / 1000)
+        self.reset()
+
+    def reset(self) -> None:
+        self._history = np.zeros(0, dtype=np.float32)
+        self._carry = np.zeros(0, dtype=np.float32)
+        self._frames_total = 0  # frames examined since reset (for the position of the run start)
+        self._run_frames = 0
+        self._gap = 0
+        self._run_start_frame: Optional[int] = None
+        self._dropped = 0  # samples trimmed from the front of the history
+
+    @property
+    def threshold_rms(self) -> float:
+        return max(self._vad.noise_floor_rms * self._margin, self._min_rms)
+
+    def _frame_is_speech(self, frame: np.ndarray) -> bool:
+        rms = float(np.sqrt(np.mean(np.square(frame))))
+        if rms < self.threshold_rms:
+            return False
+        pcm16 = np.clip(frame * 32768.0, -32768, 32767).astype(np.int16)
+        return bool(self._vad._vad.is_speech(pcm16.tobytes(), SAMPLE_RATE))
+
+    def feed(self, chunk: np.ndarray) -> Optional[np.ndarray]:
+        if chunk is None or chunk.size == 0:
+            return None
+        self._history = np.concatenate([self._history, chunk])
+        data = np.concatenate([self._carry, chunk])
+        usable = (data.size // FRAME_SAMPLES) * FRAME_SAMPLES
+        self._carry = data[usable:]
+        triggered = False
+        for i in range(0, usable, FRAME_SAMPLES):
+            frame = data[i : i + FRAME_SAMPLES]
+            if self._frame_is_speech(frame):
+                if self._run_start_frame is None:
+                    self._run_start_frame = self._frames_total
+                self._run_frames += 1
+                self._gap = 0
+            elif self._run_start_frame is not None:
+                self._gap += 1
+                if self._gap > self._gap_frames:
+                    self._run_frames, self._gap, self._run_start_frame = 0, 0, None
+            self._frames_total += 1
+            if self._run_frames >= self._need_frames:
+                triggered = True
+                break
+        if triggered:
+            start = self._run_start_frame * FRAME_SAMPLES - self._preroll - self._dropped
+            seed = self._history[max(0, start) :].copy()
+            self.reset()
+            return seed
+        if self._history.size > self._max_history:
+            cut = self._history.size - self._max_history
+            self._history = self._history[cut:]
+            self._dropped += cut
+        return None
+
+
 _denoise_import_failed = False
 
 
