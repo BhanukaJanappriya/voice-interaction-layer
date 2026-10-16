@@ -843,13 +843,16 @@ software renderer, so it is not the default.
 
 **Port.** The app always runs on port 8000 and on no other: `python -m backend` and `scripts\start.ps1` have no port option, and if 8000 is already in use the app says so and stops instead of choosing another port (stop the older copy, or run `scripts\stop.ps1`).
 
-**How questions are answered (2026-10-16).** A question about SLT or telecom (packages, bills, lines, connections, coverage,
-contacts and the like) is answered only from the SLT MCP hub, in a warm customer care voice: a friendly opening, each item
-in plain words with its price and the useful detail, and a follow up question; when the hub knows nothing the reply is the
-fixed text with the official numbers. A general question with nothing to do with telecom (a capital city, a fun fact, study
-tips) is answered politely from general knowledge, ending with an offer to help with SLT services; such an answer never
-states SLT packages, prices, coverage or contact details from memory. The sign in code goes through the hub by default
-(`VERIFY_OTP_BACKEND` empty means hub when the hub is the only source of answers): the hub validates the number, sends the
-code to the customer's registered mobile or e-mail and checks it.
+**How questions are answered (2026-10-16).** A question about SLT or telecom (packages, bills, lines, connections, coverage, contacts and the like) is answered only from the SLT MCP hub, in a warm customer care voice: a friendly opening, each item in plain words with its price and the useful detail, and a follow up question; when the hub knows nothing the reply is the fixed text with the official numbers. A guest who asks about anything that is not SLT (the weather, other companies, general knowledge, coding help) is politely declined with a fixed text that offers help with SLT services; nothing outside the hub is answered from the model's memory or the web. The sign in code goes through the hub by default (`VERIFY_OTP_BACKEND` empty means hub when the hub is the only source of answers): the hub validates the number, sends the code to the customer's registered mobile or e-mail and checks it.
 
 **Sign in by code and the customer's name.** The wizard asks for the registered mobile number, lets the customer choose where the code goes (the registered mobile by SMS or the registered e-mail; the hub sends one channel per request and the masked mobile or e-mail it returns is shown), and the customer types the code they received. The hub checks the code; the customer is then greeted by the name the hub holds for the number. The hub's verify answer has no name, so after the sign in the name is looked up in the answers of the read only customer tools (`mcp_gateway/profile.py`, at most `HUB_NAME_LOOKUP_SECONDS`, 6 by default); without one, the name typed in the wizard is used, then a neutral word.
+
+**Interrupting the assistant.** Speaking over a reply stops it at once on every voice path: playback is flushed, the model and speech
+generation for that turn are cancelled, the avatar goes back to listening and the next utterance starts with the audio that triggered
+it. On the plain WebSocket path (the server plays the sound) the page now keeps sending the microphone while the assistant speaks and the
+server only counts real speech (300 ms continuous, at least twice the room's calibrated noise and not below 0.02 RMS), so noise, a cough
+or the assistant's own echo do not cut it off. Headphones are best on that path.
+
+**Typing Sinhala with Latin letters.** In the chat box, when the page language is Sinhala, text typed in Latin letters turns into Sinhala as
+you type (Helakuru style: `kohomada` gives කොහොමද), backspace removes a whole letter with its signs, and a small button next to the box
+turns it off. `frontend/singlish.js` is an own mapping table (no third party code); the typing guide is at the top of the file.

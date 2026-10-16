@@ -692,3 +692,13 @@ python: voice_router {Tier, VoiceRouter, Outcome, classify, get_router, build_ha
     voicekit.normalizer_adapter.prepare_for_tts(text, language, tier)
 frontend: window.LiveVoice {tier(baseUrl), connect(options)}, window.SltFormat (number, integer, percent, currency, date, time, duration)
 i18n keys added: voice.reconnecting, voice.mode.gemini_live ({model}), voice.mode.livekit, voice.mode.local and the keys listed in docs/patches/D_i18n_keys.json
+
+Additions of 2026-10-16 (Gemini model, barge in, Singlish typing, guest decline).
+
+GET /health: cloud_llm_last_error is the legacy provider error, else the last error of the provider's tier in llm_chain; cloud_llm_model is GEMINI_MODEL (default gemini-flash-latest)
+tts.speak_stream(..., cancel: threading.Event = None) and tts.speak_text(..., cancel=None): setting the event flushes playback and drops queued sentences
+vad.BargeInDetector: used while the agent speaks; constants BARGE_* at the top of vad.py (margin 2.0, minimum RMS 0.02, confirm 300 ms)
+/ws/voice: the page sends microphone chunks also while status is speaking; the existing {"type":"interrupt"} event stops the reply
+frontend: window.SltSinglish {enable(input), disable(), isEnabled(), convert(latin), attach, detach, toggle}, button #singlish-toggle, localStorage key slt.singlish
+i18n keys: tool_agent.off_topic (backend), chat.singlish.on and chat.singlish.off (frontend)
+tool_agent: a non SLT question the hub has no text on returns kind canned with tool_agent.off_topic (no model call)

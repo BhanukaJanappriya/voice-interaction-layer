@@ -968,14 +968,22 @@ people, so real accuracy will differ. The 3D avatar renders at 30 frames a secon
 drawing when it is not visible (this was already so); it was only timed on a software renderer, so smoothness on a real GPU
 was not measured. The first visit downloads the female model (37 MB for the original female model).
 
-**General questions (2026-10-16).** Whether a question is about SLT is decided by word lists in English, Sinhala, Tamil and
-the Latin letter forms (`tool_agent/topic.py`), and only when the hub found nothing relevant. A telecom question that uses none
-of the listed words gets a general answer instead of the fixed hub text, and a general question that contains one of them
-(for example "line") gets the fixed text. General answers come from the language model's memory and can be wrong; the model is
-told to say so when unsure and to keep SLT facts out. The model writes weak Sinhala in free answers (a general Sinhala answer
-was poor in the live test), better in Tamil and English. The output filter removes an invented hotline in the English and
-Sinhala word orders tested; it cannot catch every phrasing. The sign in code was only sent live once with the owner's own
-number earlier in this project; a re-run now was limited to checks that send nothing (a malformed number is refused with 422 by the
-app and by the hub) so as not to message a real customer.
+**Off topic questions (2026-10-16).** Whether a question is about SLT is decided by word lists in English, Sinhala, Tamil and the Latin letter forms (`tool_agent/topic.py`), and only when the hub found nothing relevant: an SLT or telecom question with nothing in the hub gets the fixed "could not find, call 1212" text, any other question gets the fixed polite decline (`tool_agent.off_topic`, no model). A telecom question that uses none of the listed words is declined as off topic, and a general question that contains one of them (for example "line") gets the not found text. When the hub does return a loosely related excerpt for an off topic question the model is instructed to decline, which it did in the live Sinhala weather test but is not guaranteed. The Sinhala and Tamil decline texts are machine written. This replaces the earlier behaviour (general knowledge answers) at the owner's choice. The output filter removes an invented hotline in the English and Sinhala word orders tested; it cannot catch every phrasing. The sign in code was only sent live once with the owner's own number earlier in this project; a re-run was limited to checks that send nothing.
 
 **The hub's name for the customer (2026-10-16).** Which hub tool carries the customer's name, and in which field, was NOT confirmed against the real hub: the only live sign in (one earlier test) showed that the verify answer has none and the test line's `show_service_detail` failed with a 405 from the hub's own backend. The lookup therefore reads any field that looks like the customer's own name in a few read only tool answers and ignores package, service, bank and similar names. If the hub offers no name anywhere, the lookup rests for 30 minutes after two sign ins in a row, and customers are greeted by the name they typed in the wizard. A second live sign in to settle this was started and stopped because the phone was not at hand. The hub sends the code over one channel per request, so "SMS and e-mail at the same time" is not offered; whether two requests in a row keep both codes valid was not tested.
+
+**Gemini model (2026-10-16).** `gemini-2.5-flash` answers 404 "no longer available to new users" for this key, so `GEMINI_MODEL` is the
+alias `gemini-flash-latest` (it resolves; `/health` `cloud_llm_model` shows it and `cloud_llm_last_error` shows the Gemini tier's last
+error from the chain, with the existing reason wording). The key still has no prepayment credit, so Gemini returns 402 and the chain
+answers from LiveKit Inference; no Gemini answer has been produced here. Only the AI Studio API key is used.
+
+**Interrupting (2026-10-16).** Measured with synthetic audio only, no real microphone or speakers: the plain WebSocket path stops about
+500 ms of audio after speech starts (300 ms of confirmation plus the 250 ms chunk), worst case about 550 ms, and the playback stops in under
+5 ms after that plus the device buffer. Real speaker echo on a laptop may exceed the threshold and cut replies off (raise
+`BARGE_ENERGY_MARGIN` in `backend/vad.py`); steady loud noise above about 0.05 RMS is only held back by the energy margin; Azure speech
+stops at the next sentence, not mid sentence; the model stream stops at its next token; LiveKit still uses its 200 ms rule and relies on
+the browser's echo cancellation.
+
+**Singlish typing (2026-10-16).** Own mapping table, no third party code (the npm packages `singlish-sinhala` and `singlish-pro` are MIT
+but need WASM or extra dependencies). `nk` and `ng` always give the anusvara, so ඟ needs `nG`. Android keyboards that use composition
+events do not convert; undo (Ctrl+Z) after a conversion was not tested; the Sinhala and Tamil labels of the toggle are machine written.
