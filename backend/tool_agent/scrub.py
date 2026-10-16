@@ -27,6 +27,10 @@ _CALL_WORD = (
     r"|அழை|அழைக்க|ஹாட்லைன்|எண்|தொடர்பு|டயல்)"
 )
 _SHORT_CODE = re.compile(rf"(?i){_CALL_WORD}\W{{0,24}}?(\d{{3,5}})(?!\d)")
+# The number first and the call word after it ("1717 අමතන්න", "dial 1717" in Sinhala word order).
+_SHORT_CODE_AFTER = re.compile(rf"(?i)(?<!\d)(\d{{3,5}})\W{{0,24}}?{_CALL_WORD}")
+# A list of codes after a call word: "call 1212 or 1717", "1212 හෝ 1717 අමතන්න".
+_SHORT_CODE_LIST = re.compile(rf"(?i){_CALL_WORD}\W{{0,24}}?\d{{3,5}}(?:\s*(?:,|or|and|හෝ|සහ|அல்லது|மற்றும்)\s*(?<!\d)\d{{3,5}}(?!\d))+")
 _BOUNDARY = re.compile(r"(?<=[.!?।\n])\s+|\n+")
 
 
@@ -51,7 +55,8 @@ def _offending(sentence: str, haystack: str, official_digits: set) -> bool:
         digits = _digits(found)
         if digits not in official_digits and digits.lstrip("0") not in haystack.replace(" ", ""):
             return True
-    for code in _SHORT_CODE.findall(sentence):
+    listed = [n for m in _SHORT_CODE_LIST.finditer(sentence) for n in re.findall(r"(?<!\d)\d{3,5}(?!\d)", m.group(0))]
+    for code in _SHORT_CODE.findall(sentence) + _SHORT_CODE_AFTER.findall(sentence) + listed:
         if code not in official_digits and code not in haystack:
             return True
     return False
