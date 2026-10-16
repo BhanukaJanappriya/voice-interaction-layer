@@ -159,6 +159,7 @@ class MockHub:
         self.customer_products: dict[str, str] = {FIBRE_NUMBER: "postpaid", LTE_NUMBER: "lte_prepaid"}
         self.customer_tool_errors: dict[str, str] = {}  # tool name -> error text to raise
         self.customer_tool_delays: dict[str, float] = {}  # tool name -> seconds to wait
+        self.customer_names: dict[str, str] = {}  # national number -> the name show_service_detail reports
         self.customer_payloads: dict[str, str] = {}  # tool name -> raw reply text instead of the fake JSON
         # Counters.
         self.requests = 0
@@ -413,7 +414,8 @@ class MockHub:
             {"status": "success", "serviceType": "LTE", "accountType": "Prepaid", "serviceStatus": "Active",
              "package": "LTE Prepaid Super"} if p == lte else
             {"status": "success", "serviceType": "Fibre", "accountType": "Postpaid", "serviceStatus": "Active",
-             "package": "Fibre Unlimited 60", "speed": "100 Mbps"}), "Service details.")
+             "package": "Fibre Unlimited 60", "speed": "100 Mbps",
+             **({"customerName": hub.customer_names[n]} if n in hub.customer_names else {})}), "Service details.")
         simple("show_fault_list", None, lambda n, p: {"status": "success", "faults": [
             {"faultId": "F-1001", "status": "Closed", "nature": "No internet", "loggedOn": "2026-09-02"}]}, "Faults.")
         simple("show_lte_subscriber_status", lte, lambda n, p: {

@@ -612,3 +612,48 @@ def test_local_mode_is_unchanged_by_the_new_code(verification, monkeypatch):
     from verification import hub_mode
 
     assert hub_mode.active() is False
+
+
+# The name comes from the hub after the sign in (the verify answer has none)
+
+def test_the_customer_is_called_by_the_name_the_hub_holds(api, hub, monkeypatch):
+    import config
+    from mcp_gateway import profile
+
+    monkeypatch.setattr(config, "HUB_NAME_LOOKUP_SECONDS", 6)
+    profile.reset()
+    hub.otp_customers = {KNOWN_NATIONAL: {"name": None, "masked": "07X XXX X567"}}
+    hub.customer_names[KNOWN_NATIONAL] = "Kamala Silva"
+    try:
+        sent = start(api, name="Typed Name")
+        done = verify(api.client, sent["challenge_id"], hub.otp_code)
+        assert done.status_code == 200
+        assert done.json()["display_name"] == "Kamala Silva", "the hub's name wins over the typed one"
+        assert any(c[0] == "show_service_detail" for c in hub.tool_calls), "asked on the signed in connection"
+    finally:
+        hub.customer_names.clear()
+
+
+def test_without_a_hub_name_the_typed_name_is_used(api, hub, monkeypatch):
+    import config
+    from mcp_gateway import profile
+
+    monkeypatch.setattr(config, "HUB_NAME_LOOKUP_SECONDS", 6)
+    profile.reset()
+    hub.otp_customers = {KNOWN_NATIONAL: {"name": None, "masked": "07X XXX X567"}}
+    hub.customer_names.clear()
+    sent = start(api, name="Typed Name")
+    assert verify(api.client, sent["challenge_id"], hub.otp_code).json()["display_name"] == "Typed Name"
+
+
+def test_the_name_lookup_can_be_switched_off(api, hub, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "HUB_NAME_LOOKUP_SECONDS", 0)
+    hub.otp_customers = {KNOWN_NATIONAL: {"name": None, "masked": "07X XXX X567"}}
+    hub.customer_names[KNOWN_NATIONAL] = "Kamala Silva"
+    try:
+        sent = start(api, name="Typed Name")
+        assert verify(api.client, sent["challenge_id"], hub.otp_code).json()["display_name"] == "Typed Name"
+    finally:
+        hub.customer_names.clear()

@@ -405,6 +405,9 @@ KB_MIN_SCORE = _env_float("KB_MIN_SCORE", 0.40)
 KB_MAX_CHARS = _env_int("KB_MAX_CHARS", 4000)
 # Warm shared hub connections for the public read only tools (mcp_gateway/warm.py): a guest's question
 # then skips the connect, initialise and slow first call (measured 2 to 4 s on the live hub).
+# After a hub sign in the customer's name is looked for in the read only customer tools' answers (the verify
+# answer has none), for at most this many seconds; 0 turns the lookup off (mcp_gateway/profile.py).
+HUB_NAME_LOOKUP_SECONDS = float(os.environ.get("HUB_NAME_LOOKUP_SECONDS", "").strip() or 6)
 HUB_WARM_SHARED = os.environ.get("HUB_WARM_SHARED", "true").strip().lower() in ("1", "true", "yes")
 HUB_WARM_POOL_SIZE = int(os.environ.get("HUB_WARM_POOL_SIZE", "").strip() or 3)
 HUB_WARM_IDLE_SECONDS = float(os.environ.get("HUB_WARM_IDLE_SECONDS", "").strip() or 300)

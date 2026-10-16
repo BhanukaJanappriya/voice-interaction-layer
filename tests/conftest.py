@@ -65,6 +65,9 @@ TEST_ENV = {
     # The wizard's one time codes: local in the older suites whatever backend/.env says; the tests of the
     # hub mode set it themselves.
     "VERIFY_OTP_BACKEND": "local",
+    # The customer name lookup after a hub sign in adds hub calls; the suites that count calls leave it off and
+    # the tests of the lookup turn it on themselves.
+    "HUB_NAME_LOOKUP_SECONDS": "0",
     # Never download the 490 MB Sinhala speech model from a test run.
     "STT_SINHALA_AUTO_DOWNLOAD": "false",
     "MCP_HUB_API_KEY": "",

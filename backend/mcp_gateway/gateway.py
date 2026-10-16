@@ -524,6 +524,14 @@ def finish_login(phone_national: str, hub_session_id: str, code: str) -> LoginRe
         audit.record(national, tool, "ok", _ms(started))
         _last_error = None
         name = next((str(data[k]) for k in ("name", "subscriber_name", "customer_name") if data.get(k)), None)
+        if not name and config.HUB_NAME_LOOKUP_SECONDS > 0:
+            # The verify answer has no name: ask the customer's own read only tools (bounded, best effort).
+            try:
+                from . import profile
+
+                name = profile.fetch_name(entry.session, national, config.HUB_NAME_LOOKUP_SECONDS)
+            except Exception:  # noqa: BLE001
+                name = None
         return LoginResult(True, "", name, bool(data.get("subscriber_id")))
     message = str(data.get("error") or "") if isinstance(data, dict) else output.text
     lowered = message.lower()
