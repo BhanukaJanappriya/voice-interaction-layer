@@ -961,8 +961,9 @@ until they are ready and falls back to it on any failure.
 connection, and it stalled for 8 s or more on some calls. The text model is the second part (1.4 to 2 s to the first
 words through LiveKit Inference; the Gemini key has no credit, so the Gemini tier answers nothing and the chain skips it
 after one failed call every 5 minutes). Speech output starts 0.7 to 2 s after the first sentence (edge-tts). Speech to
-text for Sinhala is unreliable on the local models (see ARCHITECTURE.md) and cloud speech to text is not usable until the
-Google Cloud Speech to Text API is enabled. The test numbers for Tamil and Sinhala came from synthesized speech, not from
+text for Sinhala now uses a fine tuned model (see ARCHITECTURE.md): its licence is not stated on its model page, it is slower
+than English (about 1.6 s for a short question), shows no live partial text, and was only measured on synthesized speech.
+Cloud speech to text is still not usable until the Google Cloud Speech to Text API is enabled. The test numbers for Tamil and Sinhala came from synthesized speech, not from
 people, so real accuracy will differ. The 3D avatar renders at 30 frames a second with the pixel ratio capped at 2 and stops
 drawing when it is not visible (this was already so); it was only timed on a software renderer, so smoothness on a real GPU
 was not measured. The first visit downloads the female model (37 MB for the original female model).

@@ -177,6 +177,13 @@ Rejected (add if absent, all already in the file or the evaluation): MMS-TTS Sin
 | Blender | 5.2.2 LTS | Runs `build_avatar.py` (bpy, glTF importer and exporter) | https://www.blender.org | GPL-3.0, output is the author's | none | yes for output | Installed | Build tool, not shipped |
 | meshoptimizer (EXT_meshopt_compression, inside Blender's exporter) | bundled with Blender 5.2 | Shrinks `female_sl.glb` from about 9.3 MB to 7.4 MB | https://github.com/zeux/meshoptimizer | MIT | keep notice if redistributed | yes | bundled | Used for `female_sl.glb`; the decoder is already vendored (`vendor/three/examples/jsm/libs/meshopt_decoder.module.js`) and TalkingHead registers it |
 
+### Sinhala speech to text model
+
+| Name | Version | Used for | Source | Licence | Attribution required | Commercial use OK | How obtained | Status |
+|-|-|-|-|-|-|-|-|-|
+| `janiduchamika/faster-whisper-small-sinhala-ct2-float16` | 489 MB, CTranslate2 float16, run as int8 on the CPU | Speech to text for Sinhala (final transcripts only) | https://huggingface.co/janiduchamika/faster-whisper-small-sinhala-ct2-float16 | NOT STATED on the model page. It is a fine tune of OpenAI Whisper small (MIT); the licence of the Sinhala training data is not stated | unknown | UNVERIFIED | Downloaded once in the background at start up into `data/models/whisper-sinhala` (not in git) when `STT_SINHALA_AUTO_DOWNLOAD=true` | Adopted as the Sinhala default because the stock models cannot read Sinhala (match 0.09 against 0.87 on short test questions). Needs a licence check before any commercial use; `STT_SINHALA_AUTO_DOWNLOAD=false` removes it |
+| Other Apache 2.0 Sinhala Whisper fine tunes (`AqeelShafy7/Whisper-Sinhala_Audio_to_Text`, `alphaedge-ai/whisper-medium-sin-32768`, `Ransaka/whisper-tiny-sinhala-20k`) | n/a | Alternatives with a stated licence | https://huggingface.co/AqeelShafy7/Whisper-Sinhala_Audio_to_Text | Apache-2.0 | keep notice | yes | not downloaded; they are in Transformers format and need converting to CTranslate2, which needs torch (not installed here) | Not adopted, not tested |
+
 ### Fonts
 
 Written 2026-10-15 by Agent D. Add these rows to a new section "Fonts" in `docs/THIRD_PARTY.md`, using the same columns as the avatar table. Nothing here has had legal review. Licence facts below are from the font projects' published licence (SIL Open Font License 1.1); confirm against the licence file inside the downloaded font package before vendoring.

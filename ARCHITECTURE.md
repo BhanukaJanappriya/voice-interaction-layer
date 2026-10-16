@@ -653,7 +653,19 @@ the normalized question; failures are never kept.
 **End of speech.** The page sends 0.25 s chunks (it was 0.5 s) and an utterance ends after `STT_SILENCE_SECONDS`
 (0.75 s). A pause longer than that in the middle of a sentence now ends the turn; raise the setting if people are cut off.
 
-**Speech to text accuracy.** English is fine on the base model (about 0.5 s). The final Tamil transcript now comes from
-the small model directly (`STT_ACCURATE_LANGUAGES`). Sinhala is not readable by either local Whisper model (match 0.16 and
-0.13 on test speech); Google Cloud Speech to Text would be the fix but the API is disabled in the Google project
-(HTTP 403, it has to be enabled in the Google Cloud console), so Sinhala speech input stays unreliable.
+**Speech to text accuracy.** English is fine on the base model (about 0.5 s). The final Tamil transcript comes from the
+small model directly (`STT_ACCURATE_LANGUAGES`). Sinhala was unreadable by both stock Whisper models (match 0.16 and
+0.13 on test sentences, 0.09 on short questions: romanized noise), so the final Sinhala transcript now comes from a
+Whisper small model fine tuned for Sinhala (`stt.py`, `STT_SINHALA_*`): real Sinhala script, match 0.87 on short test
+questions and 0.5 on long sentences full of English words and amounts, about 1.6 s for a short question and 3 s for a 12 s
+sentence with greedy decoding and no temperature fallback (the default settings took 16 to 25 s on the same model).
+There are no live partial transcripts for Sinhala, because a partial would cost about 3 s and delay the end of the
+turn. The model (490 MB) is fetched once in the background at start up into `data/models/whisper-sinhala` and is not in
+git; until it is there Sinhala behaves as before. All of this was measured on synthesized speech, not people.
+
+**Finding the right knowledge for a question.** A guest's question is now searched three ways at once: as asked (it
+alone decides whether the hub knows the topic), with " SLT Mobitel details" added, and as its topic words plus " data
+package price details". "Tell me about the YouTube combo package" used to find two unrelated chunks (score 0.44) and the
+model answered that it had no details; the hub holds "YouTube (7 Days), 15 GB, Rs. 155" and a YouTube and Messenger
+promotion but nothing called a combo. The topic word search finds that item and the instruction to the model now says to
+describe a closely related item when the exact name is not listed, and never to send the customer to a website.
