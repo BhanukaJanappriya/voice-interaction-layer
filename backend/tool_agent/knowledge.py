@@ -153,14 +153,39 @@ def search(text: str, access, budget: Optional[float] = None, language: Optional
     return found
 
 
+# Words that carry no topic. "YouTube combo package" has one word that names a product (YouTube);
+# "combo" and "package" pull the hub's search toward unrelated package tables (the hub has a
+# "YouTube (7 Days), 15 GB, Rs. 155" add on and no product called a combo; the plain question
+# scored 0.44 on two unrelated chunks while the keyword search scored 0.55 on the right one).
+_STOP = frozenset(
+    "a an the of for to in on at and or is are was were be do does did have has had can could will would "
+    "i me my we our you your it its this that these those there here what which who how when where why "
+    "tell about give show know want need like get any some more please details detail information info "
+    "package packages plan plans combo combos offer offers available slt mobitel mobitel's".split()
+)
+KEYWORD_SUFFIX = " data package price details"
+
+
+def keyword_query(text: str) -> str:
+    """The topic words of the question plus 'data package price details', or '' when none are left."""
+    import re
+
+    words = [w for w in re.findall(r"[A-Za-z0-9&+]+", (text or "").lower()) if w not in _STOP and len(w) > 1]
+    return (" ".join(words[:5]) + KEYWORD_SUFFIX) if words else ""
+
+
 def _search(text: str, access, budget: Optional[float] = None, language: Optional[str] = None) -> Search:
     from concurrent.futures import ThreadPoolExecutor
 
     query = expand_query(text, language)[:QUERY_CHARS]
-    rich_query = (query + RICH_SUFFIX)[:QUERY_CHARS]
-    pool = ThreadPoolExecutor(max_workers=2)
+    extras = []
+    for variant in ((query + RICH_SUFFIX), keyword_query(query)):
+        variant = variant[:QUERY_CHARS]
+        if variant and variant != query and variant not in extras:
+            extras.append(variant)
+    pool = ThreadPoolExecutor(max_workers=1 + len(extras))
     try:
-        rich_future = pool.submit(mcp_gateway.call, TOOL, {"query": rich_query}, access, budget=budget)
+        futures = [pool.submit(mcp_gateway.call, TOOL, {"query": v}, access, budget=budget) for v in extras]
         result = mcp_gateway.call(TOOL, {"query": query}, access, budget=budget)
         if result.kind == "reauth":
             return Search("reauth", ms=result.ms)
@@ -170,22 +195,24 @@ def _search(text: str, access, budget: Optional[float] = None, language: Optiona
         kept = _kept(result, threshold)
         ms = result.ms
         if kept:
-            # The plain question found the topic: add what the richer question found, if it answered.
-            try:
-                rich = rich_future.result(timeout=max(1.0, float(budget or 0) or 4.0))
-            except Exception:  # noqa: BLE001  the extra context is optional
-                rich = None
-            if rich is not None and rich.kind == "ok":
-                seen = {c["content"][:120] for c in kept}
-                for chunk in _kept(rich, threshold):
+            # The plain question found the topic: add what the other searches found, if they answered.
+            seen = {c["content"][:120] for c in kept}
+            for future in futures:
+                try:
+                    extra = future.result(timeout=max(1.0, float(budget or 0) or 4.0))
+                except Exception:  # noqa: BLE001  the extra context is optional
+                    continue
+                if extra is None or extra.kind != "ok":
+                    continue
+                for chunk in _kept(extra, threshold):
                     if chunk["content"][:120] not in seen:
                         kept.append(chunk)
                         seen.add(chunk["content"][:120])
-                kept.sort(key=lambda c: -(c["score"] if c["score"] is not None else 1.0))
-                ms = max(ms, rich.ms)
+                ms = max(ms, extra.ms)
+            kept.sort(key=lambda c: -(c["score"] if c["score"] is not None else 1.0))
         kept = kept[:MAX_CHUNKS]
     finally:
-        pool.shutdown(wait=False)  # never wait for the optional second search
+        pool.shutdown(wait=False)  # never wait for the optional searches
     return Search("found" if kept else "none", kept, ms)
 
 

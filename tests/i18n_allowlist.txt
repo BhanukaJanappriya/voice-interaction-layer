@@ -215,3 +215,5 @@ frontend/ui/rating/rating.js | Thank you for your feedback | OK low: English fal
 frontend/ui/rating/rating.js | Could not send, thank you anyway | OK low: English fallback table, mirrors the existing keys (key rating.*)
 frontend/app.js | gemini live (X) | OK low: the mode identifier the page gives modeLabel, which shows the translated label (voice.mode.gemini_live), never this text
 backend/tool_agent/knowledge.py | SLT Mobitel details | OK low: a search query suffix sent to the hub, never shown to the visitor
+backend/tool_agent/knowledge.py | a an the of for to in on at and or is are was were be do does did have has had can could will would | OK low: English words dropped from the hub search query, never shown to the visitor
+backend/tool_agent/knowledge.py | data package price details | OK low: a search query suffix sent to the hub, never shown to the visitor

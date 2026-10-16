@@ -117,10 +117,14 @@ def test_a_repeated_question_does_not_ask_the_hub_again(monkeypatch):
 
 
 def test_a_failed_search_is_never_cached(monkeypatch):
-    results = iter([_Result([], kind="unavailable"), _Result([{"content": "ok " * 10, "score": 0.7}])])
+    state = {"plain": 0}
 
     def fake_call(name, arguments, access, budget=None, confirmed=False):
-        return next(results) if not arguments["query"].endswith(knowledge.RICH_SUFFIX) else _Result([], kind="unavailable")
+        query = arguments["query"]
+        if query.endswith(knowledge.RICH_SUFFIX) or query.endswith(knowledge.KEYWORD_SUFFIX):
+            return _Result([], kind="unavailable")
+        state["plain"] += 1
+        return _Result([], kind="unavailable") if state["plain"] == 1 else _Result([{"content": "ok " * 10, "score": 0.7}])
 
     monkeypatch.setattr(knowledge.mcp_gateway, "call", fake_call)
     knowledge.clear_cache()

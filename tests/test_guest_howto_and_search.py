@@ -60,15 +60,18 @@ def test_the_plain_question_decides_and_the_second_search_adds_context(monkeypat
         calls.append(arguments["query"])
         if arguments["query"].endswith(knowledge.RICH_SUFFIX):
             return _Result([_chunk("rich one " * 5, 0.56), _chunk("shared " * 5, 0.5)])
+        if arguments["query"].endswith(knowledge.KEYWORD_SUFFIX):
+            return _Result([_chunk("keyword one " * 5, 0.55)])
         return _Result([_chunk("shared " * 5, 0.5)])
 
     monkeypatch.setattr(knowledge.mcp_gateway, "call", fake_call)
     found = knowledge.search("What fibre packages do you have?", None, budget=4, language="en")
     assert found.kind == "found"
-    assert len(calls) == 2
+    assert len(calls) == 3
     texts = [c["content"] for c in found.chunks]
     assert texts[0].startswith("rich one"), "the better scored chunk comes first"
-    assert len(texts) == 2, "the shared chunk is not repeated"
+    assert any(t.startswith("keyword one") for t in texts)
+    assert len(texts) == 3, "the shared chunk is not repeated"
 
 
 def test_an_off_topic_question_is_not_rescued_by_the_second_search(monkeypatch):
@@ -98,3 +101,18 @@ def test_an_unreachable_hub_is_still_reported_as_unavailable(monkeypatch):
 
     monkeypatch.setattr(knowledge.mcp_gateway, "call", fake_call)
     assert knowledge.search("fibre", None, budget=4, language="en").kind == "unavailable"
+
+
+def test_the_keyword_search_keeps_the_product_word_and_drops_the_filler():
+    assert knowledge.keyword_query("Tell me about the YouTube combo package") == "youtube data package price details"
+    assert knowledge.keyword_query("do you have a Netflix package?") == "netflix data package price details"
+    assert knowledge.keyword_query("What fibre packages do you have?") == "fibre data package price details"
+    assert knowledge.keyword_query("what do you have") == ""
+
+
+def test_the_guest_instruction_asks_for_the_closest_real_item_and_no_websites():
+    from tool_agent import messages
+
+    clause = messages.guest_grounded_clause("en")
+    assert "closely related" in clause and "exact name is not listed" in clause
+    assert "Never send the customer to a website" in clause

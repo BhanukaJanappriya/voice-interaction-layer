@@ -150,6 +150,10 @@ def guest_grounded_clause(language: Optional[str]) -> str:
     return (
         "Answer ONLY from the SLT excerpts below. Copy numbers, prices, package names and dates exactly as written. "
         "If the excerpts do not contain the answer, say so plainly and do not guess. "
+        "If the exact item asked about is not there but a closely related one is (the same brand or kind of "
+        "product under another name), say that the exact name is not listed and describe the related item with "
+        "its price and details instead of only saying you have no details. "
+        "Never send the customer to a website, only to the contact details below. "
         + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
     )
 

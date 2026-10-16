@@ -139,15 +139,21 @@ def test_guest_answer_is_built_from_the_chunk_text(hub):
     assert plan.status_key == "tool_agent.status.search"
     assert "ONLY from the SLT excerpts" in plan.clause and "short sentences" in plan.clause
     assert isinstance(plan.timings["tool_ms"], int)
-    # the plain question, and the same question with the widening suffix (run in parallel)
+    # the plain question, the same question with the widening suffix and one made of its topic words
+    # (run in parallel)
     assert {name for name, _ in hub.tool_calls} == {KB}
-    assert sorted(args["query"] for _, args in hub.tool_calls) == sorted(["How much is the MOBITEL 1598 package?", "How much is the MOBITEL 1598 package? SLT Mobitel details"])
+    queries = sorted(args["query"] for _, args in hub.tool_calls)
+    assert "How much is the MOBITEL 1598 package?" in queries
+    assert "How much is the MOBITEL 1598 package? SLT Mobitel details" in queries
+    assert len(queries) == 3
+    assert any(q.endswith("data package price details") for q in queries)
     assert all(args["top_k"] == 3 for _, args in hub.tool_calls)
 
 
 def test_the_query_is_cut_to_500_characters(hub):
     tool_agent.prepare("fibre " * 200, "en", GUEST)
-    assert len(hub.tool_calls[0][1]["query"]) == 500
+    assert max(len(args["query"]) for _, args in hub.tool_calls) == 500
+    assert all(len(args["query"]) <= 500 for _, args in hub.tool_calls)
 
 
 @pytest.mark.parametrize("language", ["en", "si", "ta"])
