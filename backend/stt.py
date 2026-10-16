@@ -28,6 +28,7 @@ Tamil but with materially lower accuracy than English, again documented
 rather than hidden.
 """
 
+import threading
 import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
@@ -39,6 +40,58 @@ import config
 from vad import SAMPLE_RATE, VoiceActivityDetector, denoise_audio
 
 _models: dict = {}
+
+
+_sinhala_model = None
+_sinhala_lock = threading.Lock()
+_sinhala_fetching = False
+
+
+def sinhala_model_ready() -> bool:
+    return (config.STT_SINHALA_MODEL_DIR / "model.bin").exists()
+
+
+def _get_sinhala_model() -> WhisperModel:
+    global _sinhala_model
+    with _sinhala_lock:
+        if _sinhala_model is None:
+            _sinhala_model = WhisperModel(str(config.STT_SINHALA_MODEL_DIR), device="cpu", compute_type="int8", cpu_threads=8)
+        return _sinhala_model
+
+
+def _fetch_sinhala_model() -> None:
+    """Downloads the Sinhala model once, in the background. Never on a request path."""
+    global _sinhala_fetching
+    if sinhala_model_ready() or _sinhala_fetching or not config.STT_SINHALA_AUTO_DOWNLOAD or not config.STT_SINHALA_MODEL_REPO:
+        return
+    _sinhala_fetching = True
+
+    def work() -> None:
+        global _sinhala_fetching
+        try:
+            from huggingface_hub import snapshot_download
+
+            snapshot_download(config.STT_SINHALA_MODEL_REPO, local_dir=str(config.STT_SINHALA_MODEL_DIR))
+            print("STT: the Sinhala speech model was downloaded.")
+        except Exception as exc:  # noqa: BLE001
+            print(f"STT: could not download the Sinhala speech model ({type(exc).__name__}); Sinhala keeps the default model.")
+        finally:
+            _sinhala_fetching = False
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+def _run_sinhala(audio: np.ndarray) -> tuple[str, float]:
+    """Greedy decoding with the voice filter and no temperature fallback: the default settings made the
+    same model take 16 to 25 s on a 12 s sentence (retries on low confidence), these take about 3 s."""
+    segments, _info = _get_sinhala_model().transcribe(
+        audio, language="si", beam_size=1, temperature=0.0, condition_on_previous_text=False,
+        without_timestamps=True, vad_filter=True,
+    )
+    segments = list(segments)
+    text = "".join(segment.text for segment in segments).strip()
+    confidence = float(np.mean([s.avg_logprob for s in segments])) if segments else -9.0
+    return text, confidence
 
 
 def _get_local_model(model_size: str) -> WhisperModel:
@@ -78,6 +131,13 @@ def warm_up() -> None:
             # not possible right now); the main one failing is reported by
             # the first real transcription.
             print(f"STT warm up: model '{size}' not available ({exc}).")
+    if sinhala_model_ready():
+        try:
+            list(_get_sinhala_model().transcribe(silence, language="si")[0])
+        except Exception as exc:  # noqa: BLE001
+            print(f"STT warm up: the Sinhala model is not usable ({exc}).")
+    else:
+        _fetch_sinhala_model()
     print(f"STT warm up: {time.time() - start:.2f}s")
 
 
@@ -110,6 +170,17 @@ def _transcribe_local(audio: np.ndarray, language_hint: Optional[str], final: bo
     asked, gets a second look from the larger model when the main one was
     unsure of it (see STT_ACCURATE_MODEL and STT_CONFIDENCE_FLOOR): most
     turns are clear and pay nothing extra."""
+    if language_hint == "si" and sinhala_model_ready():
+        if not final:
+            # A partial would cost about 3 s on this model and delay the end of the turn, and the stock
+            # model only writes romanized noise for Sinhala: no partial text until the final one.
+            return "", "si"
+        try:
+            text, _confidence = _run_sinhala(audio)
+            if text:
+                return text, "si"
+        except Exception as exc:  # noqa: BLE001
+            print(f"STT: the Sinhala model failed ({type(exc).__name__}); using the default model.")
     accurate = config.STT_ACCURATE_MODEL
     if final and accurate and language_hint in config.STT_ACCURATE_LANGUAGES:
         # The final transcript of these languages comes straight from the larger model: running

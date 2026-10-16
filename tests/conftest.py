@@ -62,6 +62,8 @@ TEST_ENV = {
     # The warm shared hub connections are tested on their own with fake sessions (test_warm_pool.py);
     # the other suites drive the gateway through the mock hub with short lived connections.
     "HUB_WARM_SHARED": "false",
+    # Never download the 490 MB Sinhala speech model from a test run.
+    "STT_SINHALA_AUTO_DOWNLOAD": "false",
     "MCP_HUB_API_KEY": "",
     "MCP_HUB_CONTEXT_BUDGET_SECONDS": "5",
     "MCP_HUB_IN_REPLIES": "true",

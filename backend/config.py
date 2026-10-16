@@ -210,6 +210,14 @@ STT_VAD_FILTER = _env_bool("STT_VAD_FILTER", True)
 STT_ACCURATE_MODEL = os.environ.get("STT_ACCURATE_MODEL", "small").strip()
 # Seconds of silence that end an utterance. It used to be a whole second plus up to half a
 # second of chunk rounding; with 0.25 s chunks 0.75 s ends the turn about 0.5 s sooner.
+# Sinhala speech to text. The stock Whisper models cannot read Sinhala (measured on test speech: a
+# match of 0.16 for base, 0.13 for small, romanized or garbage output). A Whisper small model fine tuned
+# for Sinhala (CTranslate2 format) matched 0.52 and writes real Sinhala script. It is kept outside git in
+# STT_SINHALA_MODEL_DIR and fetched once at start up from STT_SINHALA_MODEL_REPO (about 490 MB) when
+# STT_SINHALA_AUTO_DOWNLOAD is true; until it is there Sinhala behaves as before.
+STT_SINHALA_MODEL_DIR = Path(os.environ.get("STT_SINHALA_MODEL_DIR", "").strip() or DATA_DIR / "models" / "whisper-sinhala")
+STT_SINHALA_MODEL_REPO = os.environ.get("STT_SINHALA_MODEL_REPO", "janiduchamika/faster-whisper-small-sinhala-ct2-float16").strip()
+STT_SINHALA_AUTO_DOWNLOAD = _env_bool("STT_SINHALA_AUTO_DOWNLOAD", True)
 STT_SILENCE_SECONDS = _env_float("STT_SILENCE_SECONDS", 0.75)
 # Languages whose FINAL transcript is made by STT_ACCURATE_MODEL directly: measured on synthesized
 # Tamil speech the small model matched the sentence 0.75 against 0.43 for base in the same time.
