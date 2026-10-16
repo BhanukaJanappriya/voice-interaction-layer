@@ -1,0 +1,217 @@
+# Known hardcoded or out of place strings, written 2026-10-15 by Agent D.
+# Format: <path> | <string, first 100 characters, spaces collapsed> | <reason>
+# Only NEW strings fail tests/test_i18n_hardcoded.py. Remove a line when its string is fixed
+# (a stale line also fails). '*non-latin' covers every Sinhala or Tamil literal of that file.
+# Reasons starting FIX are real gaps with a patch in docs/patches/D_code_changes.md.
+# Reasons starting MOVE are translated already but live in code. OK means intentional.
+
+backend/access/classifier.py | *non-latin | OK low: Sinhala or Tamil keyword lexicon used to recognise what the visitor said, not output
+backend/access/messages.py | I am sorry, I cannot help with account specific matters such as bills, balances, connection status, | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/access/messages.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/access/messages.py | Your verified session has ended, so I can no longer open your account details. Please verify again w | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/access/prompt.py | a verified customer | OK low: LLM prompt or internal label, never shown to the visitor
+backend/access/prompt.py | ACCESS LEVEL: verified. The caller is | OK low: LLM prompt or internal label, never shown to the visitor
+backend/access/prompt.py | ), confirmed by a one time code. You may discuss this customer's own account data that tools return. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/access/prompt.py | ACCESS LEVEL: guest. The caller is not verified. You may chat about general topics and give public i | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | You are a concise voice assistant. Answer only what the user actually asked, nothing more and nothin | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | Always reply in English. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/agent.py | The user's name is | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | . Address them by name naturally, for example when greeting or thanking them, but not in every reply | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | The user has not shared their name. If you address them directly, call them | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | ' was not found on the Ollama server. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | the request was rejected (often an invalid API key format or a bad parameter) | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | the API key is invalid or was revoked; create a new one in AI Studio | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | the project's prepaid credits are used up; top up billing in AI Studio | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | the key is not allowed to use this API or model (API disabled, or key restrictions) | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | the rate limit or quota was hit; wait, or raise the quota in AI Studio | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | Google's service had an internal error; usually temporary | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | Google's service is overloaded or unavailable; usually temporary | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | network problem reaching Google | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | You are the reasoning stage of a voice assistant. In two or three short sentences, identify what the | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | You are the response stage of a voice assistant. You will be given the user's message, optionally an | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | Reply with one word. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | access policy (canned reply) | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | SLT hub (fixed reply) | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | Sorry, I lost my connection there. Could you ask that again? | FIX high: spoken and shown apology, English only (key llm.lost_connection)
+backend/agent.py | cloud multi agent ( | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | local single agent (Llama via Ollama) | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | Information from the SLT systems (the only source for SLT facts): | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | account data unavailable (fixed reply) | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | SLT account data for this customer, from the SLT system: | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | + SLT account data | OK low: LLM prompt or internal label, never shown to the visitor
+backend/agent.py | Ollama server returned an HTTP error ( | OK low: developer detail, written to the log only, the visitor gets llm.local_unavailable
+backend/agent.py | connection to Ollama dropped mid reply ( | OK low: developer detail, written to the log only, the visitor gets llm.local_unavailable
+backend/agent.py | could not get a response from Ollama ( | OK low: developer detail, written to the log only, the visitor gets llm.local_unavailable
+backend/agent.py | could not reach the local Ollama server. Is it running? | OK low: developer detail, written to the log only, the visitor gets llm.local_unavailable
+backend/agent.py | received an unreadable response from the Ollama server. | OK low: developer detail, written to the log only, the visitor gets llm.local_unavailable
+backend/agent.py | the local Ollama server took too long to respond. | OK low: developer detail, written to the log only, the visitor gets llm.local_unavailable
+backend/agent.py | Sorry, I can't reach my language service right now. Please try again in a moment. | OK low: English default for the i18n key llm.local_unavailable when the lookup fails
+backend/auth/dependencies.py | Admin sign in required. | OK low: admin portal stays English
+backend/auth/routes.py | The username or password is incorrect. | OK low: admin portal stays English
+backend/confirmations/api.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/confirmations/intents.py | *non-latin | OK low: Sinhala or Tamil keyword lexicon used to recognise what the visitor said, not output
+backend/confirmations/texts.py | Buy an extra data package | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Add a data bundle | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Subscribe to a package | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Log a fault | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | {action}: {details}. Please say yes or tap Confirm within {seconds} seconds to go ahead, or say no t | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I cancelled that. Nothing was changed. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | That request timed out, so I did not do it. Nothing was changed. Ask me again if you still want it. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I could not find a request waiting for your answer. Nothing was changed. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | This feature is not switched on, so nothing was changed. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I can't make changes through this assistant yet, so nothing was changed. Please dial the hotline {ho | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | The request was not completed. SLT replied: | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I could not reach SLT, so I cannot tell whether it went through. I did not try again. Please check y | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Your sign in has ended, so nothing was changed. Please verify again. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I am not allowed to do that, so nothing was changed. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I could not read the package list right now. Nothing was changed. Please try again later. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I could not find a package that matches. Nothing was changed. Please tell me the package name again. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Which package do you mean? {options} | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I cannot tell which kind of connection this is, so I cannot buy a package. Please dial {hotline}. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Which service is the fault with: broadband, voice, PEO TV or other? | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Which connection is it? Reply with the number: {options} | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | What contact number should SLT call you on? Say skip if you do not want to give one. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | In a few words, what is the problem? Say skip to leave it blank. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I could not find a service to log a fault for. Please dial {hotline}. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I stopped the fault report. Nothing was logged. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | I did not understand that. Please reply with one of the numbers. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Checking the available packages | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Preparing your fault report | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | Making the change | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/confirmations/texts.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/customer_service/intent.py | *non-latin | OK low: Sinhala or Tamil keyword lexicon used to recognise what the visitor said, not output
+backend/customer_service/messages.py | To show your account details I need you to verify again. Please verify with a one time code and then | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/customer_service/messages.py | I cannot reach your account details right now. Please try again later, or contact SLT directly: call | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/customer_service/messages.py | I can only show account information here, I cannot make changes. To buy, activate, change or cancel | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/customer_service/messages.py | The customer is verified and the SLT ACCOUNT DATA block below belongs to them. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/customer_service/messages.py | Answer only from that block. If the figure asked for is not in it, say you do not have it and do not | OK low: LLM prompt or internal label, never shown to the visitor
+backend/customer_service/messages.py | Give only what was asked, in short spoken sentences, and say amounts with their unit. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/customer_service/messages.py | Never read out or repeat the telephone number, account numbers, tokens or codes. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/customer_service/messages.py | You can only read account information. You cannot buy, activate, change, add, subscribe or cancel an | OK low: LLM prompt or internal label, never shown to the visitor
+backend/customer_service/messages.py | The customer asked for a change. Say plainly that changes cannot be made here and that they are made | OK low: LLM prompt or internal label, never shown to the visitor
+backend/customer_service/render.py | SLT ACCOUNT DATA of the verified customer (read only, from the SLT systems): | OK low: LLM prompt or internal label, never shown to the visitor
+backend/customer_service/render.py | (no data returned) | OK low: LLM prompt or internal label, never shown to the visitor
+backend/customer_service/render.py | tool reported an error | OK low: LLM prompt or internal label, never shown to the visitor
+backend/customer_service/tools.py | is not on the read only allow list | OK low: LLM prompt or internal label, never shown to the visitor
+backend/llm_chain/chain.py | Sorry, I lost my connection there. Could you ask that again? | FIX high: spoken and shown apology, English only (key llm.lost_connection)
+backend/llm_chain/chain.py | Sorry, I can't help with that request. | FIX high: existing key llm.safety_blocked has the translations
+backend/llm_chain/chain.py | Sorry, I can't reach my language service right now. Please try again in a moment. | FIX high: llm.unavailable (key llm.unavailable)
+backend/llm_chain/chain.py | no API key or credentials are configured | OK low: diagnostic reason for logs and /health
+backend/llm_chain/chain.py | the provider returned no text | OK low: diagnostic reason for logs and /health
+backend/otp/hub_backend.py | your registered mobile number | FIX high: shown in the legacy form: We sent a code to your registered mobile number (key otp.destination_generic)
+backend/otp/routes.py | The code is incorrect or has expired. | FIX high: otp.bad_code (key otp.bad_code)
+backend/otp/sender.py | SLT Mobitel verification code: {code}. Valid for {minutes} minutes. Do not share it with anyone. | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/otp/sender.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/otp/sender.py | Your SLT Mobitel verification code | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/otp/sender.py | is not one of console, email, sms | OK low: configuration error
+backend/server.py | SLT MCP hub knowledge base | OK low: internal label or speech to text noise filter, not output
+backend/server.py | thanks for watching | OK low: internal label or speech to text noise filter, not output
+backend/server.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/server.py | You're welcome! Is there anything else I can help you with, or shall I end our conversation here? | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/server.py | Thank you for using the SLT Mobitel voice assistant. Goodbye, and have a great day! | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/server.py | Welcome to SLT Mobitel, {name}! I'm your voice assistant, and I understand English, Sinhala, and Tam | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/server.py | Invalid start message: | OK low: developer error on a malformed start message
+backend/tool_agent/core.py | Not available for this question: | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/customer.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/tool_agent/customer.py | the customer's current | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/customer.py | , so packages could not be compared | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/customer.py | the package comparison, the comparison service did not answer | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/customer.py | + SLT account data | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/knowledge.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/tool_agent/knowledge.py | fibre FTTH broadband packages | OK low: retrieval query expansion keywords, matched against the English knowledge base
+backend/tool_agent/knowledge.py | broadband internet packages | OK low: retrieval query expansion keywords, matched against the English knowledge base
+backend/tool_agent/knowledge.py | LTE 4G packages | OK low: retrieval query expansion keywords, matched against the English knowledge base
+backend/tool_agent/knowledge.py | PEO TV packages channels | OK low: retrieval query expansion keywords, matched against the English knowledge base
+backend/tool_agent/knowledge.py | voice telephone plans | OK low: retrieval query expansion keywords, matched against the English knowledge base
+backend/tool_agent/knowledge.py | data add-on package | OK low: retrieval query expansion keywords, matched against the English knowledge base
+backend/tool_agent/knowledge.py | package price monthly rental | OK low: retrieval query expansion keywords, matched against the English knowledge base
+backend/tool_agent/knowledge.py | international calls IDD | OK low: retrieval query expansion keywords, matched against the English knowledge base
+backend/tool_agent/knowledge.py | SLT INFORMATION (excerpts from the SLT knowledge base): | OK low: retrieval query expansion keywords, matched against the English knowledge base
+backend/tool_agent/messages.py | I could not find that in the SLT information I have. Please call {hotline} (toll free from SLT lines | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/tool_agent/messages.py | The SLT information service is temporarily unavailable. Please try again shortly, or contact SLT: ca | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | Your verified session has ended, so I can no longer open your account details. Please verify again w | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | There are {count} more. Would you like me to read them? | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | Searching the SLT information | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | Checking your balance | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | Checking your bills | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | Checking your account | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | Checking your faults | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | Checking your usage | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/tool_agent/messages.py | Speak in short sentences. Copy every number, price, date and name exactly as given, and say amounts | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | The only contact details you may give are: | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | (prepaid). Never write any other telephone number, web address, e-mail address or app name unless i | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | Answer ONLY from the SLT excerpts below. Copy numbers, prices, package names and dates exactly as wr | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | This message is conversation, not an SLT question. Do NOT state any SLT specific facts from your own | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | The customer is verified and the SLT ACCOUNT DATA block below belongs to them. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | Answer only from that block. If the figure asked for is not in it, say you do not have it and do not | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | Never read out or repeat the telephone number, account numbers, tokens or codes. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | You can only read account information. You cannot buy, activate, change, add, subscribe or cancel an | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | Not available for this question: | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/messages.py | . Say so and do not make it up. | OK low: LLM prompt or internal label, never shown to the visitor
+backend/tool_agent/scrub.py | *non-latin | OK low: Sinhala or Tamil keyword lexicon used to recognise what the visitor said, not output
+backend/tool_agent/voice.py | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+backend/tool_agent/voice.py | and {c} cents | MOVE medium: English entry of a three language table kept in code; si and ta exist beside it; should move into backend/i18n
+backend/voice_router/handover.py | One moment, reconnecting. | FIX high: spoken notice on a tier change; handover.py already has NOTICE_KEY, the key and its translations are missing (key voice.reconnecting)
+backend/voice_text/normalizer.py | *non-latin | OK low: Sinhala or Tamil keyword lexicon used to recognise what the visitor said, not output
+frontend/app.js | account data unavailable | OK low: matches the English mode text the backend sends, never shown to the visitor
+frontend/index.html | text=SLT Mobitel Voice Assistant | FIX high: document title stays English in si and ta (key app.title)
+frontend/index.html | text=Enable your microphone | FIX high: mic.title (key mic.title)
+frontend/index.html | text=This assistant needs microphone access to hear you speak. Your browser will ask you to confirm right | FIX high: mic.body (key mic.body)
+frontend/index.html | text=Allow microphone | FIX high: mic.allow (key mic.allow)
+frontend/index.html | text=Not now | FIX high: mic.not_now (key mic.not_now)
+frontend/index.html | alt=SLT Mobitel | OK low: brand name, the same in every language
+frontend/index.html | text=Choose your language | OK low: the language screen is trilingual by design; add lang attributes to the two alternates
+frontend/index.html | text=English | OK low: language name in its own script, shown before a language is chosen
+frontend/index.html | text=How would you like to talk today? | FIX high: select.tagline (key select.tagline)
+frontend/index.html | text=Start Chat | FIX high: select.chat (key select.chat)
+frontend/index.html | text=Start Voice | FIX high: select.voice (key select.voice)
+frontend/index.html | text=Change language | FIX high: nav.change_language (key nav.change_language)
+frontend/index.html | text=Are you a new or existing user? | FIX high: user.tagline (key user.tagline)
+frontend/index.html | text=Existing user | FIX high: user.existing (key user.existing)
+frontend/index.html | text=New user | FIX high: user.new (key user.new)
+frontend/index.html | text=Your landline number | FIX medium: legacy PIN form, only shown when verify.js did not load (key legacy.phone_label)
+frontend/index.html | text=PIN | FIX medium: legacy PIN form (key legacy.pin_label)
+frontend/index.html | text=Verification code | FIX medium: legacy PIN form (key legacy.otp_label)
+frontend/index.html | text=Resend code | FIX medium: legacy PIN form (key legacy.resend)
+frontend/index.html | text=Continue | FIX medium: legacy PIN form (key legacy.continue)
+frontend/index.html | text=Send me a one time code instead | FIX medium: legacy PIN form (key legacy.use_otp)
+frontend/index.html | text=Use my PIN instead | FIX medium: legacy PIN form (key legacy.use_pin)
+frontend/index.html | text=Use a different option | FIX medium: legacy PIN form (key legacy.use_other)
+frontend/index.html | text=Back | FIX high: nav.back (key nav.back)
+frontend/index.html | aria-label=Female voice and avatar. Switch to male | FIX high: also rewritten by applyGenderUI() (key voice.gender.female)
+frontend/index.html | aria-label=Start the conversation | FIX high: also rewritten by the mic state code (key voice.mic.start)
+frontend/index.html | text=Conversation history | FIX high: history.title (key history.title)
+frontend/index.html | text=Your conversation will appear here as it happens. | FIX high: existing key, only wired in dashboard.js on a narrow screen (key empty.transcript)
+frontend/index.html | text=Text chat | FIX high: chat.title (key chat.title)
+frontend/index.html | text=Type a message below to start chatting. | FIX high: chat.empty (key chat.empty)
+frontend/index.html | text=Send | FIX high: chat.send (key chat.send)
+frontend/index.html | text=Agent mode: - | FIX high: also rewritten by setChatModeBadge() (key chat.mode_none)
+frontend/index.html | text=SLT Digital Lab, voice interaction prototype | FIX medium: footer.credit (key footer.credit)
+frontend/ui/confirm/confirm.js | This request timed out. Nothing was changed. | OK low: English fallback table, mirrors the existing keys (key confirm.ui.*)
+frontend/ui/confirm/confirm.js | Cancelled. Nothing was changed. | OK low: English fallback table, mirrors the existing keys (key confirm.ui.*)
+frontend/ui/confirm/confirm.js | This request is no longer valid. Nothing was changed. | OK low: English fallback table, mirrors the existing keys (key confirm.ui.*)
+frontend/ui/confirm/confirm.js | I could not tell whether it went through. Please check your account before trying again. | OK low: English fallback table, mirrors the existing keys (key confirm.ui.*)
+frontend/ui/confirm/confirm.js | Check the details, then confirm to go ahead. | OK low: English fallback table, mirrors the existing keys (key confirm.ui.*)
+frontend/ui/dashboard/dashboard.js | Voice and avatar | OK low: English fallback FB, mirrors the existing keys (key dashboard.voice)
+frontend/ui/dashboard/dashboard.js | Log out | OK low: English fallback FB, mirrors the existing keys (key dashboard.logout)
+frontend/ui/dashboard/dashboard.js | Intro sound | OK low: English fallback FB, mirrors the existing keys (key dashboard.sound)
+frontend/ui/dashboard/dashboard.js | Your conversation will appear here as it happens. | OK low: English fallback EMPTY, mirrors the existing key (key empty.transcript)
+frontend/ui/landing/landing.js | Welcome to SLT Mobitel | OK low: English fallback when the json did not load, mirrors the existing keys (key landing.greeting)
+frontend/ui/landing/landing.js | Your voice assistant in English, Sinhala and Tamil | OK low: English fallback, mirrors the existing keys (key landing.subtitle)
+frontend/ui/landing/landing.js | Sri Lanka's No.1 Connection | OK low: English fallback, mirrors the existing keys (key landing.quote)
+frontend/ui/landing/landing.js | *non-latin | MOVE medium: three language table kept in code; translated but outside backend/i18n or frontend/i18n
+frontend/ui/rating/rating.js | How was your experience? | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Tell us how this chat went. | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Tell us how this voice call went. | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Poor | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Fair | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Good | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Very good | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Excellent | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Choose a star | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Thank you for your feedback | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/ui/rating/rating.js | Could not send, thank you anyway | OK low: English fallback table, mirrors the existing keys (key rating.*)
+frontend/app.js | gemini live (X) | OK low: the mode identifier the page gives modeLabel, which shows the translated label (voice.mode.gemini_live), never this text
+backend/tool_agent/knowledge.py | SLT Mobitel details | OK low: a search query suffix sent to the hub, never shown to the visitor
