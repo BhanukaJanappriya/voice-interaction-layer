@@ -130,6 +130,21 @@ def dial_text(key: str, language: Optional[str] = None) -> str:
     return BUILTIN[key][short(language)].format(**dial)
 
 
+CARE_STYLE = (
+    "Sound like a warm, polite SLT-Mobitel customer care officer talking to a person: natural everyday words, "
+    "a friendly tone, never robotic. Do not greet again in the middle of a conversation."
+)
+
+# How hub data is turned into an answer: organised, friendly, no raw field names.
+PRESENT_RULES = (
+    "Organise what you found: one short friendly opening sentence, then each item on its own with its name, "
+    "price and the most useful detail in plain words (say 'Rs. 155 for 7 days', never field names such as id, "
+    "category, tax_rate or icon), then one helpful follow up question. Leave out anything that is not useful to the "
+    "customer. Write plain text only: no asterisks, no markdown, no bullet symbols, no numbered lists; say 'first', "
+    "'then' and 'also' instead, because the words are shown in a chat bubble and read aloud. In Sinhala and Tamil use "
+    "simple, short, everyday sentences."
+)
+
 VOICE_RULES = (
     "Speak in short sentences. Copy every number, price, date and name exactly as given, "
     "and say amounts with their unit. If there are many items, mention only the first three "
@@ -154,7 +169,25 @@ def guest_grounded_clause(language: Optional[str]) -> str:
         "product under another name), say that the exact name is not listed and describe the related item with "
         "its price and details instead of only saying you have no details. "
         "Never send the customer to a website, only to the contact details below. "
-        + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
+        "Only if the question has nothing to do with SLT or telecom at all (for example a general knowledge "
+        "question) and the excerpts are about something else, answer it briefly and kindly from general knowledge "
+        "and say you are happy to help with SLT services too. "
+        + CARE_STYLE + " " + PRESENT_RULES + " " + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
+    )
+
+
+def general_clause(language: Optional[str]) -> str:
+    """A question that is not about SLT or telecom and that the hub knows nothing about: a polite general
+    answer. SLT facts are never given from memory."""
+    return (
+        "The question is general knowledge, not about SLT. Answer it helpfully, briefly and politely from your "
+        "general knowledge, the way a friendly customer care officer would. If you are not sure of a fact, say so "
+        "honestly instead of guessing. For medical, legal or financial matters give only general information and "
+        "suggest asking a professional. Do NOT state any SLT specific facts from memory: no packages, prices, "
+        "services, coverage, contact details or account data; those only come from the SLT knowledge base. "
+        "End by saying you are glad to help with anything about SLT services. Write plain text only: no asterisks "
+        "or markdown, and in Sinhala and Tamil use simple, short, everyday sentences. "
+        + CARE_STYLE + " " + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
     )
 
 
@@ -163,7 +196,7 @@ def no_facts_clause(language: Optional[str]) -> str:
         "This message is conversation, not an SLT question. Do NOT state any SLT specific facts from your own "
         "knowledge: no packages, prices, services, coverage, contact details or account data. If the user wants SLT "
         "information, ask what they would like to know so it can be looked up. "
-        + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
+        + CARE_STYLE + " " + contact_rule() + " " + VOICE_RULES + f" Reply in {language_name(language)}."
     )
 
 
