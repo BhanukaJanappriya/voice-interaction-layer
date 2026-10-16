@@ -167,6 +167,8 @@
   "error.prefix": "Error: {message}",
   "error.unreachable": "Sorry, I could not reach the service. Please try again in a moment.",
   "footer.credit": "SLT Digital Lab, voice interaction prototype",
+  "chat.singlish.on": "Singlish typing is on. Press to turn it off",
+  "chat.singlish.off": "Singlish typing is off. Press to turn it on",
   "_meta": {
     "language": "en",
     "reviewed": true

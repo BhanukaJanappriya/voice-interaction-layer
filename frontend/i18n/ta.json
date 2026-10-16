@@ -167,6 +167,8 @@
   "error.prefix": "பிழை: {message}",
   "error.unreachable": "மன்னிக்கவும், சேவையை அடைய முடியவில்லை. சிறிது நேரம் கழித்து மீண்டும் முயலவும்.",
   "footer.credit": "SLT Digital Lab, குரல் தொடர்பு முன்மாதிரி",
+  "chat.singlish.on": "சிங்கிலிஷ் தட்டச்சு இயக்கத்தில் உள்ளது. அணைக்க அழுத்தவும்",
+  "chat.singlish.off": "சிங்கிலிஷ் தட்டச்சு அணைந்துள்ளது. இயக்க அழுத்தவும்",
   "_meta": {
     "language": "ta",
     "machine_written": true,

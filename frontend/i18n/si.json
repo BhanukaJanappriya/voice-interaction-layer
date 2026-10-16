@@ -167,6 +167,8 @@
   "error.prefix": "දෝෂය: {message}",
   "error.unreachable": "සමාවන්න, සේවාව වෙත සම්බන්ධ විය නොහැකි විය. කරුණාකර මදක් පසුව නැවත උත්සාහ කරන්න.",
   "footer.credit": "SLT Digital Lab, හඬ අන්තර්ක්‍රියා මූලාකෘතිය",
+  "chat.singlish.on": "සිංග්ලිෂ් ටයිප් කිරීම ක්‍රියාත්මකයි. අක්‍රිය කිරීමට ඔබන්න",
+  "chat.singlish.off": "සිංග්ලිෂ් ටයිප් කිරීම අක්‍රියයි. සක්‍රිය කිරීමට ඔබන්න",
   "_meta": {
     "language": "si",
     "machine_written": true,

@@ -688,6 +688,31 @@ body {
   cursor: default;
 }
 
+.chat-singlish {
+  flex: none;
+  min-width: 44px;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.chat-singlish[hidden] {
+  display: none;
+}
+
+.chat-singlish:not(.is-on) {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.chat-singlish.is-on {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
 .brand {
   position: relative;
   display: flex;
