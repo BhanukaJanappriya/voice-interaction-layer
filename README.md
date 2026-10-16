@@ -851,3 +851,5 @@ tips) is answered politely from general knowledge, ending with an offer to help 
 states SLT packages, prices, coverage or contact details from memory. The sign in code goes through the hub by default
 (`VERIFY_OTP_BACKEND` empty means hub when the hub is the only source of answers): the hub validates the number, sends the
 code to the customer's registered mobile or e-mail and checks it.
+
+**Sign in by code and the customer's name.** The wizard asks for the registered mobile number, lets the customer choose where the code goes (the registered mobile by SMS or the registered e-mail; the hub sends one channel per request and the masked mobile or e-mail it returns is shown), and the customer types the code they received. The hub checks the code; the customer is then greeted by the name the hub holds for the number. The hub's verify answer has no name, so after the sign in the name is looked up in the answers of the read only customer tools (`mcp_gateway/profile.py`, at most `HUB_NAME_LOOKUP_SECONDS`, 6 by default); without one, the name typed in the wizard is used, then a neutral word.
