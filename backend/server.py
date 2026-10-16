@@ -1120,6 +1120,16 @@ def _latency_classes() -> Optional[dict]:
     return value
 
 
+def _chain_error(provider: str):
+    """The last error of the provider's tier in the fallback chain (the existing reason mapping), so /health
+    shows why Gemini is not answering even when the chain, not the single provider path, made the call."""
+    try:
+        tier = (orchestrator.chain.status() if config.LLM_CHAIN else {}).get("tiers", {}).get(provider)
+        return tier.get("last_error") if tier else None
+    except Exception:  # noqa: BLE001  /health must always answer
+        return None
+
+
 def _voice_router_status():
     if not config.VOICE_ROUTER_ENABLED:
         return None
@@ -1143,7 +1153,7 @@ async def health():
         }.get(config.CLOUD_LLM_PROVIDER, config.OPENAI_MODEL),
         # Why the cloud LLM is currently not answering (None if it is, or
         # if it has not been tried yet), so a quick check tells the story.
-        "cloud_llm_last_error": orchestrator.last_cloud_error,
+        "cloud_llm_last_error": orchestrator.last_cloud_error or _chain_error(config.CLOUD_LLM_PROVIDER),
         # Per tier status of the fallback chain (Gemini, LiveKit Inference,
         # local Llama): order, the mode of the last answer, and each tier's
         # state and last error reason. None when LLM_CHAIN is empty.

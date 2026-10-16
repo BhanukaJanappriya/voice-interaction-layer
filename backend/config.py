@@ -30,7 +30,9 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 # "gemini" or "gpt". The cloud provider answers first; when it is not set up or
 # fails, the local Ollama model answers alone.
 CLOUD_LLM_PROVIDER = os.environ.get("CLOUD_LLM_PROVIDER", "livekit").strip().lower()
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest").strip()
+# A "-latest" alias follows Google's current stable model; pinned names are retired (gemini-2.5-flash answers 404
+# "no longer available to new users" on 2026-10-16). Checked against models.list for the AI Studio key.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
 # Gemini Live (native speech to speech, tier 1 of the voice router). This is a
 # different model family from GEMINI_MODEL above: a Live model such as
 # gemini-3.8-live cannot be used for text generation and the other way round.
