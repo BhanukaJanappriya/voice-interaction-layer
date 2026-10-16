@@ -59,6 +59,9 @@ TEST_ENV = {
     # The default (mcp_hub) answers SLT questions from the hub only; the older
     # suites describe the earlier behaviour, tests of the new one set it themselves.
     "ANSWER_SOURCE": "local_rag",
+    # The warm shared hub connections are tested on their own with fake sessions (test_warm_pool.py);
+    # the other suites drive the gateway through the mock hub with short lived connections.
+    "HUB_WARM_SHARED": "false",
     "MCP_HUB_API_KEY": "",
     "MCP_HUB_CONTEXT_BUDGET_SECONDS": "5",
     "MCP_HUB_IN_REPLIES": "true",

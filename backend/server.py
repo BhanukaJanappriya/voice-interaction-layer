@@ -258,6 +258,11 @@ async def _lifespan(_app: FastAPI):
     seed_first_admin_from_env()
     if config.WARM_UP_ON_STARTUP:
         threading.Thread(target=_warm_up, daemon=True).start()
+    if config.mcp_hub_configured() and _hub_only():
+        import mcp_gateway
+
+        # The first guest question finds open hub connections instead of opening one.
+        threading.Thread(target=mcp_gateway.prewarm, daemon=True).start()
     if config.VOICE_ROUTER_ENABLED:
         from voice_router import get_router
 
@@ -1092,6 +1097,7 @@ def _answers_status() -> dict:
         import tool_agent
 
         status["gateway"] = mcp_gateway.status()
+        status["warm_connections"] = mcp_gateway.warm_status()
         status["tool_agent"] = tool_agent.stats()
         status["tool_latency_classes"] = _latency_classes()
     except Exception as exc:  # noqa: BLE001  /health must always answer

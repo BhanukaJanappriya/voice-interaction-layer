@@ -273,6 +273,27 @@ def _shared(tool: str, args: dict, budget: float, changing: bool, started: float
     attempts = 1 if changing else 2
     deadline = time.monotonic() + max(budget, 0.5)
     last, kind = "unavailable", UNAVAILABLE
+    if not changing and config.HUB_WARM_SHARED:
+        # An already open connection first: no connect, no initialise, no slow first call. On any
+        # trouble the short lived connection below answers as it always did.
+        from . import warm
+
+        remaining = deadline - time.monotonic()
+        try:
+            output = warm.get_pool().call(tool, args, budget=min(remaining, max(2.5, remaining * 0.55)))
+        except HubToolError:
+            return _fail(tool, ERROR, "tool_error", started, national)
+        except (warm.WarmUnavailable, Exception):  # noqa: BLE001
+            try:
+                get_hub().reset_breaker()  # a failed warm open may have opened the breaker
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            text = output.text
+            structured = output.structured
+            if not text and isinstance(structured, dict) and isinstance(structured.get("result"), str):
+                text = structured["result"].strip()
+            return _answer(tool, text, False, False, started, national, "")
     for attempt in range(attempts):
         remaining = deadline - time.monotonic()
         if remaining <= 0.3:
@@ -540,6 +561,28 @@ def drop_session(access) -> None:
     if national:
         _pool().close(national)
         _forget_service_type(national)
+
+
+def warm_status() -> dict:
+    try:
+        from . import warm
+
+        return warm.get_pool().status() if config.HUB_WARM_SHARED else {"enabled": False}
+    except Exception:  # noqa: BLE001
+        return {"enabled": False}
+
+
+def prewarm() -> None:
+    """Opens the warm shared connections now (start up), in the background, so the first guest question
+    does not pay for the connection. Never raises."""
+    if not config.HUB_WARM_SHARED:
+        return
+    try:
+        from . import warm
+
+        warm.get_pool().prewarm(count=2)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def status() -> dict:

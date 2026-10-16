@@ -381,6 +381,11 @@ EXPOSE_LATENCY_TOOL = _env_bool("EXPOSE_LATENCY_TOOL", False)
 # 0.74 and unrelated ones (cricket, weather) 0.36 to 0.37).
 KB_MIN_SCORE = _env_float("KB_MIN_SCORE", 0.40)
 KB_MAX_CHARS = _env_int("KB_MAX_CHARS", 4000)
+# Warm shared hub connections for the public read only tools (mcp_gateway/warm.py): a guest's question
+# then skips the connect, initialise and slow first call (measured 2 to 4 s on the live hub).
+HUB_WARM_SHARED = os.environ.get("HUB_WARM_SHARED", "true").strip().lower() in ("1", "true", "yes")
+HUB_WARM_POOL_SIZE = int(os.environ.get("HUB_WARM_POOL_SIZE", "").strip() or 3)
+HUB_WARM_IDLE_SECONDS = float(os.environ.get("HUB_WARM_IDLE_SECONDS", "").strip() or 300)
 
 # The five star rating asked when a chat or voice session ends (POST /feedback/rating).
 RATING_ENABLED = _env_bool("RATING_ENABLED", True)

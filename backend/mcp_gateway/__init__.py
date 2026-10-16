@@ -23,6 +23,8 @@ from .gateway import (
     finish_login,
     has_session,
     latencies,
+    prewarm,
+    warm_status,
     service_type,
     status,
     tool_schemas,
@@ -30,5 +32,5 @@ from .gateway import (
 
 __all__ = [
     "call", "begin_login", "finish_login", "end_login", "service_type", "tool_schemas", "status",
-    "latencies", "GatewayResult", "LoginStart", "LoginResult", "has_session", "drop_session",
+    "latencies", "prewarm", "warm_status", "GatewayResult", "LoginStart", "LoginResult", "has_session", "drop_session",
 ]
