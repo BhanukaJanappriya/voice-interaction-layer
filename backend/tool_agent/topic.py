@@ -47,6 +47,24 @@ _LATIN = re.compile(r"(?<![a-z0-9])(?:" + _EN + r"|" + _ROMAN + r")(?![a-z0-9])"
 _SCRIPT = re.compile("(?:" + _SI_TA + ")")
 
 
+# "What is fibre?", "how does roaming work", "difference between 4G and fibre": a question about an idea,
+# not about what SLT sells or charges. Matched at the start of the question (English only; the Sinhala and
+# Tamil questions of this kind are left to the hub, which is the safe side).
+_CONCEPT = re.compile(
+    r"^(?:what(?: is|s| are|'s)(?: a| an| the)?|explain|define|meaning of|how (?:does|do|is|are) .{1,40}? (?:work|works|different)|"
+    r"difference between|what does .{1,30}? mean|why (?:is|do|does|are)|tell me about the (?:idea|concept) of)\b"
+)
+_ABOUT_SLT = re.compile(r"(?<![a-z0-9])(?:slt|mobitel|sltmobitel|peo|peotv|my slt|myslt|your|you|do you|can i|my|price|cost|rs|lkr|charge|rental|package for)(?![a-z0-9])")
+
+
+def is_concept_question(text: str) -> bool:
+    """A question about what something is or how it works, not about SLT's own offers, prices or accounts."""
+    if not isinstance(text, str):
+        return False
+    rest = normalize(text)
+    return bool(_CONCEPT.search(rest)) and not _ABOUT_SLT.search(rest)
+
+
 def is_slt_topic(text: str) -> bool:
     """True when the question is, or might be, about SLT or a telecom service."""
     if not isinstance(text, str):

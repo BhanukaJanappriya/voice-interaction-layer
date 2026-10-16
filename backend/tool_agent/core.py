@@ -35,10 +35,10 @@ from typing import Optional
 import config
 
 from . import customer, knowledge, stats
-from .messages import STATUS_BY_TOOL, dial_text, general_clause, guest_grounded_clause, no_facts_clause
+from .messages import STATUS_BY_TOOL, concept_clause, dial_text, general_clause, guest_grounded_clause, no_facts_clause
 from .plan import CANNED, GROUNDED, PASS, TurnPlan
 from .smalltalk import is_smalltalk
-from .topic import is_slt_topic
+from .topic import is_concept_question, is_slt_topic
 
 
 def _confirmations():
@@ -89,6 +89,10 @@ def _knowledge(text: str, language, access, started: float, note: str = "", on_s
     if found.kind in ("unavailable", "none") and not is_slt_topic(text):
         # Nothing about SLT was asked: a polite general answer, no SLT facts from memory.
         plan = TurnPlan(kind=PASS, clause=general_clause(language) + (" " + note if note else ""))
+    elif found.kind in ("unavailable", "none") and is_concept_question(text):
+        # An idea (what is fibre, how does roaming work): explained from general knowledge, with a clear
+        # statement that SLT's own details were not found.
+        plan = TurnPlan(kind=PASS, clause=concept_clause(language) + (" " + note if note else ""))
     elif found.kind == "unavailable":
         plan = _canned(dial_text("tool_agent.hub_unavailable", language))
     elif found.kind == "reauth":

@@ -221,3 +221,4 @@ backend/tool_agent/messages.py | Organise what you found: one short friendly ope
 backend/tool_agent/messages.py | Sound like a warm, polite SLT-Mobitel customer care officer talking to a person: natural everyday wo | OK low: an instruction to the language model, never shown to the visitor
 backend/tool_agent/messages.py | The question is general knowledge, not about SLT. Answer it helpfully, briefly and politely from you | OK low: an instruction to the language model, never shown to the visitor
 backend/tool_agent/topic.py | *non-latin | OK low: Sinhala and Tamil topic words matched against the question, never shown to the visitor
+backend/tool_agent/messages.py | The question asks what something is or how it works, and the SLT knowledge base has nothing on it. E | OK low: an instruction to the language model, never shown to the visitor

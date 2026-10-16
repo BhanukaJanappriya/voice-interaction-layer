@@ -94,3 +94,25 @@ def test_small_talk_is_also_in_a_caring_voice():
 def test_the_general_clause_names_the_language(language, name):
     assert f"Reply in {name}" in messages.general_clause(language)
 
+
+
+@pytest.mark.parametrize("text", ["What is fibre internet?", "what is a router", "Explain roaming", "how does 4G work",
+                                  "what's the difference between LTE and fibre"])
+def test_an_idea_the_hub_has_nothing_on_is_explained_with_the_slt_details_marked_missing(hub_mode, monkeypatch, text):
+    search_returns(monkeypatch, "none")
+    plan = tool_agent.prepare(text, "en", None)
+    assert plan.kind == PASS
+    assert "from general knowledge" in plan.clause and "could not find SLT's own details" in plan.clause
+    assert "Do NOT state any SLT specific fact" in plan.clause
+
+
+@pytest.mark.parametrize("text", ["What is the price of fibre", "what are your fibre packages", "Tell me about the zebra tariff"])
+def test_slt_specifics_with_nothing_in_the_hub_still_get_the_fixed_text(hub_mode, monkeypatch, text):
+    search_returns(monkeypatch, "none")
+    assert tool_agent.prepare(text, "en", None).kind == CANNED
+
+
+def test_a_hub_answer_may_be_enriched_with_general_knowledge_but_not_with_slt_facts():
+    clause = messages.guest_grounded_clause("en")
+    assert "helpful general knowledge" in clause
+    assert "every SLT specific fact" in clause and "only from the excerpts" in clause
