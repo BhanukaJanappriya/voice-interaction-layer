@@ -1321,4 +1321,7 @@ app.mount("/", RevalidatingStaticFiles(directory=FRONTEND_DIR, html=True), name=
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    from app_port import APP_PORT, ensure_free
+
+    ensure_free("0.0.0.0")
+    uvicorn.run(app, host="0.0.0.0", port=APP_PORT)

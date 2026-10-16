@@ -40,7 +40,7 @@ function Start-Background($name, $workingDir, $arguments) {
     Write-Host "$name started in the background (PID $($proc.Id)); log: logs\$name.log"
 }
 
-Start-Background "backend" $root "-m backend --host 127.0.0.1 --port 8000"
+Start-Background "backend" $root "-m backend --host 127.0.0.1"
 
 Write-Host ""
 Write-Host "Open http://127.0.0.1:8000/ in your browser (admin portal: http://127.0.0.1:8000/admin/)."

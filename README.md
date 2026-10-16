@@ -840,3 +840,5 @@ robot style face. `AVATAR_VARIANT=original` (default) uses `mpfb.glb` and `male.
 `male_sl.glb` and `female_sl.glb` (medium brown skin, black SLT T shirt with the official logo, rebuilt with
 `tools/avatar/build_avatar.py`, see `docs/AVATAR.md`). The South Asian set is new and has only been looked at with a
 software renderer, so it is not the default.
+
+**Port.** The app always runs on port 8000 and on no other: `python -m backend` and `scripts\start.ps1` have no port option, and if 8000 is already in use the app says so and stops instead of choosing another port (stop the older copy, or run `scripts\stop.ps1`).
