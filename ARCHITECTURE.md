@@ -627,3 +627,33 @@ natively and the model is told how to read amounts and numbers in its instructio
 | `/ws/voice` with `handover` | spoken notice instead of the introduction in en, si, ta (3.9 to 5.1 s to the end of the notice, synthesis included) |
 | Guest question through the real hub, browser, en, si, ta | answers in 7.8, 4.8 and 4.6 s (hub tool 1.6 to 4.9 s) |
 | Gemini Live first audio, voice quality, mouth offset | not measured: no credit on the key |
+
+## Speed and accuracy changes (2026-10-16)
+
+Measured on this machine against the live hub (guest question, English):
+
+| Step | Before | After |
+|-|-|-|
+| Hub knowledge search, first ask | 1.9 to 4.9 s (9.8 s when the hub stalled) | 1.3 to 1.6 s |
+| The same question asked again within 10 minutes | the same as the first ask | 0 ms (answer cache) |
+| Whole guest answer (search + model) | 4 to 8 s (17.7 s on a cold first question) | 2.8 to 3.6 s, 1.4 s for a repeat |
+| Wait after the speaker stops | 1.0 to 1.5 s | 0.75 to 1.0 s |
+| Tamil final transcript (test speech) | base model, match 0.43, 3.5 s | small model, match 0.75, 2.5 s |
+
+**Warm hub connections** (`mcp_gateway/warm.py`). The hub costs 0.7 to 1.4 s to connect, 0.5 to 1.9 s to initialise and
+about 2.8 s for the first call on a new connection, against 1.4 s for a call on one that is already open. Up to three
+sessions for public read only tools are opened at start up and reused one call at a time. A session that fails, times
+out or sits idle for 5 minutes is dropped and the call falls back to the short lived connection the gateway used
+before, so this cannot make a call fail that would have worked. Customer connections and state changing calls do not
+use it. `/health` shows `answers.warm_connections`.
+
+**Answer cache** (`tool_agent/knowledge.py`). A successful knowledge search is kept 10 minutes (200 entries), keyed by
+the normalized question; failures are never kept.
+
+**End of speech.** The page sends 0.25 s chunks (it was 0.5 s) and an utterance ends after `STT_SILENCE_SECONDS`
+(0.75 s). A pause longer than that in the middle of a sentence now ends the turn; raise the setting if people are cut off.
+
+**Speech to text accuracy.** English is fine on the base model (about 0.5 s). The final Tamil transcript now comes from
+the small model directly (`STT_ACCURATE_LANGUAGES`). Sinhala is not readable by either local Whisper model (match 0.16 and
+0.13 on test speech); Google Cloud Speech to Text would be the fix but the API is disabled in the Google project
+(HTTP 403, it has to be enabled in the Google Cloud console), so Sinhala speech input stays unreliable.

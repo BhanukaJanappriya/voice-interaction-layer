@@ -956,3 +956,13 @@ wider than a crew neck and the jeans stay blue. The skin is baked, so another to
 installed on the development machine only). The original models are fair skinned and European looking; no Indian looking
 original exists in the project. The 3D avatars need WebGL and a few seconds to load; the page keeps the flat avatar
 until they are ready and falls back to it on any failure.
+
+**Speed and accuracy (2026-10-16).** The hub is the slowest part and is not ours: a call takes 1.3 to 1.6 s on an open
+connection, and it stalled for 8 s or more on some calls. The text model is the second part (1.4 to 2 s to the first
+words through LiveKit Inference; the Gemini key has no credit, so the Gemini tier answers nothing and the chain skips it
+after one failed call every 5 minutes). Speech output starts 0.7 to 2 s after the first sentence (edge-tts). Speech to
+text for Sinhala is unreliable on the local models (see ARCHITECTURE.md) and cloud speech to text is not usable until the
+Google Cloud Speech to Text API is enabled. The test numbers for Tamil and Sinhala came from synthesized speech, not from
+people, so real accuracy will differ. The 3D avatar renders at 30 frames a second with the pixel ratio capped at 2 and stops
+drawing when it is not visible (this was already so); it was only timed on a software renderer, so smoothness on a real GPU
+was not measured. The first visit downloads the female model (37 MB for the original female model).
