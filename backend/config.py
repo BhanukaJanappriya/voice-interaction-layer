@@ -363,9 +363,16 @@ if CUSTOMER_DATA_SOURCE not in ("local", "mcp_hub"):
 # 120 s) or "hub" (the hub's validate_customer_and_send_otp and
 # verify_otp_and_authenticate, which also authenticates the hub session that the
 # customer tools need). Our own limits (120 s, 3 attempts, single use, resend
-# wait) are applied on top in both modes. Default local: hub mode sends a real SMS
-# to a real customer on every run.
-VERIFY_OTP_BACKEND = os.environ.get("VERIFY_OTP_BACKEND", "local").strip().lower()
+# wait) are applied on top in both modes. Default: hub when the hub is the only source of answers
+# (ANSWER_SOURCE=mcp_hub, the default) and it is configured, so the code is sent by the hub to the
+# customer's registered number and checked by the hub; local otherwise. Hub mode sends a real SMS
+# or e-mail to a real customer on every run.
+_OTP_DEFAULT = (
+    "hub"
+    if os.environ.get("ANSWER_SOURCE", "mcp_hub").strip().lower() == "mcp_hub" and os.environ.get("MCP_HUB_API_KEY", "").strip()
+    else "local"
+)
+VERIFY_OTP_BACKEND = os.environ.get("VERIFY_OTP_BACKEND", "").strip().lower() or _OTP_DEFAULT
 if VERIFY_OTP_BACKEND not in ("local", "hub"):
     VERIFY_OTP_BACKEND = "local"
 
