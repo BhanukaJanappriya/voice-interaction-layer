@@ -108,7 +108,52 @@ def _kept(result, threshold: float) -> list:
     return kept
 
 
+# The hub's knowledge base is public and changes rarely, so the answer to a question that was just
+# asked is kept for a few minutes: the second time costs no hub call (about 2 s on the live hub).
+# Only a successful answer is kept, never a failure, and only for the guest tool.
+CACHE_SECONDS = 600
+CACHE_MAX = 200
+_cache: "dict[str, tuple[float, Search]]" = {}
+
+
+def _cache_key(query: str) -> str:
+    return " ".join(query.lower().split())
+
+
+def _cache_get(query: str) -> Optional[Search]:
+    import time
+
+    hit = _cache.get(_cache_key(query))
+    if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
+        return Search(hit[1].kind, list(hit[1].chunks), 0)
+    return None
+
+
+def _cache_put(query: str, found: Search) -> None:
+    import time
+
+    if len(_cache) >= CACHE_MAX:
+        for key in sorted(_cache, key=lambda k: _cache[k][0])[: CACHE_MAX // 4]:
+            _cache.pop(key, None)
+    _cache[_cache_key(query)] = (time.monotonic(), found)
+
+
+def clear_cache() -> None:
+    _cache.clear()
+
+
 def search(text: str, access, budget: Optional[float] = None, language: Optional[str] = None) -> Search:
+    query = expand_query(text, language)[:QUERY_CHARS]
+    cached = _cache_get(query)
+    if cached is not None:
+        return cached
+    found = _search(text, access, budget, language)
+    if found.kind in ("found", "none"):
+        _cache_put(query, found)
+    return found
+
+
+def _search(text: str, access, budget: Optional[float] = None, language: Optional[str] = None) -> Search:
     from concurrent.futures import ThreadPoolExecutor
 
     query = expand_query(text, language)[:QUERY_CHARS]

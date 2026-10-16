@@ -211,6 +211,9 @@ def db_schema():
 
 
 def _reset_service_caches():
+    knowledge = optional_import("tool_agent.knowledge")
+    if knowledge is not None and hasattr(knowledge, "clear_cache"):
+        knowledge.clear_cache()  # a cached hub answer must not leak into the next test
     service = optional_import("admin.service")
     if service is None:
         return
