@@ -101,6 +101,7 @@ BARGE_ENERGY_MARGIN = 2.0  # frame RMS must be this many times the calibrated fl
 BARGE_MIN_RMS = 0.02  # and never below this absolute level (a quiet room has a tiny floor)
 BARGE_CONFIRM_MS = 300  # continuous speech needed before the reply is cut off
 BARGE_GAP_FRAMES = 3  # up to 90 ms of quiet inside a word does not restart the count
+BARGE_ECHO_GAP_FRAMES = 3  # extra quiet frames tolerated inside a word while the echo guard has a reference (the echo hides the weak parts)
 BARGE_PREROLL_MS = 150  # audio kept from before the first speech frame
 BARGE_HISTORY_MS = 2000
 
@@ -124,8 +125,22 @@ class BargeInDetector:
         min_rms: float = BARGE_MIN_RMS,
         gap_frames: int = BARGE_GAP_FRAMES,
         preroll_ms: int = BARGE_PREROLL_MS,
+        echo_guard=None,
     ):
         self._vad = vad
+        # The echo guard (echo_guard.py) tells the assistant's own voice coming
+        # back through the microphone, and steady device sound, from the user.
+        # None builds the default one on the reference the server's player feeds;
+        # False switches it off (the detector then behaves as before it existed).
+        if echo_guard is None:
+            try:
+                from echo_guard import EchoGuard
+
+                echo_guard = EchoGuard(noise_rms=getattr(vad, "noise_floor_rms", 0.0) / 2.5)
+            except Exception as exc:  # noqa: BLE001  never let the guard break barge in
+                print(f"VAD: echo guard unavailable ({exc}), barge in works without it.")
+                echo_guard = False
+        self._echo = echo_guard or None
         self._need_frames = max(1, round(confirm_ms / FRAME_MS))
         self._margin = energy_margin
         self._min_rms = min_rms
@@ -134,7 +149,14 @@ class BargeInDetector:
         self._max_history = int(SAMPLE_RATE * BARGE_HISTORY_MS / 1000)
         self.reset()
 
+    @property
+    def echo_stats(self) -> dict:
+        """Frame verdict counts of the echo guard, for logging."""
+        return self._echo.stats() if self._echo is not None else {}
+
     def reset(self) -> None:
+        if getattr(self, "_echo", None) is not None:
+            self._echo.reset_framing()  # the guard frames the chunks exactly like this detector
         self._history = np.zeros(0, dtype=np.float32)
         self._carry = np.zeros(0, dtype=np.float32)
         self._frames_total = 0  # frames examined since reset (for the position of the run start)
@@ -147,31 +169,51 @@ class BargeInDetector:
     def threshold_rms(self) -> float:
         return max(self._vad.noise_floor_rms * self._margin, self._min_rms)
 
-    def _frame_is_speech(self, frame: np.ndarray) -> bool:
+    def _frame_is_speech(self, frame: np.ndarray, verdict=None) -> bool:
         rms = float(np.sqrt(np.mean(np.square(frame))))
         if rms < self.threshold_rms:
             return False
+        if verdict is not None and verdict.kind != "human":
+            return False  # the assistant's own sound or steady device sound, not the user
         pcm16 = np.clip(frame * 32768.0, -32768, 32767).astype(np.int16)
         return bool(self._vad._vad.is_speech(pcm16.tobytes(), SAMPLE_RATE))
 
-    def feed(self, chunk: np.ndarray) -> Optional[np.ndarray]:
+    def feed(self, chunk: np.ndarray, now: Optional[float] = None) -> Optional[np.ndarray]:
+        """now: the clock time (time.monotonic) at which the chunk ended, used by
+        the echo guard to line the microphone up with what was played. Defaults
+        to the moment of the call."""
         if chunk is None or chunk.size == 0:
             return None
         self._history = np.concatenate([self._history, chunk])
         data = np.concatenate([self._carry, chunk])
         usable = (data.size // FRAME_SAMPLES) * FRAME_SAMPLES
         self._carry = data[usable:]
+        verdicts = None
+        if self._echo is not None:
+            try:
+                verdicts = self._echo.process_chunk(chunk, now)
+                if len(verdicts) != usable // FRAME_SAMPLES:
+                    verdicts = None
+            except Exception as exc:  # noqa: BLE001
+                print(f"VAD: echo guard failed ({exc}), switching it off.")
+                self._echo = None
+        reference_on = False
+        if self._echo is not None:
+            try:
+                reference_on = self._echo.reference_recent(now)
+            except Exception:  # noqa: BLE001
+                reference_on = False
         triggered = False
         for i in range(0, usable, FRAME_SAMPLES):
             frame = data[i : i + FRAME_SAMPLES]
-            if self._frame_is_speech(frame):
+            if self._frame_is_speech(frame, verdicts[i // FRAME_SAMPLES] if verdicts else None):
                 if self._run_start_frame is None:
                     self._run_start_frame = self._frames_total
                 self._run_frames += 1
                 self._gap = 0
             elif self._run_start_frame is not None:
                 self._gap += 1
-                if self._gap > self._gap_frames:
+                if self._gap > self._gap_frames + (BARGE_ECHO_GAP_FRAMES if reference_on else 0):
                     self._run_frames, self._gap, self._run_start_frame = 0, 0, None
             self._frames_total += 1
             if self._run_frames >= self._need_frames:

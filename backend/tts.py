@@ -44,6 +44,7 @@ import threading
 import time
 from typing import Callable, Iterable, Optional
 
+import numpy as np
 import pyttsx3
 
 import config
@@ -173,12 +174,34 @@ def _current_cancel() -> Optional[threading.Event]:
     return getattr(_playback, "cancel", None)
 
 
+def _note_reference(samples, samplerate, start_time=None) -> None:
+    """Tells the echo guard (echo_guard.py) what is about to be played, so the
+    barge in detector can tell the assistant's own voice coming back through the
+    microphone from the user. Never raises: playback must not depend on it."""
+    try:
+        from echo_guard import shared_reference
+
+        shared_reference().add(samples, int(samplerate), start_time)
+    except Exception as exc:  # noqa: BLE001
+        print(f"TTS: echo reference not updated ({exc}).")
+
+
+def _clear_reference() -> None:
+    try:
+        from echo_guard import shared_reference
+
+        shared_reference().clear()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _play(data, samplerate) -> None:
     import sounddevice as sd
 
     cancel = _current_cancel()
     if cancel is not None and cancel.is_set():
         return
+    _note_reference(data, samplerate, time.monotonic())
     sd.play(data, samplerate)
     if cancel is None:
         sd.wait()
@@ -191,6 +214,7 @@ def _play(data, samplerate) -> None:
     while time.monotonic() < deadline:
         if cancel.wait(_CANCEL_POLL_SECONDS):
             sd.stop()  # flushes what sounddevice still holds for this clip
+            _clear_reference()
             return
     sd.wait()
 
@@ -227,6 +251,7 @@ def _play_pcm_stream(first_chunk: bytes, chunks: "queue.Queue", samplerate: int)
         while item is not None:
             if cancel is not None and cancel.is_set():
                 out.abort()  # drops the buffered audio instead of draining it
+                _clear_reference()
                 break
             if isinstance(item, Exception):
                 print(f"TTS: Google stream broke part way ({item}).")
@@ -239,7 +264,9 @@ def _play_pcm_stream(first_chunk: bytes, chunks: "queue.Queue", samplerate: int)
                 for start in range(0, usable, step):
                     if cancel is not None and cancel.is_set():
                         break
-                    out.write(data[start : min(start + step, usable)])
+                    piece = data[start : min(start + step, usable)]
+                    _note_reference(np.frombuffer(piece, dtype=np.int16), samplerate)
+                    out.write(piece)
             leftover = data[usable:]
             while True:
                 try:
@@ -652,6 +679,8 @@ def speak_stream(
             print(f"TTS playback ({language}): {time.perf_counter() - start:.2f}s")
     finally:
         _playback.cancel = None
+        if cancel is not None and cancel.is_set():
+            _clear_reference()  # flushed: nothing more is coming out of the speakers
 
 
 def warm_up() -> None:

@@ -116,8 +116,12 @@ class FakeMic:
 
 
 def speech(seconds, rate=SR):
+    """Voiced, syllable like test signal (a steady sine is a hum to the echo guard, and a hum is
+    deliberately not taken for the user)."""
     t = np.arange(int(seconds * rate)) / rate
-    return (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    carrier = np.sin(2 * np.pi * 220 * t) + 0.5 * np.sin(2 * np.pi * 440 * t) + 0.3 * np.sin(2 * np.pi * 660 * t)
+    envelope = 0.65 + 0.35 * np.sin(2 * np.pi * 4 * t)
+    return (0.2 * carrier * envelope).astype(np.float32)
 
 
 def silence(seconds, rate=SR):

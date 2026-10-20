@@ -57,6 +57,7 @@ import numpy as np
 from livekit import rtc
 
 from i18n import t
+from echo_guard import EchoGuard, EchoReference
 from vad import SAMPLE_RATE
 
 from .errors import SessionError
@@ -251,6 +252,9 @@ class LiveKitVoiceSession:
         self._preroll: "collections.deque" = collections.deque(maxlen=PREROLL_BLOCKS)
         self._barge = asyncio.Event()
         self._barge_run = 0
+        # What this session published, to tell its own voice coming back from the user.
+        self._echo_reference = EchoReference()
+        self._echo_guard: Optional[EchoGuard] = None
         self._closed = asyncio.Event()
         self._handlers: list = []
         self._send_failed_logged = False
@@ -443,7 +447,7 @@ class LiveKitVoiceSession:
                     self._listen_buf, self._listen_samples = [], 0
             elif mode == "interruptible":
                 self._preroll.append(block)
-                if self._vad.is_speech(block):
+                if self._vad.is_speech(block) and self._block_is_human(block):
                     self._barge_run += 1
                     if self._barge_run >= self._barge_blocks_needed:
                         self._barge_run = 0
@@ -453,6 +457,27 @@ class LiveKitVoiceSession:
                         self._barge.set()
                 else:
                     self._barge_run = 0
+
+    def _block_is_human(self, block: np.ndarray) -> bool:
+        """The echo guard's opinion of one 100 ms block. True (the old behaviour)
+        when no speech was published lately or the guard fails; otherwise at
+        least half of the block's 30 ms frames must be judged to be a person."""
+        try:
+            guard = self._echo_guard
+            if guard is None:
+                guard = self._echo_guard = EchoGuard(
+                    self._echo_reference, noise_rms=getattr(self._vad, "noise_floor_rms", 0.0) / 2.5
+                )
+            now = time.monotonic()
+            verdicts = guard.process_chunk(block, now)
+            if not verdicts or not self._echo_reference.recent(now):
+                return True
+            humans = sum(1 for v in verdicts if v.kind == "human")
+            return humans * 2 >= len(verdicts)
+        except Exception as exc:  # noqa: BLE001  the guard must never stop barge in
+            print(f"LiveKit: echo guard failed ({exc.__class__.__name__}), using the plain VAD.")
+            self._echo_guard = None
+            return True
 
     def _enter_listen(self, seed: Optional[list] = None):
         self._chunk_source = _ChunkQueueSource()
@@ -651,6 +676,10 @@ class LiveKitVoiceSession:
             raise
 
     async def _capture(self, samples: np.ndarray):
+        try:
+            self._echo_reference.add(samples, AGENT_SAMPLE_RATE)
+        except Exception:  # noqa: BLE001
+            pass
         frame = rtc.AudioFrame(samples.astype(np.int16).tobytes(), AGENT_SAMPLE_RATE, 1, samples.size)
         await self._source.capture_frame(frame)
 
@@ -714,6 +743,8 @@ class LiveKitVoiceSession:
         generation and synthesis are cancelled, the audio queue is cleared
         (so buffered speech stops now) and "interrupt" is sent."""
         self._barge.clear()
+        if self._echo_guard is not None:
+            self._echo_guard.reset_stream()  # the microphone was not fed to it in the other modes
         self._mode = "interruptible" if interruptible else "drop"
         self._barge_run = 0
         self._preroll.clear()
@@ -734,6 +765,7 @@ class LiveKitVoiceSession:
                 self._source.clear_queue()
             except Exception:
                 pass
+            self._echo_reference.clear()  # the buffered speech was flushed
             if barge_task in done:
                 await self._send({"type": "interrupt"})
                 print("LiveKit: barge in, the assistant stopped speaking.")
