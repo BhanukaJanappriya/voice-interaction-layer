@@ -11,6 +11,8 @@ tiers:
     # Called only by the wizard endpoints, never offered to a model.
     - validate_customer_and_send_otp
     - verify_otp_and_authenticate
+    # Seeds the customer's own connection from the tokens the hub's REST sign in issued (HUB_AUTH_MODE=token).
+    - authenticate_with_token
   authenticated:
     - show_gb_balance
     - show_extra_gb_packages
@@ -35,8 +37,7 @@ tiers:
     # Admin page and /health only. Customers get it only with EXPOSE_LATENCY_TOOL=true.
     - get_function_latencies
   never:
-    # The hub renews tokens itself; seeding a session from tokens is not used.
-    - authenticate_with_token
+    # The hub renews tokens itself.
     - refresh_customer_token
 
 service_types:

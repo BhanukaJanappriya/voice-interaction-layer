@@ -19,6 +19,12 @@ Order of checks in call(), cheapest and safest first:
      connection and needs no login.
 A hub answer that says the login is gone ("No active session") closes and
 drops the pooled connection and comes back as "reauth".
+
+Token mode (HUB_AUTH_MODE=token, see rest_auth.py): the sign in uses the hub's REST endpoints, which issue
+tokens, and the customer's connection is seeded with the authenticate_with_token tool. The tokens are kept
+in memory (_tokens) until they expire, so a connection that was closed, evicted for idleness or lost can be
+seeded again on demand without asking for a new code: a read only call is then tried once more, a state
+changing call never is (the customer is told the sign in ended and nothing was changed).
 """
 
 import json
@@ -33,7 +39,7 @@ from access.tool_gate import AccessDenied, authorize_tool, bind_arguments, is_pu
 from mcp_client.client import HubTool, get_hub
 from mcp_client.errors import HubAuthError, HubBreakerOpen, HubError, HubToolError, HubUnavailable
 from mcp_client.tools import _runner, call_tool_sync
-from mcp_gateway import access_matrix, audit
+from mcp_gateway import access_matrix, audit, rest_auth
 from mcp_gateway.pool import SessionPool, get_pool
 from mcp_gateway.session import SessionDead
 
@@ -101,6 +107,14 @@ FALLBACK_SERVICE_TYPE = "postpaid"
 UNKNOWN_RETRY_SECONDS = 60.0
 _last_error: Optional[str] = None
 _hooked: Optional[SessionPool] = None
+SEED_TOOL = "authenticate_with_token"
+MAX_TOKEN_ENTRIES = 500
+_tokens: "dict[str, rest_auth.Tokens]" = {}  # national number -> tokens, memory only, never logged or sent anywhere
+_tokens_lock = threading.Lock()
+_reseed_locks: "dict[str, threading.Lock]" = {}
+_SEED_REFUSED = re.compile(
+    r"not authenticated|\b(fail|fails|failed|failure|invalid|expired|unauthori[sz]ed|denied|error|rejected)\b", re.IGNORECASE
+)
 
 
 # Helpers
@@ -111,6 +125,7 @@ def _pool() -> SessionPool:
     pool = get_pool()
     if pool is not _hooked:
         pool.add_sweep_hook(_sweep_pending)
+        pool.add_sweep_hook(_sweep_tokens)
         _hooked = pool
     return pool
 
@@ -231,20 +246,35 @@ def _call(tool: str, arguments, access, national: Optional[str], budget, confirm
         bound["telephone_no"] = national  # the hub documents the national form
     session = _pool().get(national)
     if session is None:
-        return _fail(tool, REAUTH, "no_session", started, national)
+        # A connection that is gone (closed, evicted for idleness, lost) is seeded again from the stored
+        # tokens when they are still good. A state changing call is not run on a connection built just
+        # now: the customer is asked again, the session is ready for the next call.
+        session, why = _reseed(national)
+        if session is None:
+            return _fail(tool, UNAVAILABLE if why == "unavailable" else REAUTH, "reseed_unavailable" if why == "unavailable" else "no_session", started, national)
+        if changing:
+            return _fail(tool, REAUTH, "reseeded", started, national)
     service = _cached_service_type(national)
     if matrix.restricted(tool):
         service = service_type(access)
-        if _pool().get(national) is not session:
+        fresh = _pool().get(national)
+        if fresh is None or (fresh is not session and _valid_tokens(national) is None):
             return _fail(tool, REAUTH, "login_lost", started, national, service)
+        if fresh is not session:
+            # The service lookup seeded the connection again. A state changing call is not run on it.
+            if changing:
+                return _fail(tool, REAUTH, "reseeded", started, national, service)
+            session = fresh
         if not matrix.allowed(tool, tier, service if service != "unknown" else FALLBACK_SERVICE_TYPE):
             return _fail(tool, REFUSED, "service_type", started, national, service)
     return _pooled(tool, bound, national, session, budget, started, service)
 
 
 def _pooled(tool: str, bound: dict, national: str, session, budget: float, started: float, service: str) -> GatewayResult:
-    """One call on the customer's connection. No retry, ever: a retry cannot
-    bring a lost login back, and a repeated purchase would be worse."""
+    """One call on the customer's connection. Without stored tokens there is no retry: a retry cannot
+    bring a lost login back. With valid stored tokens (token mode) a read only call whose connection is
+    gone or whose login the hub lost is tried ONCE more on a connection seeded again. A state changing
+    call is never repeated, a repeated purchase would be worse."""
     pool = _pool()
     try:
         output = session.call(tool, bound, budget)
@@ -253,14 +283,45 @@ def _pooled(tool: str, bound: dict, national: str, session, budget: float, start
     except SessionDead:
         pool.discard(national, session)
         _forget_service_type(national)
-        return _fail(tool, UNAVAILABLE, "connection_lost", started, national, service)
+        retried = _retry_read(tool, bound, national, budget, started, service)
+        return retried or _fail(tool, UNAVAILABLE, "connection_lost", started, national, service)
     except HubToolError:
         return _fail(tool, ERROR, "tool_error", started, national, service)
     result = _answer(tool, output.text, output.is_error, True, started, national, service)
     if result.kind == REAUTH:
         pool.discard(national, session)
         _forget_service_type(national)
+        retried = _retry_read(tool, bound, national, budget, started, service)
+        return retried or result
     return result
+
+
+def _retry_read(tool: str, bound: dict, national: str, budget: float, started: float, service: str) -> Optional[GatewayResult]:
+    """The one second try of a read only call on a connection seeded again, or None (no valid tokens, a
+    state changing tool, or the seed failed; the first answer then stands). Never raises."""
+    try:
+        if _valid_tokens(national) is None:
+            return None
+        session, _ = _reseed(national)
+        if session is None or access_matrix.load().is_state_changing(tool):
+            return None  # a state changing call is never repeated; the next call finds a seeded connection
+        try:
+            output = session.call(tool, bound, budget)
+        except TimeoutError:
+            return _fail(tool, TIMEOUT, "timeout", started, national, service)
+        except SessionDead:
+            _pool().discard(national, session)
+            return _fail(tool, UNAVAILABLE, "connection_lost", started, national, service)
+        except HubToolError:
+            return _fail(tool, ERROR, "tool_error", started, national, service)
+        again = _answer(tool, output.text, output.is_error, True, started, national, service)
+        if again.kind == REAUTH:
+            _pool().discard(national, session)
+            _forget_tokens(national)  # the hub refuses the seeded login too: sign in again
+            _forget_service_type(national)
+        return again
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _shared(tool: str, args: dict, budget: float, changing: bool, started: float, national: Optional[str]) -> GatewayResult:
@@ -414,6 +475,106 @@ def tool_schemas(access, service_type: Optional[str] = None, include_state_chang
         return []
 
 
+# Tokens and seeding (token mode)
+
+
+def _valid_tokens(national: str) -> Optional["rest_auth.Tokens"]:
+    with _tokens_lock:
+        found = _tokens.get(national)
+        if found is not None and found.expired():
+            del _tokens[national]
+            found = None
+    return found
+
+
+def _store_tokens(national: str, tokens: "rest_auth.Tokens") -> None:
+    with _tokens_lock:
+        _tokens.pop(national, None)
+        _tokens[national] = tokens
+        while len(_tokens) > MAX_TOKEN_ENTRIES:
+            _tokens.pop(next(iter(_tokens)))
+
+
+def _forget_tokens(national: str) -> None:
+    with _tokens_lock:
+        _tokens.pop(national, None)
+
+
+def _sweep_tokens() -> None:
+    """Idle sweep: tokens past their own expiry go. Tokens of a connection that was merely closed for
+    idleness stay until then, so that connection can be seeded again on demand."""
+    with _tokens_lock:
+        for key in [k for k, t in _tokens.items() if t.expired()]:
+            del _tokens[key]
+
+
+def has_tokens(access) -> bool:
+    national = _national_of(access)
+    return bool(national and _valid_tokens(national) is not None)
+
+
+def _seed(national: str, tokens: "rest_auth.Tokens") -> "tuple[Optional[Any], str]":
+    """A new pooled style connection seeded with authenticate_with_token. (session, "ok"), or
+    (None, "rejected") when the hub answered no, or (None, "unavailable") when it could not be asked."""
+    session = None
+    try:
+        session = _pool().open_detached()
+        output = session.call(
+            SEED_TOOL,
+            {
+                "telephone_no": national,
+                "access_token": tokens.access_token,
+                "refresh_token": tokens.refresh_token,
+                "subscriber_id": tokens.subscriber_id,
+                "account_number": tokens.account_number,
+                "expires_at": float(tokens.expires_at),
+            },
+            max(LOGIN_BUDGET_SECONDS, float(config.MCP_HUB_TIMEOUT_SECONDS)),
+        )
+    except Exception:  # noqa: BLE001
+        if session is not None:
+            session.close()
+        return None, "unavailable"
+    data = _parse(output.text)
+    text = output.text or ""
+    refused = output.is_error or text.startswith("Error executing tool")
+    if isinstance(data, dict):
+        refused = refused or data.get("success") is False or bool(data.get("error"))
+    elif text and not refused:
+        refused = bool(_SEED_REFUSED.search(text))
+    if refused:
+        session.close()
+        return None, "rejected"
+    return session, "ok"
+
+
+def _reseed(national: str) -> "tuple[Optional[Any], str]":
+    """A pooled connection for national from the stored tokens. (session, "ok") (an existing pooled one
+    is used when another thread was first), (None, "no_tokens"), (None, "rejected") (the hub refuses the
+    tokens: they are dropped, the customer signs in again) or (None, "unavailable") (tokens kept)."""
+    if _valid_tokens(national) is None:
+        return None, "no_tokens"
+    with _tokens_lock:
+        lock = _reseed_locks.setdefault(national, threading.Lock())
+    with lock:
+        existing = _pool().get(national)
+        if existing is not None:
+            return existing, "ok"
+        tokens = _valid_tokens(national)
+        if tokens is None:
+            return None, "no_tokens"
+        started = time.perf_counter()
+        session, verdict = _seed(national, tokens)
+        audit.record(national, SEED_TOOL, "ok" if session is not None else verdict, _ms(started))
+        if session is None:
+            if verdict == "rejected":
+                _forget_tokens(national)
+            return None, verdict
+        _forget_service_type(national)
+        _pool().put(national, session)
+        return session, "ok"
+
+
 # Login path (the wizard only)
 
 
@@ -434,12 +595,56 @@ def _close_pending(national: str) -> None:
             pass
 
 
+class _RestLogin:
+    """Stands in for the connection of a pending login that the hub's REST endpoint sent the code for:
+    nothing is open, so there is nothing to keep alive or to close."""
+
+    alive = True
+
+    def close(self) -> None:
+        return None
+
+
 def _sweep_pending() -> None:
     now = _clock()
     with _pending_lock:
         gone = [k for k, p in _pending.items() if now - p.created > PENDING_TTL_SECONDS or not p.session.alive]
     for key in gone:
         _close_pending(key)
+
+
+def _rest_mode() -> bool:
+    return getattr(config, "HUB_AUTH_MODE", "connection") == "token" and not rest_auth.fallback_active()
+
+
+def _begin_login_rest(national: str, otp_media: int) -> Optional[LoginStart]:
+    """The code is sent by the hub's REST endpoint. None means the endpoint itself failed: the connection
+    mode then does this send (and the next ones for a while). Never raises."""
+    global _last_error
+    started = time.perf_counter()
+    tool = "rest_otp_send"
+    try:
+        _sweep_pending()
+        _close_pending(national)
+        sent = rest_auth.send(national, otp_media)
+        if sent.transport:
+            rest_auth.enter_fallback("send")
+            audit.record(national, tool, "fallback", _ms(started))
+            return None
+        if not sent.ok:
+            audit.record(national, tool, "rejected", _ms(started))
+            return LoginStart(False, reason="rejected")
+        with _pending_lock:
+            _pending[national] = _Pending(_RestLogin(), sent.session_id, _clock())
+            while len(_pending) > max(1, int(config.HUB_SESSION_MAX)):
+                oldest = min(_pending, key=lambda k: _pending[k].created)
+                _pending.pop(oldest)
+        audit.record(national, tool, "ok", _ms(started))
+        _last_error = None
+        return LoginStart(True, sent.session_id, sent.masked_mobile, sent.masked_email)
+    except Exception:  # noqa: BLE001
+        rest_auth.enter_fallback("send_error")
+        return None
 
 
 def begin_login(phone_national: str, otp_media: int) -> LoginStart:
@@ -454,6 +659,10 @@ def begin_login(phone_national: str, otp_media: int) -> LoginStart:
     if national is None:
         return LoginStart(False, reason="invalid_number")
     global _last_error
+    if _rest_mode():
+        started_rest = _begin_login_rest(national, int(otp_media))
+        if started_rest is not None:
+            return started_rest
     session = None
     try:
         _sweep_pending()
@@ -503,6 +712,8 @@ def finish_login(phone_national: str, hub_session_id: str, code: str) -> LoginRe
     if str(hub_session_id or "") != entry.hub_session_id:
         return LoginResult(False, "mismatch")
     entry.tries += 1
+    if isinstance(entry.session, _RestLogin):
+        return _finish_login_rest(national, entry, code, started)
     try:
         output = entry.session.call(
             tool,
@@ -534,19 +745,62 @@ def finish_login(phone_national: str, hub_session_id: str, code: str) -> LoginRe
                 name = None
         return LoginResult(True, "", name, bool(data.get("subscriber_id")))
     message = str(data.get("error") or "") if isinstance(data, dict) else output.text
-    lowered = message.lower()
-    if re.search(r"too many|locked|attempt", lowered):
-        reason = "locked"
-    elif "expire" in lowered and not re.search(r"invalid|incorrect|wrong", lowered):
-        reason = "expired"
-    else:
-        reason = "invalid_code"
+    return _refused_code(national, entry, rest_auth.classify_failure(message), tool, started)
+
+
+def _refused_code(national: str, entry: "_Pending", reason: str, tool: str, started: float) -> LoginResult:
+    """A wrong, expired or locked code: the pending login stays for another try only after a wrong code."""
     if reason != "invalid_code" or entry.tries >= MAX_CODE_TRIES:
         _close_pending(national)
         if reason == "invalid_code":
             reason = "too_many_attempts"
     audit.record(national, tool, reason, _ms(started))
     return LoginResult(False, reason)
+
+
+def _finish_login_rest(national: str, entry: "_Pending", code: str, started: float) -> LoginResult:
+    """The code is checked by the hub's REST endpoint, which answers with the tokens; a new connection is
+    seeded with them and becomes the customer's session. Trouble after the code was accepted (no readable
+    tokens, the seed refused) is "unavailable": the code is used up, and the next sign ins use the
+    connection mode for a while."""
+    global _last_error
+    tool = "rest_otp_verify"
+    done = rest_auth.verify(national, entry.hub_session_id, str(code or "").strip())
+    if done.transport:
+        _close_pending(national)
+        rest_auth.enter_fallback("verify")
+        _last_error = "unavailable"
+        audit.record(national, tool, "unavailable", _ms(started))
+        return LoginResult(False, "unavailable")
+    if not done.ok:
+        return _refused_code(national, entry, done.reason or "invalid_code", tool, started)
+    _close_pending(national)  # the code is used whatever happens next
+    tokens = done.tokens
+    if tokens is None or tokens.expired():
+        rest_auth.enter_fallback("verify_shape")
+        _last_error = "unavailable"
+        audit.record(national, tool, "no_tokens", _ms(started))
+        return LoginResult(False, "unavailable")
+    session, verdict = _seed(national, tokens)
+    if session is None:
+        rest_auth.enter_fallback("seed_" + verdict)
+        _last_error = "unavailable"
+        audit.record(national, SEED_TOOL, verdict, _ms(started))
+        return LoginResult(False, "unavailable")
+    _store_tokens(national, tokens)
+    _forget_service_type(national)
+    _pool().put(national, session)
+    audit.record(national, tool, "ok", _ms(started))
+    _last_error = None
+    name = None
+    if config.HUB_NAME_LOOKUP_SECONDS > 0:
+        try:
+            from . import profile
+
+            name = profile.fetch_name(session, national, config.HUB_NAME_LOOKUP_SECONDS)
+        except Exception:  # noqa: BLE001
+            name = None
+    return LoginResult(True, "", name, bool(tokens.subscriber_id))
 
 
 def end_login(phone_national: str) -> None:
@@ -560,8 +814,15 @@ def end_login(phone_national: str) -> None:
 
 
 def has_session(access) -> bool:
+    """True when the customer has a live connection. Without one, stored tokens that are still good seed a
+    new connection now (token mode), so a connection lost to idleness or a restart of the hub's session
+    does not end the visit."""
     national = _national_of(access)
-    return bool(national and _pool().get(national) is not None)
+    if not national:
+        return False
+    if _pool().get(national) is not None:
+        return True
+    return _reseed(national)[0] is not None
 
 
 def drop_session(access) -> None:
@@ -569,6 +830,7 @@ def drop_session(access) -> None:
     if national:
         _pool().close(national)
         _forget_service_type(national)
+        _forget_tokens(national)
 
 
 def warm_status() -> dict:

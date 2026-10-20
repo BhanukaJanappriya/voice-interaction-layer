@@ -94,7 +94,9 @@ def test_matrix_tiers_and_service_types():
     assert "show_lte_wallet_detail" in lte and "show_gb_balance" not in lte
     assert "show_service_detail" in unknown and "show_gb_balance" not in unknown
     assert "show_lte_wallet_detail" not in unknown
-    assert m.never("authenticate_with_token") and not m.allowed("authenticate_with_token", "authenticated", "postpaid")
+    # seeding a connection from tokens belongs to the sign in only, never to a customer or a model
+    assert m.allowed("authenticate_with_token", "authenticating", "unknown") and not m.allowed("authenticate_with_token", "authenticated", "postpaid")
+    assert m.never("refresh_customer_token")
     assert m.is_state_changing("purchase_extra_gb") and not m.is_state_changing("show_gb_balance")
     assert "get_function_latencies" not in postpaid
     assert "get_function_latencies" in m.tool_names_for("authenticated", "postpaid", expose_latency=True)
@@ -151,8 +153,8 @@ def test_guest_search_works_and_reports_json(hub):
 def test_the_never_tools_are_refused_even_for_a_customer(hub):
     login(hub)
     hub.reset_counters()
-    for tool in ("authenticate_with_token", "refresh_customer_token"):
-        assert gateway.call(tool, {}, verified()).reason == "never"
+    assert gateway.call("refresh_customer_token", {}, verified()).reason == "never"
+    assert gateway.call("authenticate_with_token", {}, verified()).kind == "refused"
     assert gateway.call("validate_customer_and_send_otp", {"telephone_no": FIBRE_NUMBER}, verified()).kind == "refused"
     assert hub.tool_calls == []
 

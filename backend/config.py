@@ -409,6 +409,15 @@ KB_MAX_CHARS = _env_int("KB_MAX_CHARS", 4000)
 # then skips the connect, initialise and slow first call (measured 2 to 4 s on the live hub).
 # After a hub sign in the customer's name is looked for in the read only customer tools' answers (the verify
 # answer has none), for at most this many seconds; 0 turns the lookup off (mcp_gateway/profile.py).
+# How a customer is signed in on the hub. "token": the hub's own REST endpoints /api/otp/send and /api/otp/verify
+# send and check the code and issue the access and refresh tokens, which are then seeded into the customer's MCP
+# connection with the authenticate_with_token tool (and again on a new connection when the old one drops, as long
+# as the tokens have not expired). "connection": the OTP tools on one MCP connection (the hub ties that login to the
+# connection). In "token" mode a failing REST endpoint falls back to "connection" for the next sign ins.
+HUB_AUTH_MODE = os.environ.get("HUB_AUTH_MODE", "token").strip().lower()
+if HUB_AUTH_MODE not in ("token", "connection"):
+    HUB_AUTH_MODE = "connection"
+HUB_REST_TIMEOUT_SECONDS = float(os.environ.get("HUB_REST_TIMEOUT_SECONDS", "").strip() or 15)
 HUB_NAME_LOOKUP_SECONDS = float(os.environ.get("HUB_NAME_LOOKUP_SECONDS", "").strip() or 6)
 HUB_WARM_SHARED = os.environ.get("HUB_WARM_SHARED", "true").strip().lower() in ("1", "true", "yes")
 HUB_WARM_POOL_SIZE = int(os.environ.get("HUB_WARM_POOL_SIZE", "").strip() or 3)

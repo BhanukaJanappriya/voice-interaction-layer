@@ -31,6 +31,7 @@ import socket
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import uvicorn
@@ -84,15 +85,18 @@ class _Gate:
                     hub.auth_failures += 1
                 await _reply(send, 401, b"Unauthorized")
                 return
+        if scope["path"] in ("/api/otp/send", "/api/otp/verify") and hub.rest_otp and scope["method"] == "POST":
+            await hub._rest(scope, receive, send)
+            return
         await self.app(scope, receive, send)
 
 
-async def _reply(send: Send, status: int, body: bytes) -> None:
+async def _reply(send: Send, status: int, body: bytes, content_type: str = "text/plain; charset=utf-8") -> None:
     await send(
         {
             "type": "http.response.start",
             "status": status,
-            "headers": [(b"content-type", b"text/plain; charset=utf-8"), (b"content-length", str(len(body)).encode())],
+            "headers": [(b"content-type", content_type.encode()), (b"content-length", str(len(body)).encode())],
         }
     )
     await send({"type": "http.response.body", "body": body})
@@ -161,6 +165,21 @@ class MockHub:
         self.customer_tool_delays: dict[str, float] = {}  # tool name -> seconds to wait
         self.customer_names: dict[str, str] = {}  # national number -> the name show_service_detail reports
         self.customer_payloads: dict[str, str] = {}  # tool name -> raw reply text instead of the fake JSON
+        # The hub's REST sign in (/api/otp/send and /api/otp/verify), off by default: with rest_otp False these
+        # paths answer 404 like a hub without them. The success shapes are a GUESS (not seen on the real hub).
+        self.rest_otp = False
+        self.rest_status: Optional[int] = None  # force this HTTP status (404, 500, ...) with a plain text body
+        self.rest_not_json = False  # answer 200 with a non JSON body
+        self.rest_verify_status: Optional[int] = None  # like rest_status, for /api/otp/verify only
+        # flat | camel | pascal | data | result | tokens | token | missing | no_account
+        self.rest_token_shape = "flat"
+        # unix | ms | iso | in (expires_in seconds)
+        self.rest_expiry_style = "unix"
+        self.rest_token_ttl = 3600.0  # seconds from now; negative: already expired when issued
+        self.issued_tokens: dict[str, dict] = {}  # national number -> the tokens last issued
+        self.rest_calls: list[tuple[str, str]] = []  # ("send" | "verify", national number)
+        self.seed_fail = False  # authenticate_with_token answers success false whatever the tokens
+        self.seed_text_error = False  # ... or an "Error ..." text instead of JSON
         # Counters.
         self.requests = 0
         self.auth_failures = 0
@@ -305,6 +324,115 @@ class MockHub:
 
         return mcp
 
+    # REST sign in
+
+    async def _rest(self, scope: Scope, receive: Receive, send: Send) -> None:
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if not message.get("more_body"):
+                break
+        path = scope["path"]
+        forced = self.rest_status
+        if path.endswith("/verify") and self.rest_verify_status is not None:
+            forced = self.rest_verify_status
+        if forced is not None:
+            await _reply(send, forced, b"forced failure")
+            return
+        if self.rest_not_json:
+            await _reply(send, 200, b"<html>not json</html>")
+            return
+        try:
+            data = json.loads(body.decode("utf-8") or "{}")
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            data = {}
+        status, answer = self._rest_answer(path, data)
+        await _reply(send, status, json.dumps(answer).encode("utf-8"), "application/json")
+
+    def _rest_answer(self, path: str, data: dict) -> "tuple[int, dict]":
+        phone = data.get("telephone_no")
+        if path.endswith("/send"):
+            if not phone:
+                return 400, {"success": False, "error": "telephone_no is required"}
+            with self._lock:
+                self.rest_calls.append(("send", self._national(phone)))
+            return 200, self._rest_send(str(phone), data.get("otp_media", 2))
+        session_id, code = data.get("session_id"), data.get("otp_value")
+        if not (phone and session_id and code):
+            return 400, {"success": False, "error": "telephone_no, session_id, and otp_value are required"}
+        with self._lock:
+            self.rest_calls.append(("verify", self._national(phone)))
+            session = self._otp_sessions.get(session_id)
+        if session is None or session["phone"] != phone or str(code) != self.otp_code:
+            return 200, {"success": False, "error": "OTP verification failed: invalid or expired code"}
+        with self._lock:
+            self._otp_sessions.pop(session_id, None)  # single use
+        return 200, self._issue_tokens(self._national(phone))
+
+    def _rest_send(self, telephone_no: str, otp_media: Any) -> dict:
+        channel = OTP_CHANNELS.get(otp_media, "email")
+        session_id = uuid.uuid4().hex[:16]
+        customer = self.otp_customers.get(telephone_no)
+        if customer is None:
+            return {"success": False,
+                    "error": "Customer validation failed: {'status': 'error', 'message': 'Customer not found'}",
+                    "session_id": session_id}
+        with self._lock:
+            self._otp_sessions[session_id] = {"phone": telephone_no, "tries": 0}
+            self.sms_outbox.append({"to": telephone_no, "code": self.otp_code, "session_id": session_id, "channel": channel})
+        contact = (
+            "{'mobile' : '%s','email' : '%s','accountCategory' : 'Individual'}"
+            % (customer.get("masked_mobile", "XXXXXX4567"), customer.get("masked_email", "XXXXXXXXXXth22@gmail.com"))
+        )
+        return {"success": True, "session_id": session_id, "contact_info": contact, "otp_status": "OTP send success"}
+
+    def _issue_tokens(self, number: str) -> dict:
+        expires = time.time() + self.rest_token_ttl
+        record = {
+            "access_token": "acc-" + uuid.uuid4().hex,
+            "refresh_token": "ref-" + uuid.uuid4().hex,
+            "subscriber_id": "SUB-0001",
+            "account_number": "ACC-0001",
+            "expires_at": expires,
+        }
+        with self._lock:
+            self.issued_tokens[number] = dict(record)
+        style = self.rest_expiry_style
+        if style == "ms":
+            expiry = {"expires_at": int(expires * 1000)}
+        elif style == "iso":
+            expiry = {"expires_at": datetime.fromtimestamp(expires, timezone.utc).isoformat()}
+        elif style == "in":
+            expiry = {"expires_in": int(self.rest_token_ttl)}
+        else:
+            expiry = {"expires_at": int(expires)}
+        camel_expiry = {("expiresAt" if k == "expires_at" else "expiresIn"): v for k, v in expiry.items()}
+        fields = {k: record[k] for k in ("access_token", "refresh_token", "subscriber_id", "account_number")}
+        shape = self.rest_token_shape
+        if shape == "missing":
+            return {"success": True, "message": "Authenticated"}
+        if shape == "no_account":
+            fields.pop("account_number")
+        if shape == "camel":
+            return {"success": True, "accessToken": fields["access_token"], "refreshToken": fields["refresh_token"],
+                    "subscriberId": fields["subscriber_id"], "accountNumber": fields["account_number"], **camel_expiry}
+        if shape == "pascal":
+            return {"Success": True, "AccessToken": fields["access_token"], "RefreshToken": fields["refresh_token"],
+                    "SubscriberId": fields["subscriber_id"], "AccountNumber": fields["account_number"],
+                    **{k[0].upper() + k[1:]: v for k, v in camel_expiry.items()}}
+        if shape in ("data", "result"):
+            return {"success": True, shape: {**fields, **expiry}}
+        if shape == "tokens":  # tokens in their own object, the ids beside it
+            return {"success": True, "subscriber_id": fields["subscriber_id"], "account_number": fields["account_number"],
+                    "tokens": {"access_token": fields["access_token"], "refresh_token": fields["refresh_token"], **expiry}}
+        if shape == "token":
+            return {"success": True, "subscriber_id": fields["subscriber_id"], "account_number": fields["account_number"],
+                    "token": {"accessToken": fields["access_token"], "refreshToken": fields["refresh_token"], **camel_expiry}}
+        return {"success": True, **fields, **expiry}
+
     # Customer tools
 
     @staticmethod
@@ -361,6 +489,24 @@ class MockHub:
             "success": True, "subscriber_id": "SUB-0001", "account_number": "ACC-0001",
             "subscriber_package": customer.get("package", "Fibre Unlimited 60"),
             "privileges": "view balance, view bills", "note": "Authenticated; use the other tools with telephone_no."})
+
+    def _seed(self, ctx: Context, telephone_no: str, access: str, refresh: str, subscriber: str, account: str, expires: float) -> str:
+        """authenticate_with_token: marks THIS connection authenticated when the tokens are the ones the REST
+        verify issued for the number (and not yet expired), like verify does on its own connection."""
+        number = self._national(telephone_no)
+        if self.seed_text_error:
+            return "Error: authentication failed"
+        if self.seed_fail:
+            return json.dumps({"success": False, "error": "Token authentication failed"})
+        with self._lock:
+            issued = self.issued_tokens.get(number)
+        if issued is None or access != issued["access_token"] or refresh != issued["refresh_token"] or \
+                subscriber != issued["subscriber_id"] or account != issued["account_number"]:
+            return json.dumps({"success": False, "error": "Invalid access token"})
+        if float(expires) <= time.time() or issued["expires_at"] <= time.time():
+            return json.dumps({"success": False, "error": "Access token expired"})
+        self._connection_numbers(ctx).add(number)
+        return json.dumps({"success": True, "message": "Session authenticated from tokens", "telephone_no": number})
 
     def _customer_reply(self, name: str, telephone_no: str, product: Optional[str], build, ctx: Context) -> str:
         """Common path of every fake customer tool: authentication, forced
@@ -503,9 +649,13 @@ class MockHub:
         if allowed("authenticate_with_token"):
 
             @mcp.tool(name="authenticate_with_token", description="Seeds a session (must never be called by the assistant).")
-            async def authenticate_with_token(telephone_no: str, access_token: str = "") -> str:
+            async def authenticate_with_token(
+                telephone_no: str, ctx: Context, access_token: str = "", refresh_token: str = "",
+                subscriber_id: str = "", account_number: str = "", expires_at: float = 0.0,
+            ) -> str:
+                # The tokens are never recorded: only the number and that a seed was asked for.
                 record("authenticate_with_token", telephone_no=telephone_no)
-                return "ok"
+                return hub._seed(ctx, telephone_no, access_token, refresh_token, subscriber_id, account_number, expires_at)
 
     # Lifecycle
 
