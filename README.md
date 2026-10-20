@@ -856,3 +856,22 @@ or the assistant's own echo do not cut it off. Headphones are best on that path.
 **Typing Sinhala with Latin letters.** In the chat box, when the page language is Sinhala, text typed in Latin letters turns into Sinhala as
 you type (Helakuru style: `kohomada` gives කොහොමද), backspace removes a whole letter with its signs, and a small button next to the box
 turns it off. `frontend/singlish.js` is an own mapping table (no third party code); the typing guide is at the top of the file.
+
+**Signed in customers and the hub's tools (2026-10-20).** With `HUB_AUTH_MODE=token` the hub's own REST sign in
+(`/api/otp/send`, `/api/otp/verify`) sends the code to the customer's registered mobile or e-mail and issues the access and
+refresh tokens; the tokens are seeded into the customer's connection with the hub's `authenticate_with_token` tool, so every
+tool the customer's line allows works (balance, extra GB and VAS packages, daily usage, bills, last payment, service
+detail, fault list, the LTE prepaid status, wallet, packages and reload history, compare package and the knowledge search;
+the postpaid tools for postpaid and fibre lines, the LTE tools for LTE prepaid lines). A lost connection is seeded again from the
+stored tokens without a new code while they are valid. Buying an extra GB package, adding a VAS bundle, subscribing an LTE
+package and logging a fault are on (`STATE_CHANGING_TOOLS_ENABLED=true` in this installation) and always show the confirmation
+window first, run once and are never retried. `HUB_AUTH_MODE=connection` keeps the earlier sign in through the OTP tools on one connection.
+
+**Cloud voices.** `GOOGLE_APPLICATION_CREDENTIALS` points to the service account file (it stays out of git); with it,
+English and Tamil speak with Google Chirp3 HD voices (Sinhala has no Google voice and stays on the Edge voice, which is also the
+automatic fallback). Google speech to text needs the Speech-to-Text API enabled in the Google Cloud project; until then the local
+models transcribe.
+
+**The assistant's own voice.** While the assistant speaks, the server compares what the microphone hears with what is being
+played (`backend/echo_guard.py`) and only a person talking over it stops the reply; its own voice coming back from the speakers does
+not. Headphones remain the best remedy for other sound on the same machine, which cannot be told from a person.

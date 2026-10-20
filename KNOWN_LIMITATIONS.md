@@ -987,3 +987,31 @@ the browser's echo cancellation.
 **Singlish typing (2026-10-16).** Own mapping table, no third party code (the npm packages `singlish-sinhala` and `singlish-pro` are MIT
 but need WASM or extra dependencies). `nk` and `ng` always give the anusvara, so ඟ needs `nG`. Android keyboards that use composition
 events do not convert; undo (Ctrl+Z) after a conversion was not tested; the Sinhala and Tamil labels of the toggle are machine written.
+
+**Hub token sign in (2026-10-20).** `HUB_AUTH_MODE=token` was built against the local mock hub only. The success answers of the
+hub's REST endpoints /api/otp/send and /api/otp/verify were never seen (only their 400 answers: the required fields are
+telephone_no, and session_id and otp_value), and the real behaviour of the authenticate_with_token tool is unknown (what it answers,
+whether the hub honours the tokens on a new connection, whether it keeps them past the access token expiry or renews them). The parsing
+accepts several shapes; when it cannot read an answer or the seed fails, the sign in answers "unavailable" once (the code is used up)
+and the next sign ins use the connection mode for 30 minutes. Tokens are kept in memory only, per process, until they expire or the
+customer logs out: a restart of the backend ends every visit. A connection lost to idleness is seeded again without a new code only
+while the tokens are valid; a state changing action is never repeated and needs a new confirmation after such a reseed. Run
+`scripts/check_hub_token_login.py` once with a real phone (it sends one real code and prints only structure) to settle this; until then
+`HUB_AUTH_MODE=connection` is the proven path.
+
+**Tools on (2026-10-20).** The four tools that change an account are enabled here with the confirmation window; they were never run
+against the real hub (only the mock), and no real purchase or fault has been made. `get_function_latencies` is allowed for customers
+but nothing in the assistant asks for it. A customer's tools depend on the line type the hub reports; when it cannot be read the line is
+treated as postpaid.
+
+**Google speech (2026-10-20).** Text to speech works with the service account for English and Tamil (first audio 0.2 to 0.5 s once
+warm, 1.4 s on the very first call); Google has no Sinhala voice. Google speech to text is blocked: the Speech-to-Text API is disabled in
+the Google project (HTTP 403) and has to be enabled in the Google Cloud console. Google bills text to speech by the character.
+
+**Echo and the assistant's own voice (2026-10-20).** The filter compares the microphone with the audio the server plays. On synthetic
+speech it never cut the reply off in 200 random echo trials (gain 0.05 to 1.0, delay up to 500 ms, noise, reverb) and missed 1 of 200
+interruptions (a person under twice as loud as the echo); a person's interruption takes about 690 ms on average over the echo trials (without echo the guard adds about 55 ms: 631 ms against 575 ms),
+1.2 s in the slowest tenth, and the 250 ms page chunks are part of that. Not tested with a real
+microphone or speakers. It cannot tell another voice or media on the same machine (a video, a call) from a person, a person quieter than the
+echo cannot be detected, a steady vowel held for more than 300 ms can be taken for a hum, and the Azure and Windows SAPI speech paths play
+without a reference and keep the old behaviour. The thresholds were tuned on the synthetic set.

@@ -702,3 +702,16 @@ vad.BargeInDetector: used while the agent speaks; constants BARGE_* at the top o
 frontend: window.SltSinglish {enable(input), disable(), isEnabled(), convert(latin), attach, detach, toggle}, button #singlish-toggle, localStorage key slt.singlish
 i18n keys: tool_agent.off_topic (backend), chat.singlish.on and chat.singlish.off (frontend)
 tool_agent: a non SLT question the hub has no text on returns kind canned with tool_agent.off_topic (no model call)
+
+Additions of 2026-10-20 (hub token sign in, echo guard).
+
+config: HUB_AUTH_MODE (token | connection, default token; the tests pin connection), HUB_REST_TIMEOUT_SECONDS (default 15)
+mcp_gateway.rest_auth: send(national, otp_media) -> RestSend(ok, reason, transport, session_id, masked_mobile, masked_email);
+    verify(national, session_id, code) -> RestVerify(ok, reason, transport, tokens); parse_tokens(answer) -> Tokens or None;
+    classify_failure(text) -> invalid_code | expired | locked; fallback_active(), enter_fallback(reason), reset_fallback(); FALLBACK_SECONDS = 1800
+mcp_gateway: begin_login and finish_login are unchanged in signature; in token mode the tokens live in memory (gateway._tokens) and
+    a lost connection is seeded again with authenticate_with_token (tier "authenticating" in config/tool_access.yaml)
+scripts/check_hub_token_login.py: one time check with a real phone, prints structure only
+backend/echo_guard.py: EchoReference (what the assistant plays, last 4 s, 16 kHz), EchoGuard.judge(frame) -> echo | human | quiet,
+    ECHO_* constants at the top; vad.BargeInDetector(echo_guard=None|False|EchoGuard) and feed(chunk, now=None);
+    tts.py feeds the reference from every played clip and clears it on cancel; livekit_transport/session.py filters its 200 ms rule
