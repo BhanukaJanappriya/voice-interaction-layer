@@ -37,7 +37,7 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest").strip()
 # different model family from GEMINI_MODEL above: a Live model such as
 # gemini-3.8-live cannot be used for text generation and the other way round.
 GEMINI_LIVE_ENABLED = os.environ.get("GEMINI_LIVE_ENABLED", "true").strip().lower() in ("1", "true", "yes")
-GEMINI_LIVE_MODEL = os.environ.get("GEMINI_LIVE_MODEL", "gemini-3.8-live").strip()
+GEMINI_LIVE_MODEL = os.environ.get("GEMINI_LIVE_MODEL", "gemini-3.5-live").strip()
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 # Extra "reasoning" model call before the reply is composed (see
 # agent.py's Orchestrator). Off by default: it has to finish before the

@@ -26,6 +26,19 @@ def _answer(message: str) -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        """A browser or a quick check opening the address: say what this is
+        instead of answering 501. The assistant itself always sends POST."""
+        note = (
+            'Partner agent is running. The assistant sends POST requests here with a JSON body like '
+            '{"message": "hello"} and gets {"reply": "..."} back.\n'
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(note)))
+        self.end_headers()
+        self.wfile.write(note)
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0)) or 0) or b"{}")
         reply = _answer(str(body.get("message", "")))

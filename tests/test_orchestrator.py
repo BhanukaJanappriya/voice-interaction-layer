@@ -15,7 +15,7 @@ if str(ROOT.parent) not in sys.path:
 
 import pytest
 
-import agent
+import agent  # type: ignore[reportMissingImports]
 import config  # type: ignore[import-not-found]
 from conftest import orchestrator_integrated
 
